@@ -1,0 +1,6 @@
+@Magic_casino_sportbook_HostAddress = http://localhost:5159
+
+GET {{Magic_casino_sportbook_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
