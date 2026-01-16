@@ -21,30 +21,54 @@ namespace Magic_casino_sportbook.BackgroundServices
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("Servidor de Odds Global iniciado.");
+            _logger.LogInformation("🤖 Servidor de Odds (SYNC BASE) iniciado.");
+
+            // Roda ao iniciar
+            await RunSync(stoppingToken);
 
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
                 {
-                    using (var scope = _serviceProvider.CreateScope())
-                    {
-                        var oddsService = scope.ServiceProvider.GetRequiredService<OddsService>();
-                        _logger.LogInformation("Iniciando sincronização de TODOS os esportes ativos...");
-
-                        // Chama o novo método que varre toda a API
-                        await oddsService.SyncAllSportsToDatabase();
-
-                        _logger.LogInformation("Sincronização global concluída com sucesso no banco AWS!");
-                    }
+                    await Task.Delay(TimeSpan.FromMinutes(30), stoppingToken);
                 }
-                catch (Exception ex)
+                catch (TaskCanceledException) { break; }
+
+                await RunSync(stoppingToken);
+            }
+        }
+
+        private async Task RunSync(CancellationToken stoppingToken)
+        {
+            if (stoppingToken.IsCancellationRequested) return;
+
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+
+                // 🚦 AQUI É A DECISÃO DE QUAL API USAR
+                var provider = Environment.GetEnvironmentVariable("ODDS_PROVIDER");
+
+                if (provider == "BetsApi")
                 {
-                    _logger.LogError($"Erro na sincronização global: {ex.Message}");
+                    _logger.LogInformation("🔄 Iniciando Sync com BETS API...");
+                    // Pede explicitamente o serviço da BetsAPI
+                    var service = scope.ServiceProvider.GetRequiredService<BetsApiService>();
+                    await service.SyncBaseOddsToDatabase();
+                }
+                else
+                {
+                    _logger.LogInformation("🔄 Iniciando Sync com THE ODDS API...");
+                    // Pede explicitamente o serviço da TheOddsApi
+                    var service = scope.ServiceProvider.GetRequiredService<TheOddsApiService>();
+                    await service.SyncBaseOddsToDatabase();
                 }
 
-                // Espera 10 minutos antes de atualizar tudo de novo
-                await Task.Delay(TimeSpan.FromMinutes(10), stoppingToken);
+                _logger.LogInformation("✅ Sincronização concluída.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Erro crítico na sincronização BASE");
             }
         }
     }

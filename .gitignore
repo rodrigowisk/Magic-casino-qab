@@ -10,3 +10,8 @@ dist/
 .vscode/
 **/.vscode/
 
+
+# Environment secrets
+.env
+**/.env
+

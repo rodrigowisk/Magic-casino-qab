@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { onMounted } from 'vue';
-import MainLayout from './layouts/MainLayout.vue';
 import { useAuthStore } from './stores/useAuthStore';
+// Removemos o import do MainLayout daqui, pois ele será controlado pelo Router
 
 // Instancia a Store de Autenticação
 const authStore = useAuthStore();
 
-// ✅ O SEGREDINHO: 
-// Assim que o componente App montar (no F5), verificamos se tem token.
-// Se tiver, mandamos buscar o saldo real no banco de dados.
+// ✅ MANTIDO: O SEGREDINHO DO SALDO
 onMounted(async () => {
   if (authStore.token) {
     console.log(">>>>> APP INICIOU: Forçando atualização do saldo...");
@@ -18,7 +16,14 @@ onMounted(async () => {
 </script>
 
 <template>
-  <MainLayout>
-    <router-view />
-  </MainLayout>
+  <router-view />
 </template>
+
+<style>
+/* Estilos globais básicos */
+body {
+  background-color: #121212;
+  margin: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+</style>

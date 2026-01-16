@@ -9,12 +9,18 @@ namespace Magic_casino_sportbook.Services
     {
         private readonly AppDbContext _context;
         private readonly HttpClient _httpClient;
-        private readonly string _apiKey = "SUA_API_KEY_AQUI"; // Use a mesma do SportsService
+        private readonly string _oddsApiKey;
+        private readonly string _betsApiToken;
+        private readonly string _provider;
 
         public BetSettlementService(AppDbContext context, HttpClient httpClient)
         {
             _context = context;
             _httpClient = httpClient;
+            // Carrega as configurações do ambiente
+            _oddsApiKey = Environment.GetEnvironmentVariable("ODDS_API_KEY") ?? "";
+            _betsApiToken = Environment.GetEnvironmentVariable("BETSAPI_TOKEN") ?? "";
+            _provider = Environment.GetEnvironmentVariable("ODDS_PROVIDER") ?? "BetsApi";
         }
 
         public async Task UpdatePendingBetsAsync()
@@ -26,59 +32,123 @@ namespace Magic_casino_sportbook.Services
 
             if (!pendingSelections.Any()) return;
 
-            // 2. Agrupa por MatchId para não fazer requisições repetidas para o mesmo jogo
-            var matchIds = pendingSelections.Select(s => s.MatchId).Distinct();
+            // 2. Agrupa por MatchId para evitar chamadas repetidas
+            var matchIds = pendingSelections.Select(s => s.MatchId).Distinct().ToList();
 
             foreach (var matchId in matchIds)
             {
                 try
                 {
-                    // Consulta o endpoint de scores da The Odds API
-                    // Exemplo: https://api.the-odds-api.com/v4/sports/soccer/scores/?apiKey=...&eventIds=...
-                    var response = await _httpClient.GetAsync($"https://api.the-odds-api.com/v4/sports/soccer/scores/?apiKey={_apiKey}&eventIds={matchId}");
-
-                    if (!response.IsSuccessStatusCode) continue;
-
-                    var json = await response.Content.ReadAsStringAsync();
-                    using var doc = JsonDocument.Parse(json);
-                    var eventData = doc.RootElement.EnumerateArray().FirstOrDefault();
-
-                    if (eventData.ValueKind != JsonValueKind.Undefined && eventData.GetProperty("completed").GetBoolean())
+                    if (_provider == "BetsApi")
                     {
-                        var scores = eventData.GetProperty("scores");
-                        var homeScore = scores[0].GetProperty("score").GetInt32();
-                        var awayScore = scores[1].GetProperty("score").GetInt32();
-                        string homeTeam = scores[0].GetProperty("name").GetString() ?? "";
-                        string awayTeam = scores[1].GetProperty("name").GetString() ?? "";
-
-                        string finalResult = "";
-                        if (homeScore > awayScore) finalResult = homeTeam;
-                        else if (awayScore > homeScore) finalResult = awayTeam;
-                        else finalResult = "Draw"; // Ou "Empate" conforme sua SelectionName
-
-                        // 3. Atualiza todas as seleções deste jogo
-                        var selectionsForThisMatch = pendingSelections.Where(s => s.MatchId == matchId);
-                        foreach (var sel in selectionsForThisMatch)
-                        {
-                            sel.FinalScore = $"{homeScore}-{awayScore}";
-                            // Lógica simples: Se o nome da seleção for igual ao vencedor ou se for empate e deu empate
-                            sel.IsWinner = (sel.SelectionName.Contains(finalResult) ||
-                                           (sel.SelectionName.ToLower().Contains("empate") && finalResult == "Draw"));
-
-                            sel.Status = sel.IsWinner.Value ? "won" : "lost";
-                        }
+                        await SettleBetsApiMatch(matchId, pendingSelections);
+                    }
+                    else
+                    {
+                        await SettleTheOddsApiMatch(matchId, pendingSelections);
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Erro ao liquidar match {matchId}: {ex.Message}");
+                    Console.WriteLine($"❌ Erro ao liquidar match {matchId}: {ex.Message}");
                 }
             }
 
             await _context.SaveChangesAsync();
 
-            // 4. Após atualizar seleções, checa se a Aposta Pai (Bet) deve mudar para Won ou Lost
+            // 4. Atualiza o status do bilhete principal (Won/Lost)
             await UpdateParentBetsStatusAsync();
+        }
+
+        private async Task SettleBetsApiMatch(string matchId, List<BetSelection> allPending)
+        {
+            // Endpoint de RESULTADOS da BetsAPI
+            var url = $"https://api.betsapi.com/v1/bet365/result?token={_betsApiToken}&event_id={matchId}";
+            var response = await _httpClient.GetAsync(url);
+
+            if (!response.IsSuccessStatusCode) return;
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+
+            if (!doc.RootElement.TryGetProperty("results", out var results) || results.ValueKind != JsonValueKind.Array) return;
+
+            var eventData = results.EnumerateArray().FirstOrDefault();
+
+            // time_status "3" na BetsAPI significa jogo encerrado
+            if (eventData.ValueKind != JsonValueKind.Undefined && eventData.GetProperty("time_status").GetString() == "3")
+            {
+                string scoreStr = eventData.GetProperty("ss").GetString() ?? ""; // Ex: "2-1"
+
+                if (string.IsNullOrEmpty(scoreStr)) return;
+
+                var selections = allPending.Where(s => s.MatchId == matchId).ToList();
+                foreach (var sel in selections)
+                {
+                    sel.FinalScore = scoreStr;
+                    sel.IsWinner = CalculateWinnerFromScore(scoreStr, sel.SelectionName);
+                    sel.Status = sel.IsWinner == true ? "won" : "lost";
+                }
+            }
+        }
+
+        private async Task SettleTheOddsApiMatch(string matchId, List<BetSelection> allPending)
+        {
+            var url = $"https://api.the-odds-api.com/v4/sports/soccer/scores/?apiKey={_oddsApiKey}&eventIds={matchId}";
+            var response = await _httpClient.GetAsync(url);
+
+            if (!response.IsSuccessStatusCode) return;
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            var eventData = doc.RootElement.EnumerateArray().FirstOrDefault();
+
+            if (eventData.ValueKind != JsonValueKind.Undefined && eventData.GetProperty("completed").GetBoolean())
+            {
+                var scores = eventData.GetProperty("scores");
+                var hScore = scores[0].GetProperty("score").GetInt32();
+                var aScore = scores[1].GetProperty("score").GetInt32();
+                string hName = scores[0].GetProperty("name").GetString() ?? "";
+                string aName = scores[1].GetProperty("name").GetString() ?? "";
+
+                string scoreStr = $"{hScore}-{aScore}";
+
+                var selections = allPending.Where(s => s.MatchId == matchId).ToList();
+                foreach (var sel in selections)
+                {
+                    sel.FinalScore = scoreStr;
+                    // Lógica para comparar nomes dos times da The Odds API
+                    bool homeWin = hScore > aScore && sel.SelectionName.Contains(hName);
+                    bool awayWin = aScore > hScore && sel.SelectionName.Contains(aName);
+                    bool draw = hScore == aScore && (sel.SelectionName.ToLower().Contains("draw") || sel.SelectionName.ToLower().Contains("empate"));
+
+                    sel.IsWinner = homeWin || awayWin || draw;
+                    sel.Status = sel.IsWinner == true ? "won" : "lost";
+                }
+            }
+        }
+
+        private bool CalculateWinnerFromScore(string scoreStr, string selectionName)
+        {
+            var parts = scoreStr.Split('-');
+            if (parts.Length < 2) return false;
+
+            int.TryParse(parts[0], out int hScore);
+            int.TryParse(parts[1], out int aScore);
+
+            selectionName = selectionName.ToLower();
+
+            // 1 = Casa, 2 = Fora, X = Empate (Lógica padrão de mercado 1X2)
+            if (hScore > aScore)
+                return selectionName.Contains("1") || selectionName.Contains("casa") || selectionName.Contains("home");
+
+            if (aScore > hScore)
+                return selectionName.Contains("2") || selectionName.Contains("fora") || selectionName.Contains("away");
+
+            if (hScore == aScore)
+                return selectionName.Contains("x") || selectionName.Contains("draw") || selectionName.Contains("empate");
+
+            return false;
         }
 
         private async Task UpdateParentBetsStatusAsync()
@@ -90,19 +160,16 @@ namespace Magic_casino_sportbook.Services
 
             foreach (var bet in activeBets)
             {
-                // Se todas as seleções foram resolvidas
                 if (bet.Selections.All(s => s.Status != "pending"))
                 {
-                    // Se houver uma perdida, o bilhete está perdido
                     if (bet.Selections.Any(s => s.Status == "lost"))
                     {
                         bet.Status = "lost";
                     }
-                    // Se todas ganharam, o bilhete está ganho
                     else if (bet.Selections.All(s => s.Status == "won"))
                     {
                         bet.Status = "won";
-                        // TODO: Aqui chamaremos o serviço de pagamento para dar o dinheiro ao usuário!
+                        // TODO: Integrar com CoreWalletService para pagar o prêmio aqui!
                     }
                 }
             }

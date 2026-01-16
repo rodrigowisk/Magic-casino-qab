@@ -2,7 +2,81 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  background-color: #0f212e; /* Força o fundo escuro do Stake */
+/* =========================================
+   Scrollbar Luxo (dark glass + blue thumb)
+   ========================================= */
+:root{
+  /* Track (fundo) - "vidro" escuro */
+  --sb-track: rgba(255, 255, 255, 0.06);
+  --sb-track-hover: rgba(255, 255, 255, 0.09);
+
+  /* Thumb (barra) - azul luxuoso */
+  --sb-thumb-1: #0b2d5b;   /* azul profundo */
+  --sb-thumb-2: #0e4d9a;   /* azul mais vivo */
+  --sb-thumb-border: rgba(255, 255, 255, 0.12);
+
+  /* Glow sutil */
+  --sb-glow: rgba(46, 120, 255, 0.25);
+}
+
+/* Firefox */
+*{
+  scrollbar-width: thin;
+  scrollbar-color: rgba(14, 77, 154, 0.85) rgba(255,255,255,0.06);
+}
+
+/* Chrome / Edge / Brave / Safari */
+::-webkit-scrollbar{
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track{
+  background: linear-gradient(
+    180deg,
+    rgba(255,255,255,0.05),
+    rgba(255,255,255,0.03)
+  );
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+}
+
+::-webkit-scrollbar-track:hover{
+  background: var(--sb-track-hover);
+}
+
+::-webkit-scrollbar-thumb{
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--sb-thumb-2), var(--sb-thumb-1));
+  border: 2px solid rgba(15, 33, 46, 0.85); /* “recorte” elegante no dark */
+  box-shadow:
+    0 0 0 1px var(--sb-thumb-border),
+    0 6px 14px rgba(0,0,0,0.35),
+    0 0 12px var(--sb-glow);
+}
+
+::-webkit-scrollbar-thumb:hover{
+  background: linear-gradient(180deg, #1a6bff, #0b2d5b);
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.18),
+    0 8px 18px rgba(0,0,0,0.45),
+    0 0 16px rgba(46, 120, 255, 0.35);
+}
+
+::-webkit-scrollbar-thumb:active{
+  background: linear-gradient(180deg, #2a86ff, #0a2346);
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.22),
+    0 10px 22px rgba(0,0,0,0.55),
+    0 0 18px rgba(46, 120, 255, 0.45);
+}
+
+::-webkit-scrollbar-corner{
+  background: transparent;
+}
+
+/* Mantém seu tema */
+body{
+  background-color: #0f212e;
   color: #b1bad3;
 }

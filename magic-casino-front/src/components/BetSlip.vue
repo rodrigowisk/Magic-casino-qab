@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// ... imports mantidos ...
 import { ref, computed } from 'vue';
 import { useBetStore } from '../stores/useBetStore';
 import { useAuthStore } from '../stores/useAuthStore';
@@ -6,7 +7,6 @@ import apiSports from '../services/apiSports';
 import { X, Trash2, Trophy, Loader2, Zap, Layers, ChevronRight } from 'lucide-vue-next';
 import Swal from 'sweetalert2';
 
-// PROPS E EMITS
 defineProps<{ isOpen?: boolean }>();
 const emit = defineEmits(['toggle']);
 
@@ -15,7 +15,6 @@ const authStore = useAuthStore();
 const stake = ref<number | null>(null);
 const isLoading = ref(false);
 
-// --- CONFIGURAÇÃO DO TOAST ---
 const Toast = Swal.mixin({
   toast: true,
   position: 'top-end',
@@ -30,39 +29,34 @@ const Toast = Swal.mixin({
   }
 });
 
-// --- COMPUTEDS ---
 const potentialReturn = computed(() => {
   const valor = stake.value || 0;
   const odds = store.totalOdds || 0;
   return (valor * odds).toFixed(2);
 });
 
-const isUserLoggedIn = computed(() => {
-  return !!(authStore?.token && authStore?.user);
-});
-
-// --- FUNÇÕES DE FORMATAÇÃO ---
-const formatMatchDate = (dateValue: any) => {
-  if (!dateValue) return 'A definir';
-  const date = new Date(dateValue);
-  return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' - ' + 
-         date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-};
+const isUserLoggedIn = computed(() => !!(authStore?.token && authStore?.user));
 
 const truncateName = (name: string, limit: number = 18) => {
   if (!name) return '';
   return name.length > limit ? name.substring(0, limit) + '...' : name;
 };
 
-// --- AÇÃO DE APOSTAR ---
+// ✅ FUNÇÃO AJUSTADA: Só traduz para 'RESULTADO FINAL' se for código exato
+const getMarketLabel = (type: string | undefined, marketName: string | undefined) => {
+  const raw = type || marketName || '';
+  if (['1', '2', 'X', 'x'].includes(raw)) {
+    return 'RESULTADO FINAL';
+  }
+  return raw; // Retorna "Handicap", "Gols", etc.
+};
+
 const handlePlaceBet = async () => {
   if (!isUserLoggedIn.value) {
     Toast.fire({ icon: 'info', title: 'Faça login para apostar' });
     return;
   }
-
   if (store.count === 0) return;
-
   if (!stake.value || stake.value <= 0) {
     Toast.fire({ icon: 'warning', title: 'Digite um valor válido!' });
     return;
@@ -78,10 +72,11 @@ const handlePlaceBet = async () => {
       totalOdd: Number(store.totalOdds || 0),
       potentialReturn: Number(potentialReturn.value),
       selections: store.selections.map((s: any) => ({
-        matchId: String(s.id),
+        matchId: String(s.id).includes('_') ? String(s.id).split('_')[0] : String(s.id),
         matchName: `${s.homeTeam} x ${s.awayTeam}`,
         selectionName: s.selection,
-        marketName: s.marketName,
+        // Envia o nome correto para o banco de dados
+        marketName: ['1', '2', 'X', 'x'].includes(s.type) ? '1x2' : (s.type || s.marketName || 'Mercado'), 
         odd: Number(s.odds || 0),
         commenceTime: s.commenceTime || s.commence_time 
       }))
@@ -96,7 +91,6 @@ const handlePlaceBet = async () => {
              authStore.user.balance = (authStore.user.balance || 0) - valorApostado;
         }
     }
-
     await authStore.fetchBalance();
 
     Swal.fire({
@@ -112,18 +106,11 @@ const handlePlaceBet = async () => {
 
     store.clearStore();
     stake.value = null;
-    emit('toggle'); // Fecha o cupom após apostar (opcional)
+    emit('toggle'); 
 
   } catch (error: any) {
     const msg = error?.response?.data?.error || "Erro ao processar aposta.";
-    Swal.fire({
-      title: 'Ops!',
-      text: msg,
-      icon: 'error',
-      background: '#162032',
-      color: '#ffffff',
-      confirmButtonColor: '#ef4444'
-    });
+    Swal.fire({ title: 'Ops!', text: msg, icon: 'error', background: '#162032', color: '#ffffff', confirmButtonColor: '#ef4444' });
   } finally {
     isLoading.value = false;
   }
@@ -132,7 +119,6 @@ const handlePlaceBet = async () => {
 
 <template>
   <div class="flex flex-col h-full bg-[#1e293b] text-gray-300 font-sans border-l border-gray-700">
-
     <div 
         @click="emit('toggle')"
         class="p-4 border-b border-gray-700 bg-[#162032] flex items-center justify-between cursor-pointer hover:bg-[#1c283d] transition-colors"
@@ -146,22 +132,15 @@ const handlePlaceBet = async () => {
             </span>
         </h3>
       </div>
-
       <div class="flex items-center gap-3">
-        <button
-            v-if="store.count > 0"
-            @click.stop="store.clearStore()"
-            class="text-xs text-gray-400 hover:text-red-400 flex items-center gap-1 transition-colors uppercase font-bold mr-2"
-        >
+        <button v-if="store.count > 0" @click.stop="store.clearStore()" class="text-xs text-gray-400 hover:text-red-400 flex items-center gap-1 transition-colors uppercase font-bold mr-2">
             Limpar <Trash2 class="w-4 h-4" />
         </button>
-
         <ChevronRight class="w-5 h-5 text-gray-400 hover:text-white" />
       </div>
     </div>
 
     <div class="flex flex-col flex-1 overflow-hidden bg-[#1e293b]">
-        
         <div v-if="store.count > 0" class="px-4 pt-4">
             <div v-if="store.count === 1" class="bg-gray-800/40 border border-gray-700 rounded-md p-2 flex items-center justify-center gap-2">
                 <Zap class="w-3.5 h-3.5 text-yellow-500" />
@@ -193,7 +172,7 @@ const handlePlaceBet = async () => {
                         </div>
                         <div class="flex items-center justify-between mt-2">
                             <span class="bg-[#1e293b] text-[10px] text-gray-400 px-2 py-1 rounded uppercase font-bold tracking-wider text-left">
-                                {{ item.marketName }}: <span class="text-blue-400">{{ truncateName(item.selection, 12) }}</span>
+                                {{ getMarketLabel(item.type, item.marketName) }}: <span class="text-blue-400">{{ truncateName(item.selection, 12) }}</span>
                             </span>
                             <span class="text-white font-bold bg-blue-600/20 text-blue-400 px-2 py-1 rounded text-xs border border-blue-500/20 min-w-[40px] text-right">
                                 {{ (item.odds || 0).toFixed(2) }}

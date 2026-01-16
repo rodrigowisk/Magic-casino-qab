@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { ref, watch } from 'vue';
+import { ref } from 'vue';
 
 export const useConfigStore = defineStore('config', () => {
     // 1. Estado Inicial (Padrão se não tiver nada configurado)

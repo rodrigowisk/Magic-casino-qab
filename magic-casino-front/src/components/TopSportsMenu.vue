@@ -1,13 +1,21 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { Trophy, Clock } from 'lucide-vue-next'; // Removidos ChevronRight e ChevronLeft
+import { Trophy, Clock } from 'lucide-vue-next'; 
 import SportsService from '../services/SportsService';
 
 const router = useRouter();
 const route = useRoute();
 const loading = ref(true);
 const sports = ref<any[]>([]);
+
+// ✅ ATUALIZADO: Oculta menu em Detalhes E na página Ao Vivo (/live)
+const shouldShowMenu = computed(() => {
+  const isEventDetails = route.name === 'event-details' || route.path.includes('/event/');
+  const isLivePage = route.path.includes('/live'); // Detecta a página ao vivo
+  
+  return !isEventDetails && !isLivePage;
+});
 
 const goToSport = (key: string) => {
     router.push({ name: 'sport-events', params: { id: key } });
@@ -53,7 +61,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="mb-6">
+  <div v-if="shouldShowMenu" class="mb-6">
     <div class="flex items-center justify-between mb-4 pr-1">
       <h2 class="text-white font-bold flex items-center gap-2 text-xl">
           <Trophy class="w-6 h-6 text-yellow-500"/> Top Esportes

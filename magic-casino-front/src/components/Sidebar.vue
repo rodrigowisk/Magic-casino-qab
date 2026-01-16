@@ -17,6 +17,7 @@ const goToLeague = (sportKey: string, leagueName: string) => {
   router.push({ name: 'sport-events', params: { id: sportKey }, query: { league: leagueName } }); 
 };
 
+// ✅ CORREÇÃO: Adicionado 'cricket' na lista de traduções
 const mapVisuals = (key: string) => {
     const k = key.toLowerCase();
     if (k.includes('soccer')) return { name: 'Futebol', icon: '⚽' };
@@ -24,9 +25,12 @@ const mapVisuals = (key: string) => {
     if (k.includes('tennis')) return { name: 'Tênis', icon: '🎾' };
     if (k.includes('boxing')) return { name: 'Boxe', icon: '🥊' };
     if (k.includes('mma') || k.includes('ufc')) return { name: 'MMA', icon: '🥋' };
-    if (k.includes('american')) return { name: 'Fut. Americano', icon: '🏈' };
+    if (k.includes('american')) return { name: 'Futebol Americano', icon: '🏈' };
     if (k.includes('hockey')) return { name: 'Hóquei', icon: '🏒' };
     if (k.includes('esports')) return { name: 'E-Sports', icon: '🎮' };
+    // 👇 ADICIONADO AQUI
+    if (k.includes('cricket')) return { name: 'Críquete', icon: '🏏' };
+    
     return { name: key, icon: '🏆' };
 };
 
@@ -55,7 +59,6 @@ onMounted(async () => {
     try {
         const data = await SportsService.getActiveSports();
         
-        // ✅ AGRUPAMENTO: Evita que "Hóquei" apareça duplicado
         const grouped = data.reduce((acc: any, item: any) => {
             const visual = mapVisuals(item.key);
             const sportName = visual.name;
@@ -85,11 +88,17 @@ onMounted(async () => {
             <button class="flex-1 py-2 rounded-full text-center bg-stake-hover text-white shadow">Esportes</button>
         </div>
         <nav class="space-y-1">
-            <a href="#" class="flex items-center gap-3 px-3 py-2 rounded hover:bg-stake-hover text-white group">
-                <Gamepad2 class="w-4 h-4 text-stake-text group-hover:text-white" />
-                <span class="text-sm font-semibold">Ao Vivo</span>
+            
+            <a href="#" 
+               @click.prevent="router.push('/live')" 
+               class="flex items-center gap-3 px-3 py-2 rounded transition-colors group cursor-pointer"
+               :class="router.currentRoute.value.path === '/live' ? 'bg-stake-hover text-white' : 'hover:bg-stake-hover text-stake-text'"
+            >
+                <Gamepad2 class="w-4 h-4" :class="router.currentRoute.value.path === '/live' ? 'text-white' : 'text-stake-text group-hover:text-white'" />
+                <span class="text-sm font-semibold" :class="router.currentRoute.value.path === '/live' ? 'text-white' : 'text-stake-text group-hover:text-white'">Ao Vivo</span>
                 <span class="ml-auto bg-green-500 text-stake-dark text-[10px] font-bold px-1.5 rounded animate-pulse">LIVE</span>
             </a>
+
             <a href="#" @click.prevent="router.push('/minhas-apostas')" class="flex items-center gap-3 px-3 py-2 rounded hover:bg-stake-hover group text-white">
                 <Clock class="w-4 h-4 text-stake-text group-hover:text-white" />
                 <span class="text-sm font-semibold">Meu Histórico</span>

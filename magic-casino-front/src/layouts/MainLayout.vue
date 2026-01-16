@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { Menu, Search, Wallet, LogOut, Trophy, ChevronLeft, Gem } from 'lucide-vue-next';
 
+// ✅ CORREÇÃO: Usando caminhos relativos (../) para garantir que o Vite encontre os arquivos
 import Sidebar from '../components/Sidebar.vue'; 
 import TopSportsMenu from '../components/TopSportsMenu.vue'; 
 import AuthModal from '../components/AuthModal.vue'; 
 import BetSlip from '../components/BetSlip.vue'; 
+
 import { useBetStore } from '../stores/useBetStore'; 
 import { useAuthStore } from '../stores/useAuthStore';
 import { useConfigStore } from '../stores/useConfigStore'; 
@@ -19,9 +21,9 @@ const configStore = useConfigStore();
 
 const isSidebarOpen = ref(true);
 const showAuthModal = ref(false);
-
 const isBetSlipOpen = ref(betStore.count > 0);
 
+// Lógica para esconder o TopSportsMenu em páginas específicas (como histórico)
 const isHistoryPage = computed(() => route.path === '/minhas-apostas'); 
 
 const handleLogout = () => {
@@ -38,6 +40,7 @@ const toggleBetSlip = () => {
     isBetSlipOpen.value = !isBetSlipOpen.value;
 };
 
+// Abre o cupom automaticamente se adicionar aposta
 watch(
   () => betStore.count,
   (newCount, oldCount) => {
@@ -46,14 +49,29 @@ watch(
     }
   }
 );
+
+// Responsividade: Fecha sidebar no mobile ao iniciar
+const checkScreenSize = () => {
+    if (window.innerWidth < 768) {
+        isSidebarOpen.value = false;
+    } else {
+        isSidebarOpen.value = true;
+    }
+};
+
+onMounted(() => {
+    checkScreenSize();
+    window.addEventListener('resize', checkScreenSize);
+});
+
+onUnmounted(() => {
+    window.removeEventListener('resize', checkScreenSize);
+});
 </script>
 
 <template>
   <div class="h-screen bg-stake-dark text-stake-text font-sans flex flex-col overflow-hidden">
-    <component is="style">
-      @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;900&display=swap');
-    </component>
-
+    
     <AuthModal v-if="showAuthModal" @close="showAuthModal = false" @login-success="handleLoginSuccess" />
 
     <header class="h-16 bg-stake-card flex items-center justify-between px-4 shadow-lg sticky top-0 z-50 flex-shrink-0 border-b border-white/5">
@@ -118,12 +136,14 @@ watch(
     </header>
 
     <div class="flex flex-1 overflow-hidden relative">
+      
       <Sidebar v-show="isSidebarOpen" class="w-64 flex-shrink-0 transition-all duration-300 border-r border-white/5" />
 
       <main class="flex-1 overflow-y-auto bg-stake-dark custom-scrollbar p-4 md:p-6 relative transition-all duration-300">
         <div v-if="!isHistoryPage" class="w-full mb-6">
             <TopSportsMenu />
         </div>
+        
         <div class="w-full">
             <router-view />
         </div>
@@ -151,3 +171,24 @@ watch(
     </div>
   </div>
 </template>
+
+<style>
+/* Importação correta da fonte */
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;900&display=swap');
+
+/* Personalização da Barra de Rolagem */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #0f172a; 
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #334155; 
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #475569; 
+}
+</style>

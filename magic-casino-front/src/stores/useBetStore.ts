@@ -1,81 +1,107 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 
+// ✅ DEFINIÇÃO DO TIPO EXPORTADA
 export type BetType = '1' | 'X' | '2';
 
-export interface BetSelection {
+export interface Selection {
   id: string;
   homeTeam: string;
   awayTeam: string;
   selection: string;
   odds: number;
   type: BetType;
-  marketName: string;
-  // ✅ ADICIONADO: Campo para armazenar a data do jogo
-  commenceTime?: string; 
+  marketName?: string;
+  commenceTime: string;
 }
 
 export const useBetStore = defineStore('bet', () => {
-  // --- Estado ---
-  const selections = ref<BetSelection[]>([]);
-  const isVisible = ref(false); 
+  const selections = ref<Selection[]>([]);
 
-  // --- Computeds ---
+  // Carrega do LocalStorage ao iniciar
+  if (localStorage.getItem('betSlip')) {
+    try {
+      const stored = localStorage.getItem('betSlip');
+      if (stored) {
+        selections.value = JSON.parse(stored);
+      }
+    } catch (e) {
+      selections.value = [];
+    }
+  }
+
   const count = computed(() => selections.value.length);
+  
   const totalOdds = computed(() => {
     if (selections.value.length === 0) return 0;
-    return selections.value.reduce((acc, item) => acc * (item.odds || 1), 1);
+    return selections.value.reduce((acc, curr) => acc * curr.odds, 1);
   });
 
-  // --- Actions ---
-  // ✅ ATUALIZADO: Agora aceita o parâmetro commenceTime
-  function addOrReplaceSelection(
+  const saveToStorage = () => {
+    localStorage.setItem('betSlip', JSON.stringify(selections.value));
+  };
+
+  const addOrReplaceSelection = (
     id: string, 
     homeTeam: string, 
     awayTeam: string, 
-    selectionName: string, 
+    selection: string, 
     odds: number, 
     type: BetType,
-    commenceTime?: string
-  ) {
-    const index = selections.value.findIndex(s => s.id === id);
+    commenceTime: string
+  ) => {
+    const existingIndex = selections.value.findIndex(s => s.id === id);
     
-    const newItem: BetSelection = {
-      id, 
-      homeTeam, 
-      awayTeam, 
-      selection: selectionName, 
-      odds, 
-      type, 
-      marketName: 'Resultado Final',
-      commenceTime // ✅ Salvando a data no objeto
-    };
-
-    if (index !== -1) {
-      selections.value[index] = newItem;
+    // ✅ CORREÇÃO TS2532: Verifica explicitamente se o índice existe
+    if (existingIndex !== -1 && selections.value[existingIndex]) {
+      // Se já existe EXATAMENTE igual, não faz nada
+      if (selections.value[existingIndex].type === type) {
+        return; 
+      }
+      // Se é diferente, substitui
+      selections.value[existingIndex] = { 
+        id, 
+        homeTeam, 
+        awayTeam, 
+        selection, 
+        odds, 
+        type, 
+        commenceTime, 
+        marketName: 'Resultado Final' 
+      };
     } else {
-      selections.value.push(newItem);
+      // Adiciona nova
+      selections.value.push({ 
+        id, 
+        homeTeam, 
+        awayTeam, 
+        selection, 
+        odds, 
+        type, 
+        commenceTime, 
+        marketName: 'Resultado Final' 
+      });
     }
     
-    isVisible.value = true; 
-  }
+    saveToStorage();
+  };
 
-  function removeSelection(id: string) {
-    const index = selections.value.findIndex(s => s.id === id);
-    if (index !== -1) selections.value.splice(index, 1);
-  }
+  const removeSelection = (id: string) => {
+    selections.value = selections.value.filter(s => s.id !== id);
+    saveToStorage();
+  };
 
-  function clearStore() {
+  const clearStore = () => {
     selections.value = [];
-    isVisible.value = false; 
-  }
-  
-  function toggleBetSlip() {
-    isVisible.value = !isVisible.value;
-  }
+    saveToStorage();
+  };
 
   return {
-    selections, count, totalOdds, isVisible,
-    addOrReplaceSelection, removeSelection, clearStore, toggleBetSlip
+    selections,
+    count,
+    totalOdds,
+    addOrReplaceSelection,
+    removeSelection,
+    clearStore
   };
 });

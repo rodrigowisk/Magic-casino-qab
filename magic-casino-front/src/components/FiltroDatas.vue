@@ -24,13 +24,11 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 
-// ✅ Interface reforçada para garantir que valor nunca seja undefined
 interface FiltroData {
   label: string;
-  valor: string; // Formato YYYY-MM-DD ou 'all'
+  valor: string; 
 }
 
-// ✅ Tipagem explícita dos Emits para evitar erro TS2322 no componente pai
 const emit = defineEmits<{
   (e: 'filtrar', valor: string): void
 }>();
@@ -52,14 +50,15 @@ const filtros = computed<FiltroData[]>(() => {
       label = 'AMANHÃ';
     } else {
       const nomeDia = dataRef.toLocaleDateString('pt-BR', { weekday: 'long' });
-      // Garante que o split nunca retorne undefined para o TypeScript
       const diaFormatado = nomeDia.split('-')[0] || nomeDia;
       label = diaFormatado.charAt(0).toUpperCase() + diaFormatado.slice(1).toUpperCase();
     }
 
-    // ✅ Correção de segurança: Garante que valor seja sempre string
-    const isoString = dataRef.toISOString();
-    const valor = isoString.split('T')[0] || '';
+    // ✅ CORREÇÃO: Gera YYYY-MM-DD baseado no horário LOCAL, não UTC
+    const ano = dataRef.getFullYear();
+    const mes = String(dataRef.getMonth() + 1).padStart(2, '0');
+    const dia = String(dataRef.getDate()).padStart(2, '0');
+    const valor = `${ano}-${mes}-${dia}`;
     
     lista.push({ label, valor });
   }

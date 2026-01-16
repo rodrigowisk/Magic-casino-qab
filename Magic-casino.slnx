@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="Magic-casino-slot/Magic-casino-slot.csproj" />
   <Project Path="Magic-casino-sportbook/Magic-casino-sportbook.csproj" Id="116301af-139f-459b-a9b1-329f3edab103" />
+  <Project Path="Magic-casino-tournament/Magic-casino-tournament.csproj" Id="c4b94d96-c275-42c0-a951-1367dcc55450" />
   <Project Path="Magic-casino/Magic-casino.csproj" />
 </Solution>

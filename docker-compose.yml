@@ -7,12 +7,20 @@ services:
     container_name: frontend
     image: magic-casino-frontend:dev
     ports:
-      - "80:80" # ✅ Mapeia o tráfego do domínio quebrandoabanca.bet
+      - "80:80"
     restart: always
     depends_on:
       - core
 
-  # SERVIÇO CORE
+  # ✅ SERVIÇO DE CACHE (REDIS)
+  redis:
+    image: redis:alpine
+    container_name: redis
+    restart: always
+    ports:
+      - "6379:6379"
+
+  # 🚀 SERVIÇO CORE
   core:
     build:
       context: .
@@ -21,16 +29,20 @@ services:
     container_name: core
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__DefaultConnection=Host=magic-casino-db.cl2e0cqa67wd.sa-east-1.rds.amazonaws.com;Port=5432;Database=magic_core;Username=postgres;Password=Rodr2108luca;Ssl Mode=Require;Trust Server Certificate=true
-      - Jwt__Key=M@gic_C@sino_Secret_Key_2026_Security
-      - Jwt__Issuer=MagicCasinoServer
-      - Jwt__Audience=MagicCasinoApp
+      - ConnectionStrings__Redis=redis:6379
+      # Puxando do .env 👇
+      - ConnectionStrings__DefaultConnection=${DB_CONN_CORE}
+      - Jwt__Key=${JWT_SECRET}
+      - Jwt__Issuer=${JWT_ISSUER}
+      - Jwt__Audience=${JWT_AUDIENCE}
     ports:
       - "8080:8080"
       - "8081:8081"
     restart: always
+    depends_on:
+      - redis
 
-  # SERVIÇO SPORTBOOK
+  # ⚽ SERVIÇO SPORTBOOK
   sportbook:
     build:
       context: .
@@ -39,16 +51,23 @@ services:
     container_name: sportbook
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__DefaultConnection=Host=magic-casino-db.cl2e0cqa67wd.sa-east-1.rds.amazonaws.com;Port=5432;Database=magic_sportbook;Username=postgres;Password=Rodr2108luca;Ssl Mode=Require;Trust Server Certificate=true
-      - Jwt__Key=M@gic_C@sino_Secret_Key_2026_Security
-      - Jwt__Issuer=MagicCasinoServer
-      - Jwt__Audience=MagicCasinoApp
+      - ConnectionStrings__Redis=redis:6379
+      # Puxando do .env 👇
+      - ConnectionStrings__DefaultConnection=${DB_CONN_SPORTBOOK}
+      - OddsApiKey=${ODDS_API_KEY}
+      - Jwt__Key=${JWT_SECRET}
+      - Jwt__Issuer=${JWT_ISSUER}
+      - Jwt__Audience=${JWT_AUDIENCE}
+      - ODDS_PROVIDER=${ODDS_PROVIDER}
+      - BETSAPI_TOKEN=${BETSAPI_TOKEN}
     ports:
       - "8090:8080"
       - "8091:8081"
     restart: always
+    depends_on:
+      - redis
 
-  # SERVIÇO SLOT
+  # 🎰 SERVIÇO SLOT
   slot:
     build:
       context: .
@@ -57,11 +76,38 @@ services:
     container_name: slot
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__DefaultConnection=Host=magic-casino-db.cl2e0cqa67wd.sa-east-1.rds.amazonaws.com;Port=5432;Database=magic_slot;Username=postgres;Password=Rodr2108luca;Ssl Mode=Require;Trust Server Certificate=true
-      - Jwt__Key=M@gic_C@sino_Secret_Key_2026_Security
-      - Jwt__Issuer=MagicCasinoServer
-      - Jwt__Audience=MagicCasinoApp
+      - ConnectionStrings__Redis=redis:6379
+      # Puxando do .env 👇
+      - ConnectionStrings__DefaultConnection=${DB_CONN_SLOT}
+      - Jwt__Key=${JWT_SECRET}
+      - Jwt__Issuer=${JWT_ISSUER}
+      - Jwt__Audience=${JWT_AUDIENCE}
     ports:
       - "8100:8080"
       - "8101:8081"
     restart: always
+    depends_on:
+      - redis
+
+  # 🏆 SERVIÇO TOURNAMENT (NOVO)
+  tournament:
+    build:
+      context: .
+      dockerfile: Magic-casino-tournament/Dockerfile
+    image: magic-casino-tournament:dev
+    container_name: tournament
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__Redis=redis:6379
+      # Conecta no MESMO banco dos outros (magic_sportbook) usando usuário padrão
+      # Se você tiver uma variável no .env para isso, pode usar, senão use esta direta:
+      - ConnectionStrings__DefaultConnection=${DB_CONN_TOURNAMENT}
+      - Jwt__Key=${JWT_SECRET}
+      - Jwt__Issuer=${JWT_ISSUER}
+      - Jwt__Audience=${JWT_AUDIENCE}
+    ports:
+      - "8110:8080"
+    restart: always
+    depends_on:
+      - redis
+      # - db  <-- Descomente se o serviço 'db' estiver definido neste arquivo (ele não apareceu no trecho que vc mandou)
