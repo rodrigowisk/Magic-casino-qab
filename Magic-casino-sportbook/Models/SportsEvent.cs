@@ -21,10 +21,17 @@ namespace Magic_casino_sportbook.Models
         public string HomeTeam { get; set; } = string.Empty;
         public string AwayTeam { get; set; } = string.Empty;
 
-        // ✅ NOVAS COLUNAS PARA IMAGENS (IDs da API)
+        // ✅ CAMPOS DE IMAGEM
         public string? HomeTeamId { get; set; }
         public string? AwayTeamId { get; set; }
         public string? LeagueId { get; set; }
+        public string? HomeTeamLogo { get; set; }
+        public string? AwayTeamLogo { get; set; }
+
+        // ✅ CAMPOS DE STATUS (ADICIONADOS AGORA PARA CORRIGIR O ERRO)
+        public string? Status { get; set; }   // Ex: "Prematch", "Live", "Ended"
+        public string? Score { get; set; }    // Ex: "2-1"
+        public string? GameTime { get; set; } // Ex: "45"
 
         public string? OddsSource { get; set; }
 

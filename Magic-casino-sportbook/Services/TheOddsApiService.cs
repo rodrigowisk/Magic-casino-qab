@@ -121,13 +121,19 @@ namespace Magic_casino_sportbook.Services
             await context.SaveChangesAsync();
         }
 
-        // Helpers e Interface (Agora com os métodos que faltavam)
+        // -----------------------------------------------------------
+        // Helpers e Interface (Métodos vazios para cumprir contrato)
+        // -----------------------------------------------------------
+
         public Task BackfillSportKeyRaw() => Task.CompletedTask;
         public Task<bool> SyncFullMarketsForEvent(string eventId) => Task.FromResult(true);
 
-        // ✅ ADICIONADOS PARA CUMPRIR A INTERFACE
         public Task SyncLiveFeed() => Task.CompletedTask;
         public Task SyncMissingImages() => Task.CompletedTask;
+
+        // ✅ ADICIONADOS AGORA PARA CORRIGIR O ERRO DE COMPILAÇÃO
+        public Task SyncEventsSchedule() => Task.CompletedTask;
+        public Task SyncPrematchOdds() => Task.CompletedTask;
 
         private static bool IsNumeric(string? s) => !string.IsNullOrWhiteSpace(s) && long.TryParse(s, out _);
         private static (string category, string leagueSlug, string leagueId) ParseSportKeyRaw(string? raw)

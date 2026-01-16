@@ -4,39 +4,44 @@ import { getTeamLogo } from '../utils/imageUtils';
 
 const props = defineProps<{
   teamName: string;
-  remoteUrl?: string | null; // ✅ AGORA ELE ACEITA A URL
+  remoteUrl?: string | null;
   size?: string;
 }>();
 
-// Estado da imagem
-const hasError = ref(false);
+// Os 3 Níveis de Fonte
+type ImageSource = 'remote' | 'local' | 'text';
+
+// Inicia tentando 'remote' se tiver URL, senão tenta 'local'
+const currentSource = ref<ImageSource>(props.remoteUrl ? 'remote' : 'local');
 const isLoading = ref(true);
 
-// Se a URL mudar, resetamos o erro
-watch(() => props.remoteUrl, () => {
-    hasError.value = false;
+// Reinicia a lógica se o time mudar
+watch(() => [props.teamName, props.remoteUrl], () => {
+    currentSource.value = props.remoteUrl ? 'remote' : 'local';
     isLoading.value = true;
 });
 
-// Lógica de Decisão da URL
+// Calcula qual URL usar baseada no estado atual
 const finalSrc = computed(() => {
-    // 1. Se tiver URL do banco e não deu erro ainda, usa ela
-    if (props.remoteUrl && !hasError.value) {
-        return props.remoteUrl;
-    }
-    // 2. Se não, tenta a pasta local
-    return getTeamLogo(props.teamName);
+    if (currentSource.value === 'remote') return props.remoteUrl;
+    if (currentSource.value === 'local') return getTeamLogo(props.teamName);
+    return null;
 });
 
-const onLoad = () => isLoading.value = false;
+const onLoad = () => {
+    isLoading.value = false;
+};
+
+// 🚨 A MÁGICA ACONTECE AQUI
 const onError = () => {
-    // Se a URL da API der 404, marcamos erro para ele tentar a local
-    if (!hasError.value && props.remoteUrl) {
-        hasError.value = true;
-        // O computed 'finalSrc' vai mudar automaticamente para local
-    } else {
-        // Se já era local e deu erro, paramos de carregar (vai mostrar a letra)
-        isLoading.value = false;
+    // 1. Se a API falhou (404), muda para Local
+    if (currentSource.value === 'remote') {
+        currentSource.value = 'local';
+    } 
+    // 2. Se a Local falhou (404), muda para Texto (Letra)
+    else if (currentSource.value === 'local') {
+        currentSource.value = 'text';
+        isLoading.value = false; // Texto carrega na hora
     }
 };
 </script>
@@ -46,24 +51,26 @@ const onError = () => {
     class="relative overflow-hidden rounded-full shrink-0 flex items-center justify-center bg-gray-800 border border-white/10" 
     :class="size || 'w-6 h-6'"
   >
-    <div v-if="isLoading" class="absolute inset-0 bg-white/10 animate-pulse z-10"></div>
+    <div v-if="isLoading" class="absolute inset-0 bg-white/10 animate-pulse z-10 rounded-full"></div>
 
     <img 
-      v-if="!hasError || (hasError && getTeamLogo(teamName))" 
+      v-if="currentSource !== 'text'"
       :src="finalSrc" 
       @load="onLoad"
-      @error="onError"
+      @error="onError" 
       loading="lazy" 
-      class="w-full h-full object-contain p-0.5"
+      class="w-full h-full object-contain p-0.5 transition-opacity duration-300"
       :class="{ 'opacity-0': isLoading, 'opacity-100': !isLoading }"
       :alt="teamName"
     />
 
     <div 
-        v-if="!isLoading && hasError" 
-        class="absolute inset-0 flex items-center justify-center font-bold text-white/50 text-[10px] select-none"
+        v-else 
+        class="absolute inset-0 flex items-center justify-center font-bold text-white/50 select-none"
+        :class="parseInt(size?.replace(/\D/g,'') || '24') > 30 ? 'text-xs' : 'text-[9px]'"
     >
         {{ teamName.charAt(0).toUpperCase() }}
     </div>
+
   </div>
 </template>

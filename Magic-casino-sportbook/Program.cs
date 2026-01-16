@@ -142,15 +142,16 @@ builder.Services.AddHttpClient();
 builder.Services.AddHttpClient<BetsApiService>();
 builder.Services.AddHttpClient<TheOddsApiService>();
 
+// 🟢 REGISTRO DO SERVIÇO DE LIVE (Pode ser usado por controllers se necessário)
+builder.Services.AddScoped<LiveSportService>();
+
 string provider = Environment.GetEnvironmentVariable("ODDS_PROVIDER") ?? "BetsApi";
 
 if (provider == "BetsApi")
 {
     Console.WriteLine("🚀 MOTOR DE ODDS SELECIONADO: BetsAPI");
-    // Registro para uso como interface
+    // IOddsService será usado por TODOS os robôs
     builder.Services.AddScoped<IOddsService, BetsApiService>();
-    // Registro para uso direto (LiveEventsWorker)
-    builder.Services.AddScoped<BetsApiService>();
 }
 else
 {
@@ -167,13 +168,16 @@ builder.Services.AddHttpClient<CoreWalletService>(client =>
 // 🤖 BACKGROUND SERVICES (ROBÔS)
 // =============================================================
 
-// Robô Gerente de Odds Sincronizadas
-builder.Services.AddHostedService<Magic_casino_sportbook.BackgroundServices.OddsBackgroundService>();
+// 1. Robô de Calendário (Roda a cada 6h - Baixa jogos novos)
+builder.Services.AddHostedService<EventsScheduleWorker>();
 
-// Robô de Eventos em Tempo Real (O que manda as odds pro front)
-builder.Services.AddHostedService<LiveEventsWorker>();
+// 2. Robô de Odds Pré-Jogo (Roda a cada 20min - Atualiza odds)
+builder.Services.AddHostedService<PrematchOddsWorker>();
 
-// Robô de Placar (Scores/Settlement)
+// 3. Robô Ao Vivo (Roda a cada 10s - Placar e Odds Live)
+builder.Services.AddHostedService<LiveUpdateWorker>();
+
+// 4. Robô de Placar/Pagamentos (Settlement)
 builder.Services.AddHostedService<LiveScoreWorker>();
 
 

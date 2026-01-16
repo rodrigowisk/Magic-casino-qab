@@ -1,5 +1,5 @@
 ﻿using System;
-using System.Text.Json.Serialization; // 👈 OBRIGATÓRIO
+using System.Text.Json.Serialization;
 
 namespace Magic_casino_sportbook.DTOs
 {
@@ -20,6 +20,13 @@ namespace Magic_casino_sportbook.DTOs
         [JsonPropertyName("league")]
         public string League { get; set; } = string.Empty;
 
+        // ✅ NOVOS CAMPOS PARA AS IMAGENS
+        [JsonPropertyName("homeTeamLogo")]
+        public string? HomeTeamLogo { get; set; }
+
+        [JsonPropertyName("awayTeamLogo")]
+        public string? AwayTeamLogo { get; set; }
+
         [JsonPropertyName("commenceTime")]
         public DateTime CommenceTime { get; set; }
 
@@ -35,8 +42,6 @@ namespace Magic_casino_sportbook.DTOs
         [JsonPropertyName("period")]
         public string Period { get; set; } = string.Empty;
 
-        // 💰 CORREÇÃO DO AO VIVO:
-        // O Vue espera 'homeOdd', não 'RawOddsHome'. Nós traduzimos aqui!
         [JsonPropertyName("homeOdd")]
         public decimal RawOddsHome { get; set; }
 

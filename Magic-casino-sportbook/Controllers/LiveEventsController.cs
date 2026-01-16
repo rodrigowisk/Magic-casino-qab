@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Magic_casino_sportbook.Controllers
 {
     [ApiController]
-    [Route("api/LiveEvents")] // Rota compatível com o Front
+    [Route("api/LiveEvents")]
     public class LiveEventsController : ControllerBase
     {
         private readonly AppDbContext _context;
@@ -22,7 +22,6 @@ namespace Magic_casino_sportbook.Controllers
         {
             var agora = DateTime.UtcNow;
 
-            // Filtro com tolerância de 10 minutos para garantir que jogos com pequeno delay apareçam
             var liveGames = await _context.SportsEvents
                 .Where(e => e.CommenceTime <= agora
                             && e.CommenceTime > agora.AddHours(-5)
@@ -34,6 +33,11 @@ namespace Magic_casino_sportbook.Controllers
                     HomeTeam = e.HomeTeam,
                     AwayTeam = e.AwayTeam,
                     League = e.League,
+
+                    // ✅ AQUI PREENCHEMOS AS IMAGENS
+                    HomeTeamLogo = e.HomeTeamLogo,
+                    AwayTeamLogo = e.AwayTeamLogo,
+
                     CommenceTime = e.CommenceTime,
                     HomeScore = _context.LiveGameStat.Where(s => s.GameId == e.ExternalId).Select(s => s.HomeScore).FirstOrDefault(),
                     AwayScore = _context.LiveGameStat.Where(s => s.GameId == e.ExternalId).Select(s => s.AwayScore).FirstOrDefault(),
