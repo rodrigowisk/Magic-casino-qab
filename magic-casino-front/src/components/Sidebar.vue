@@ -6,6 +6,9 @@ import {
 } from 'lucide-vue-next';
 import SportsService from '../services/SportsService';
 
+// ✅ IMPORTAÇÃO DA FUNÇÃO INTELIGENTE DE BANDEIRAS
+import { getFlag } from '../utils/flags'; 
+
 const router = useRouter();
 const sportsList = ref<any[]>([]);
 const expandedSports = ref<Set<string>>(new Set());
@@ -17,7 +20,7 @@ const goToLeague = (sportKey: string, leagueName: string) => {
   router.push({ name: 'sport-events', params: { id: sportKey }, query: { league: leagueName } }); 
 };
 
-// ✅ CORREÇÃO: Adicionado 'cricket' na lista de traduções
+// Mapeamento visual dos esportes
 const mapVisuals = (key: string) => {
     const k = key.toLowerCase();
     if (k.includes('soccer')) return { name: 'Futebol', icon: '⚽' };
@@ -28,8 +31,10 @@ const mapVisuals = (key: string) => {
     if (k.includes('american')) return { name: 'Futebol Americano', icon: '🏈' };
     if (k.includes('hockey')) return { name: 'Hóquei', icon: '🏒' };
     if (k.includes('esports')) return { name: 'E-Sports', icon: '🎮' };
-    // 👇 ADICIONADO AQUI
     if (k.includes('cricket')) return { name: 'Críquete', icon: '🏏' };
+    if (k.includes('baseball')) return { name: 'Beisebol', icon: '⚾' };
+    if (k.includes('volleyball') || k.includes('volei')) return { name: 'Vôlei', icon: '🏐' };
+    if (k.includes('darts')) return { name: 'Dardos', icon: '🎯' };
     
     return { name: key, icon: '🏆' };
 };
@@ -41,25 +46,21 @@ const toggleSportAccordion = async (sportKey: string) => {
     try {
         loadingLeagues.value[sportKey] = true;
         const events = await SportsService.getEventsBySport(sportKey);
+        // Filtra ligas únicas
         const uniqueLeagues = [...new Set(events.map((e: any) => e.league))] as string[];
         leaguesCache.value[sportKey] = uniqueLeagues.sort(); 
     } catch (e) { console.error(e); } finally { loadingLeagues.value[sportKey] = false; }
-};
-
-const getFlagLocal = (leagueName: string) => {
-    const name = leagueName.toLowerCase();
-    const countryMap: Record<string, string> = {
-        'brazil': 'br', 'england': 'gb', 'germany': 'de', 'spain': 'es', 'italy': 'it', 'france': 'fr'
-    };
-    const found = Object.keys(countryMap).find(country => name.includes(country));
-    return `/images/flags/${found ? countryMap[found] : 'un'}.svg`;
 };
 
 onMounted(async () => {
     try {
         const data = await SportsService.getActiveSports();
         
+        // Agrupa os esportes da API
         const grouped = data.reduce((acc: any, item: any) => {
+            // Ignora esports se quiser limpar a lista
+            if (item.key.includes('esport')) return acc; 
+
             const visual = mapVisuals(item.key);
             const sportName = visual.name;
 
@@ -75,7 +76,8 @@ onMounted(async () => {
             return acc;
         }, {});
 
-        sportsList.value = Object.values(grouped);
+        // Ordena por contagem (opcional) ou nome
+        sportsList.value = Object.values(grouped).sort((a: any, b: any) => b.count - a.count);
     } catch (e) { console.error(e); }
 });
 </script>
@@ -83,12 +85,13 @@ onMounted(async () => {
 <template>
   <aside class="bg-stake-card flex-shrink-0 transition-all duration-300 overflow-y-auto border-r border-stake-dark/50 custom-scrollbar h-full">
     <div class="p-4 space-y-6">
+        
         <div class="bg-stake-dark p-1 rounded-full flex text-xs font-bold">
             <button class="flex-1 py-2 rounded-full text-center text-stake-text hover:bg-stake-hover">Cassino</button>
             <button class="flex-1 py-2 rounded-full text-center bg-stake-hover text-white shadow">Esportes</button>
         </div>
+
         <nav class="space-y-1">
-            
             <a href="#" 
                @click.prevent="router.push('/live')" 
                class="flex items-center gap-3 px-3 py-2 rounded transition-colors group cursor-pointer"
@@ -113,9 +116,12 @@ onMounted(async () => {
             <h3 class="text-xs font-bold uppercase tracking-wider mb-3 text-stake-text/60 pl-2 flex items-center gap-2">
                 <Trophy class="w-3 h-3"/> Esportes
             </h3>
+            
             <div v-if="sportsList.length === 0" class="pl-4 text-xs text-stake-text animate-pulse">Carregando...</div>
+            
             <div v-else class="space-y-1">
                 <div v-for="sport in sportsList" :key="sport.realKey" class="rounded overflow-hidden">
+                    
                     <div class="flex items-center gap-3 px-3 py-2 rounded hover:bg-stake-hover cursor-pointer group" @click="goToSport(sport.realKey)">
                         <span class="text-lg w-5 text-center">{{ sport.icon }}</span> 
                         <span class="text-sm font-medium text-white group-hover:text-white/90 flex-1">{{ sport.name }}</span>
@@ -125,16 +131,20 @@ onMounted(async () => {
                             <ChevronRight v-else class="w-4 h-4" />
                         </div>
                     </div>
+
                     <div v-if="expandedSports.has(sport.realKey)" class="bg-black/20 pb-2">
-                        <div v-if="loadingLeagues[sport.realKey]" class="px-9 py-2 text-xs text-stake-text animate-pulse">Buscando...</div>
+                        <div v-if="loadingLeagues[sport.realKey]" class="px-9 py-2 text-xs text-stake-text animate-pulse">Buscando ligas...</div>
                         <div v-else class="flex flex-col">
                             <a v-for="league in leaguesCache[sport.realKey]" :key="league" @click.prevent="goToLeague(sport.realKey, league)" 
                                class="pl-12 pr-2 py-2 text-xs text-stake-text hover:text-white hover:bg-white/5 flex items-center gap-3 cursor-pointer group">
-                                <img :src="getFlagLocal(league)" class="w-4 h-2.5 object-cover rounded-sm opacity-80 group-hover:opacity-100 shadow-sm flex-shrink-0" />
+                                
+                                <img :src="getFlag(league)" class="w-4 h-2.5 object-cover rounded-sm opacity-80 group-hover:opacity-100 shadow-sm flex-shrink-0" />
+                                
                                 <span class="truncate capitalize flex-1 text-left">{{ league }}</span>
                             </a>
                         </div>
                     </div>
+
                 </div>
             </div>
         </div>

@@ -1,10 +1,9 @@
 <script setup lang="ts">
-// ... imports mantidos ...
-import { ref, computed } from 'vue';
+import { ref, computed, watch, nextTick } from 'vue';
 import { useBetStore } from '../stores/useBetStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import apiSports from '../services/apiSports'; 
-import { X, Trash2, Trophy, Loader2, Zap, Layers, ChevronRight } from 'lucide-vue-next';
+import { X, Trash2, Trophy, Loader2, Zap, Layers, ChevronRight, AlertCircle } from 'lucide-vue-next';
 import Swal from 'sweetalert2';
 
 defineProps<{ isOpen?: boolean }>();
@@ -14,6 +13,25 @@ const store = useBetStore();
 const authStore = useAuthStore();
 const stake = ref<number | null>(null);
 const isLoading = ref(false);
+const stakeError = ref(false);
+
+const selectionsContainer = ref<HTMLElement | null>(null);
+
+watch(() => store.selections.length, async (newVal, oldVal) => {
+  if (newVal > (oldVal || 0)) {
+    await nextTick();
+    if (selectionsContainer.value) {
+      selectionsContainer.value.scrollTo({
+        top: selectionsContainer.value.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
+  }
+});
+
+watch(stake, () => {
+    if (stakeError.value) stakeError.value = false;
+});
 
 const Toast = Swal.mixin({
   toast: true,
@@ -42,13 +60,12 @@ const truncateName = (name: string, limit: number = 18) => {
   return name.length > limit ? name.substring(0, limit) + '...' : name;
 };
 
-// ✅ FUNÇÃO AJUSTADA: Só traduz para 'RESULTADO FINAL' se for código exato
 const getMarketLabel = (type: string | undefined, marketName: string | undefined) => {
   const raw = type || marketName || '';
   if (['1', '2', 'X', 'x'].includes(raw)) {
     return 'RESULTADO FINAL';
   }
-  return raw; // Retorna "Handicap", "Gols", etc.
+  return raw; 
 };
 
 const handlePlaceBet = async () => {
@@ -57,8 +74,10 @@ const handlePlaceBet = async () => {
     return;
   }
   if (store.count === 0) return;
+  
   if (!stake.value || stake.value <= 0) {
-    Toast.fire({ icon: 'warning', title: 'Digite um valor válido!' });
+    stakeError.value = true;
+    setTimeout(() => stakeError.value = false, 3000);
     return;
   }
 
@@ -75,7 +94,6 @@ const handlePlaceBet = async () => {
         matchId: String(s.id).includes('_') ? String(s.id).split('_')[0] : String(s.id),
         matchName: `${s.homeTeam} x ${s.awayTeam}`,
         selectionName: s.selection,
-        // Envia o nome correto para o banco de dados
         marketName: ['1', '2', 'X', 'x'].includes(s.type) ? '1x2' : (s.type || s.marketName || 'Mercado'), 
         odd: Number(s.odds || 0),
         commenceTime: s.commenceTime || s.commence_time 
@@ -161,20 +179,34 @@ const handlePlaceBet = async () => {
                 <p class="text-gray-500 text-xs">Selecione uma cotação para começar.</p>
             </div>
 
-            <div v-else class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
-                <div v-for="item in store.selections" :key="item.id" class="bg-[#0f172a] rounded-lg p-3 border border-gray-700 relative group hover:border-gray-600 transition-colors shadow-sm">
-                    <button @click="store.removeSelection(item.id)" class="absolute top-2 right-2 text-gray-500 hover:text-red-500 transition-colors p-1">
+            <div 
+                v-else 
+                ref="selectionsContainer"
+                class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar"
+            >
+                <div v-for="item in store.selections" :key="item.id" class="bg-[#0f172a] rounded-lg p-3 border border-gray-700 relative group hover:border-gray-600 transition-colors shadow-sm overflow-hidden">
+                    
+                    <button @click="store.removeSelection(item.id)" class="absolute top-2 right-2 text-gray-500 hover:text-red-500 transition-colors p-1 z-10">
                         <X class="w-4 h-4" />
                     </button>
-                    <div class="pr-6">
-                        <div class="text-[10px] font-medium flex items-center gap-1 flex-wrap pr-4 mb-1 text-left">
-                            <span class="text-gray-200 uppercase font-bold">{{ truncateName(item.homeTeam) }} x {{ truncateName(item.awayTeam) }}</span>
+
+                    <div class="flex flex-col h-full justify-between">
+                        <div class="text-[10px] font-medium flex items-center gap-1 flex-wrap pr-8 mb-2 text-left w-full">
+                            <router-link 
+                                :to="{ name: 'event-details', params: { id: String(item.id).split('_')[0] } }" 
+                                class="text-gray-200 uppercase font-bold hover:text-blue-400 hover:underline transition-colors leading-tight"
+                                @click="emit('toggle')"
+                            >
+                                {{ truncateName(item.homeTeam) }} x {{ truncateName(item.awayTeam) }}
+                            </router-link>
                         </div>
-                        <div class="flex items-center justify-between mt-2">
-                            <span class="bg-[#1e293b] text-[10px] text-gray-400 px-2 py-1 rounded uppercase font-bold tracking-wider text-left">
-                                {{ getMarketLabel(item.type, item.marketName) }}: <span class="text-blue-400">{{ truncateName(item.selection, 12) }}</span>
+                        
+                        <div class="flex items-center justify-between mt-1 gap-2">
+                            <span class="bg-[#1e293b] text-[10px] text-gray-400 px-2 py-1.5 rounded uppercase font-bold tracking-wider text-left flex-1 truncate">
+                                {{ getMarketLabel(item.type, item.marketName) }}: <span class="text-blue-400">{{ item.selection }}</span>
                             </span>
-                            <span class="text-white font-bold bg-blue-600/20 text-blue-400 px-2 py-1 rounded text-xs border border-blue-500/20 min-w-[40px] text-right">
+
+                            <span class="text-white font-bold bg-blue-600/20 text-blue-400 px-2 py-1.5 text-xs border border-blue-500/20 min-w-[50px] text-center rounded shrink-0">
                                 {{ (item.odds || 0).toFixed(2) }}
                             </span>
                         </div>
@@ -185,20 +217,36 @@ const handlePlaceBet = async () => {
 
         <div class="p-4 bg-[#162032] border-t border-gray-700 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.3)] z-10">
             <div class="space-y-2 mb-4 text-sm">
-                <div class="flex justify-between text-xs mb-2 pb-2 border-b border-gray-700" v-if="isUserLoggedIn">
-                    <span class="text-gray-500 uppercase font-bold">Seu Saldo</span>
-                    <span class="text-green-400 font-bold">R$ {{ authStore.user?.balance?.toFixed(2) || '0.00' }}</span>
-                </div>
                 <div class="flex justify-between text-gray-400 items-center">
                     <span>Retorno Potencial:</span>
                     <span class="text-green-400 font-bold text-lg">R$ {{ potentialReturn }}</span>
                 </div>
             </div>
 
-            <div class="mb-4">
-                <div class="relative group">
+            <div class="mb-4 flex gap-2 h-[50px]">
+                <div class="bg-[#0f172a] border border-gray-600 rounded-lg px-3 flex flex-col justify-center items-center min-w-[85px]">
+                    <span class="text-[10px] text-gray-500 uppercase font-bold leading-none mb-1">Valor Odd</span>
+                    <span class="text-yellow-400 font-bold text-lg leading-none">{{ (store.totalOdds || 0).toFixed(2) }}</span>
+                </div>
+
+                <div class="relative group flex-1 h-full">
+                    
+                    <span 
+                        v-if="stakeError" 
+                        class="absolute -top-6 left-0 text-[#ff5555] text-[10px] font-bold bg-[#ff5555]/10 px-2 py-0.5 rounded border border-[#ff5555]/20 flex items-center gap-1 animate-pulse z-20"
+                    >
+                        <AlertCircle class="w-3 h-3" /> Digite um valor válido!
+                    </span>
+
                     <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-bold">R$</span>
-                    <input v-model="stake" type="number" placeholder="0.00" :disabled="!isUserLoggedIn" class="w-full bg-[#0f172a] border border-gray-600 rounded-lg py-3 pl-10 pr-4 text-white font-bold focus:outline-none focus:border-blue-500 transition-all disabled:opacity-50">
+                    <input 
+                        v-model="stake" 
+                        type="number" 
+                        placeholder="0.00" 
+                        :disabled="!isUserLoggedIn" 
+                        class="w-full h-full bg-[#0f172a] border rounded-lg pl-10 pr-4 text-white font-bold focus:outline-none transition-all disabled:opacity-50"
+                        :class="stakeError ? 'border-red-500 focus:border-red-500 text-red-100' : 'border-gray-600 focus:border-blue-500'"
+                    >
                 </div>
             </div>
 

@@ -41,7 +41,11 @@ const loadConfiguration = async () => {
   isLoading.value = true;
   try {
     const response = await apiSports.get('/admin/configuration');
-    sportsData.value = response.data;
+    
+    // CORREÇÃO: Verificação segura
+    const data = (response && response.data) ? response.data : [];
+    
+    sportsData.value = data;
 
     if (sportsData.value.length > 0 && !selectedSportKey.value) {
       selectedSportKey.value = sportsData.value[0].key;
@@ -65,10 +69,13 @@ const saveChanges = async () => {
     isLoading.value = true;
     const response = await apiSports.post('/admin/configuration', sportsData.value);
     
+    // CORREÇÃO: Verificação segura para mensagem
+    const msg = (response && response.data && response.data.message) ? response.data.message : 'Configurações atualizadas.';
+
     Swal.fire({
       icon: 'success',
       title: 'Salvo!',
-      text: response.data.message || 'Configurações atualizadas.',
+      text: msg,
       background: '#1e293b',
       color: '#fff',
       timer: 1500,

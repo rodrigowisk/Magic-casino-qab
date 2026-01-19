@@ -9,14 +9,13 @@ using System.Threading.Tasks;
 
 namespace Magic_casino_sportbook.Controllers
 {
-    // --- DTOs (Formatos de Dados) ---
-    // Colocamos aqui para garantir que o Controller use EXATAMENTE estes
+    // --- DTOs ---
     public class SportConfigDto
     {
         public string? Key { get; set; }
         public string? Name { get; set; }
         public string? Icon { get; set; }
-        public bool IsActive { get; set; } // O Front manda este
+        public bool IsActive { get; set; }
         public List<LeagueConfigDto> Leagues { get; set; } = new();
     }
 
@@ -30,7 +29,7 @@ namespace Magic_casino_sportbook.Controllers
 
     public class TeamConfigDto
     {
-        public string? Id { get; set; } // ⚠️ AQUI ESTAVA O ERRO: Agora aceita null (string?)
+        public string? Id { get; set; }
         public string? Name { get; set; }
         public bool IsActive { get; set; }
     }
@@ -52,54 +51,63 @@ namespace Magic_casino_sportbook.Controllers
         {
             try
             {
-                // 1. Busca configs salvas (Regras)
+                // 1. Busca TODAS as configurações salvas (Essa é a fonte da verdade agora)
                 var configs = await _context.SportConfigurations.AsNoTracking().ToListAsync();
 
-                // 2. Busca eventos futuros (Dados Reais)
+                // 2. Busca eventos apenas para preencher as ligas/times
                 var events = await _context.SportsEvents
                     .AsNoTracking()
-                    .Where(e => e.CommenceTime > DateTime.UtcNow)
+                    .Where(e => e.CommenceTime > DateTime.UtcNow.AddHours(-24))
                     .ToListAsync();
 
-                // Função local para checar status
-                // Se IsEnabled for false, retorna false (Inativo)
-                bool CheckActive(string type, string? id)
+                // Separa configs por tipo para acesso rápido
+                var sportConfigs = configs.Where(c => c.Type == "SPORT").ToList();
+
+                var result = new List<SportConfigDto>();
+
+                // 3. Itera sobre as CONFIGURAÇÕES, não sobre os eventos
+                // Isso garante que esportes sem jogos (mas cadastrados) apareçam na lista
+                foreach (var sConf in sportConfigs)
                 {
-                    if (string.IsNullOrEmpty(id)) return true;
-                    var config = configs.FirstOrDefault(c => c.Type == type && c.Identifier == id);
-                    return config == null ? true : config.IsEnabled;
+                    var sportKey = sConf.Identifier;
+
+                    // Pega eventos desse esporte (se houver)
+                    var sportEvents = events.Where(e => e.SportKey == sportKey).ToList();
+
+                    var dto = new SportConfigDto
+                    {
+                        Key = sportKey,
+                        Name = char.ToUpper(sportKey[0]) + sportKey.Substring(1), // Capitaliza (Soccer -> Soccer)
+                        Icon = GetIconForSport(sportKey),
+                        IsActive = sConf.IsEnabled,
+                        Leagues = sportEvents
+                            .GroupBy(l => l.League)
+                            .Select(gLeague =>
+                            {
+                                var leagueConfig = configs.FirstOrDefault(c => c.Type == "LEAGUE" && c.Identifier == gLeague.Key);
+                                return new LeagueConfigDto
+                                {
+                                    Id = gLeague.Key,
+                                    Name = gLeague.Key,
+                                    IsActive = leagueConfig?.IsEnabled ?? true, // Padrão true se não tiver config específica
+                                    Teams = gLeague
+                                        .SelectMany(t => new[]
+                                        {
+                                            new TeamConfigDto { Id = t.HomeTeamId, Name = t.HomeTeam, IsActive = CheckActive(configs, "TEAM", t.HomeTeamId) },
+                                            new TeamConfigDto { Id = t.AwayTeamId, Name = t.AwayTeam, IsActive = CheckActive(configs, "TEAM", t.AwayTeamId) }
+                                        })
+                                        .Where(t => !string.IsNullOrEmpty(t.Name))
+                                        .GroupBy(t => t.Id ?? t.Name)
+                                        .Select(g => g.First())
+                                        .ToList()
+                                };
+                            }).ToList()
+                    };
+
+                    result.Add(dto);
                 }
 
-                // 3. Monta a árvore
-                var configTree = events
-                    .GroupBy(e => e.SportKey)
-                    .Select(gSport => new SportConfigDto
-                    {
-                        Key = gSport.Key,
-                        Name = gSport.Key,
-                        Icon = "⚽",
-                        IsActive = CheckActive("SPORT", gSport.Key),
-                        Leagues = gSport
-                            .GroupBy(l => l.League)
-                            .Select(gLeague => new LeagueConfigDto
-                            {
-                                Id = gLeague.Key,
-                                Name = gLeague.Key,
-                                IsActive = CheckActive("LEAGUE", gLeague.Key),
-                                Teams = gLeague
-                                    .SelectMany(t => new[]
-                                    {
-                                        new TeamConfigDto { Id = t.HomeTeamId, Name = t.HomeTeam, IsActive = CheckActive("TEAM", t.HomeTeamId) },
-                                        new TeamConfigDto { Id = t.AwayTeamId, Name = t.AwayTeam, IsActive = CheckActive("TEAM", t.AwayTeamId) }
-                                    })
-                                    .Where(t => !string.IsNullOrEmpty(t.Name)) // Remove times sem nome
-                                    .GroupBy(t => t.Id ?? t.Name) // Agrupa para não duplicar (usa nome se ID for null)
-                                    .Select(g => g.First())
-                                    .ToList()
-                            }).ToList()
-                    }).ToList();
-
-                return Ok(configTree);
+                return Ok(result);
             }
             catch (Exception ex)
             {
@@ -107,28 +115,51 @@ namespace Magic_casino_sportbook.Controllers
             }
         }
 
+        private bool CheckActive(List<SportConfiguration> configs, string type, string? id)
+        {
+            if (string.IsNullOrEmpty(id)) return true;
+            var config = configs.FirstOrDefault(c => c.Type == type && c.Identifier == id);
+            return config == null ? true : config.IsEnabled;
+        }
+
+        private string GetIconForSport(string key)
+        {
+            return key.ToLower() switch
+            {
+                "soccer" => "⚽",
+                "basketball" => "🏀",
+                "tennis" => "🎾",
+                "volleyball" => "🏐",
+                "ice_hockey" => "🏒",
+                "baseball" => "⚾",
+                "mma" => "🥊",
+                "boxing" => "🥊",
+                "handball" => "🤾",
+                "futsal" => "⚽",
+                _ => "🏆"
+            };
+        }
+
         // POST: api/admin/configuration
         [HttpPost("configuration")]
         public async Task<IActionResult> UpdateConfiguration([FromBody] List<SportConfigDto> incomingConfig)
         {
-            // Validação básica
-            if (incomingConfig == null)
-                return BadRequest(new { message = "JSON inválido ou vazio." });
+            if (incomingConfig == null) return BadRequest(new { message = "JSON inválido." });
 
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
-                Console.WriteLine($"[ADMIN] Recebendo update de {incomingConfig.Count} esportes.");
+                // Remove configs antigas para substituir pelas novas
+                _context.SportConfigurations.RemoveRange(_context.SportConfigurations);
+                await _context.SaveChangesAsync();
 
-                // Lista para salvar no banco
                 var newConfigs = new List<SportConfiguration>();
 
                 foreach (var sport in incomingConfig)
                 {
                     if (string.IsNullOrEmpty(sport.Key)) continue;
 
-                    // Salva Esporte
-                    // Nota: Mapeamos 'IsActive' do front para 'IsEnabled' e 'IsVisible' do banco
+                    // Salva Esporte (Principal mudança que você queria)
                     newConfigs.Add(new SportConfiguration
                     {
                         Type = "SPORT",
@@ -140,19 +171,17 @@ namespace Magic_casino_sportbook.Controllers
                     foreach (var league in sport.Leagues)
                     {
                         if (string.IsNullOrEmpty(league.Name)) continue;
-
-                        // Salva Liga
                         newConfigs.Add(new SportConfiguration
                         {
                             Type = "LEAGUE",
-                            Identifier = league.Name, // Usamos Name pois ID pode ser null na BetsAPI
+                            Identifier = league.Name,
                             IsEnabled = league.IsActive,
                             IsVisible = league.IsActive
                         });
 
+                        // Times (opcional, se quiser salvar bloqueios de time)
                         foreach (var team in league.Teams)
                         {
-                            // Salva Time (Só se tiver ID, senão ignoramos pois não dá pra filtrar)
                             if (!string.IsNullOrEmpty(team.Id))
                             {
                                 newConfigs.Add(new SportConfiguration
@@ -167,13 +196,6 @@ namespace Magic_casino_sportbook.Controllers
                     }
                 }
 
-                // Estratégia de Atualização:
-                // Removemos todas as configurações anteriores e inserimos as novas.
-                // Isso garante que se você reativou algo, a regra de bloqueio antiga suma.
-
-                _context.SportConfigurations.RemoveRange(_context.SportConfigurations);
-                await _context.SaveChangesAsync();
-
                 if (newConfigs.Any())
                 {
                     await _context.SportConfigurations.AddRangeAsync(newConfigs);
@@ -181,16 +203,12 @@ namespace Magic_casino_sportbook.Controllers
                 }
 
                 await transaction.CommitAsync();
-
-                Console.WriteLine("[ADMIN] Configurações salvas com sucesso no DB.");
                 return Ok(new { message = "Configurações salvas com sucesso!" });
             }
             catch (Exception ex)
             {
                 await transaction.RollbackAsync();
-                Console.WriteLine($"[ADMIN] ERRO AO SALVAR: {ex.Message}");
-                // Retorna 500 com a mensagem real para ajudar no debug
-                return StatusCode(500, new { error = ex.Message, details = ex.InnerException?.Message });
+                return StatusCode(500, new { error = ex.Message });
             }
         }
     }

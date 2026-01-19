@@ -17,24 +17,39 @@ namespace Magic_casino_sportbook.DTOs
         [JsonPropertyName("awayTeam")]
         public string AwayTeam { get; set; } = string.Empty;
 
-        // ✅ NOVOS CAMPOS DE URL (AGORA COMPLETOS)
-
         [JsonPropertyName("homeTeamLogo")]
         public string? HomeTeamLogo { get; set; }
 
         [JsonPropertyName("awayTeamLogo")]
         public string? AwayTeamLogo { get; set; }
 
-        // 👇 ESTE ERA O QUE FALTAVA
         [JsonPropertyName("leagueLogo")]
         public string? LeagueLogo { get; set; }
-        // 👆 -----------------------
+
+        [JsonPropertyName("countryCode")]
+        public string? CountryCode { get; set; }
+
+        [JsonPropertyName("flagUrl")]
+        public string? FlagUrl { get; set; }
 
         [JsonPropertyName("commenceTime")]
         public DateTime CommenceTime { get; set; }
 
         [JsonPropertyName("league")]
         public string League { get; set; } = string.Empty;
+
+        // ✅ NOVOS CAMPOS INCLUÍDOS
+        [JsonPropertyName("homeScore")]
+        public int? HomeScore { get; set; }
+
+        [JsonPropertyName("awayScore")]
+        public int? AwayScore { get; set; }
+
+        [JsonPropertyName("gameTime")]
+        public string? GameTime { get; set; } // Ex: "45", "FT", "HT"
+
+        [JsonPropertyName("status")]
+        public string? Status { get; set; } // Ex: "Live", "Prematch", "Ended"
 
         [JsonPropertyName("rawOddsHome")]
         public decimal? RawOddsHome { get; set; }

@@ -10,9 +10,6 @@ namespace Magic_casino_sportbook.Services
         // 2. Odds Pré-Jogo (Apenas odds de jogos futuros - Roda a cada 20min)
         Task SyncPrematchOdds();
 
-        // 3. Ao Vivo (Placar e Odds em tempo real - Roda a cada 10s)
-        Task SyncLiveFeed();
-
         // Auxiliar (Baixa imagens que faltaram)
         Task SyncMissingImages();
 

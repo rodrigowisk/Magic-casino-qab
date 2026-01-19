@@ -5,6 +5,8 @@ namespace Magic_casino_sportbook.DTOs
 {
     public class LiveGameDto
     {
+        // 🔴 ANTES: [JsonPropertyName("externalId")]
+        // 🟢 AGORA: "gameId" (para bater com o Vue)
         [JsonPropertyName("gameId")]
         public string GameId { get; set; } = string.Empty;
 
@@ -20,12 +22,17 @@ namespace Magic_casino_sportbook.DTOs
         [JsonPropertyName("league")]
         public string League { get; set; } = string.Empty;
 
-        // ✅ NOVOS CAMPOS PARA AS IMAGENS
         [JsonPropertyName("homeTeamLogo")]
         public string? HomeTeamLogo { get; set; }
 
         [JsonPropertyName("awayTeamLogo")]
         public string? AwayTeamLogo { get; set; }
+
+        [JsonPropertyName("countryCode")]
+        public string? CountryCode { get; set; }
+
+        [JsonPropertyName("flagUrl")]
+        public string? FlagUrl { get; set; }
 
         [JsonPropertyName("commenceTime")]
         public DateTime CommenceTime { get; set; }
@@ -42,10 +49,12 @@ namespace Magic_casino_sportbook.DTOs
         [JsonPropertyName("period")]
         public string Period { get; set; } = string.Empty;
 
+        // 🔴 ANTES: [JsonPropertyName("rawOddsHome")]
+        // 🟢 AGORA: "homeOdd" (O Vue usa 'homeOdd' para exibir e animar)
         [JsonPropertyName("homeOdd")]
         public decimal RawOddsHome { get; set; }
 
-        [JsonPropertyName("drawOdd")]
+        [JsonPropertyName("drawOdd")] // Se estiver rawOddsDraw, mude para drawOdd
         public decimal RawOddsDraw { get; set; }
 
         [JsonPropertyName("awayOdd")]

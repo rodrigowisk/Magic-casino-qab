@@ -4,9 +4,9 @@ using Magic_casino_sportbook.DTOs;
 using Magic_casino_sportbook.Data.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Linq;
-using System.Net.Http;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 
@@ -16,117 +16,78 @@ namespace Magic_casino_sportbook.Controllers
     [Route("api/sports")]
     public class SportsController : ControllerBase
     {
-        private readonly IOddsService _oddsService;
         private readonly AppDbContext _context;
+        private readonly IServiceScopeFactory _scopeFactory;
 
-        public SportsController(IOddsService oddsService, AppDbContext context)
+        public SportsController(AppDbContext context, IServiceScopeFactory scopeFactory)
         {
-            _oddsService = oddsService;
             _context = context;
+            _scopeFactory = scopeFactory;
         }
 
-        // =================================================================================
-        // 🔧 MÉTODOS DE DIAGNÓSTICO E MANUTENÇÃO (MANTIDOS)
-        // =================================================================================
-
-        [HttpGet("raio-x-score/{sportKey}/{gameId}")]
-        public async Task<IActionResult> RaioXScore(string sportKey, string gameId)
+        // ... (Os métodos ForceUpdate, GetRawJson, GetEventById continuam iguais) ...
+        [HttpPost("force-update")]
+        public IActionResult ForceUpdate()
         {
-            var apiKey = Environment.GetEnvironmentVariable("ODDS_API_KEY") ?? Environment.GetEnvironmentVariable("OddsApiKey");
-            var url = $"https://api.the-odds-api.com/v4/sports/{sportKey}/scores/?apiKey={apiKey}&daysFrom=1&eventIds={gameId}";
+            _ = Task.Run(async () => {
+                try { using (var scope = _scopeFactory.CreateScope()) { await scope.ServiceProvider.GetRequiredService<PreMatchService>().SyncUpcomingGames(); } }
+                catch (Exception ex) { Console.WriteLine($"🔥 Erro: {ex.Message}"); }
+            });
+            return Ok(new { message = "Atualização iniciada." });
+        }
+
+        [HttpGet("debug-json/{eventId}")]
+        public async Task<IActionResult> GetRawJson(string eventId)
+        {
+            var token = Environment.GetEnvironmentVariable("BETSAPI_TOKEN") ?? "137460-kSCpac5sbNtyVZ";
+            var url = $"https://api.betsapi.com/v1/bet365/prematch?token={token}&FI={eventId}";
             using var client = new HttpClient();
             var response = await client.GetAsync(url);
-            var json = await response.Content.ReadAsStringAsync();
-            return Ok(new { Explicao = "JSON REAL Scores", UrlUsada = url, JSON_Scores = json });
+            return Content(await response.Content.ReadAsStringAsync(), "application/json");
         }
-
-        [HttpGet("backfill-sportkey")]
-        public async Task<IActionResult> BackfillSportKey() => Ok(new { message = "Backfill desativado." });
-
-        [HttpGet("sync-base")]
-        public async Task<IActionResult> SyncBase()
-        {
-            try { await _oddsService.SyncBaseOddsToDatabase(); return Ok(new { message = "Sync BASE concluída!" }); }
-            catch (Exception ex) { return BadRequest(new { error = ex.Message }); }
-        }
-
-        [HttpGet("sync-images")]
-        public async Task<IActionResult> ForceSyncImages()
-        {
-            await _oddsService.SyncMissingImages();
-            return Ok(new { message = "Sincronização iniciada." });
-        }
-
-        [HttpGet("raio-x/{sportKey}/{gameId}")]
-        public async Task<IActionResult> RaioX(string sportKey, string gameId)
-        {
-            var dbGame = await _context.SportsEvents.FirstOrDefaultAsync(e => e.ExternalId == gameId);
-            return Ok(new { TimeCasa = dbGame?.HomeTeam, TimeFora = dbGame?.AwayTeam, Status = "OK" });
-        }
-
-        [HttpGet("diagnostico-liga/{sportKey}")]
-        public async Task<IActionResult> DiagnosticoLiga(string sportKey) => Ok(new { message = "N/A" });
-
-        [HttpGet("sync-pinnacle")]
-        public async Task<IActionResult> SyncLegacy() => await SyncBase();
-
-        [HttpGet("sync-event/{id}")]
-        public async Task<IActionResult> SyncEvent(string id) => Ok(new { message = "N/A" });
 
         [HttpGet("event/{id}")]
         public async Task<IActionResult> GetEventById(string id)
         {
-            var sportsEvent = await _context.SportsEvents.Include(e => e.Odds).FirstOrDefaultAsync(e => e.ExternalId == id);
+            var sportsEvent = await _context.SportsEvents.Include(e => e.Odds).AsNoTracking().FirstOrDefaultAsync(e => e.ExternalId == id);
             if (sportsEvent == null) return NotFound(new { error = "Evento não encontrado." });
             return Ok(sportsEvent);
         }
+        // ... (Fim dos métodos auxiliares) ...
+
 
         // =================================================================================
-        // 🚀 MÉTODOS PÚBLICOS DO SITE (CORREÇÃO SAFE-MODE)
+        // 🚀 MÉTODOS PÚBLICOS (MODO ESTRITO: SÓ FUTURO)
         // =================================================================================
 
-        // 1. Menu Lateral
         [HttpGet("active-sports")]
         public async Task<IActionResult> GetActiveSports()
         {
             try
             {
-                var agoraAjustado = DateTime.UtcNow;
+                var agora = DateTime.UtcNow;
+                var limiteFuturo = agora.AddDays(4);
 
-                // 1. Carrega bloqueios
-                var blockedConfigsRaw = await _context.SportConfigurations
+                var stats = await _context.SportsEvents
                     .AsNoTracking()
-                    .Where(c => c.IsVisible == false && c.Type == "SPORT")
-                    .Select(c => c.Identifier)
-                    .ToListAsync();
-
-                // Normaliza em Memória (Safe)
-                var blockedConfigs = new HashSet<string>(blockedConfigsRaw.Select(k => k.ToLower().Trim()));
-
-                // 2. Carrega TODAS as chaves de esportes futuros do banco (Query leve)
-                var allSportsKeys = await _context.SportsEvents
-                    .AsNoTracking()
-                    .Where(e => e.CommenceTime > agoraAjustado)
-                    .Select(e => e.SportKey) // Trazemos só a string, muito rápido
-                    .ToListAsync();
-
-                // 3. Filtra e Agrupa em Memória (C#) - Aqui o ToLower() funciona perfeito
-                var stats = allSportsKeys
-                    .Where(k => !string.IsNullOrEmpty(k) && !blockedConfigs.Contains(k.ToLower().Trim()))
-                    .GroupBy(k => k)
+                    // 🔒 FILTRO: Conta apenas jogos PREMATCH que AINDA NÃO ACONTECERAM
+                    .Where(e =>
+                        e.Status == "Prematch" &&
+                        e.CommenceTime > agora // Tolerância ZERO
+                    )
+                    .Where(e => e.CommenceTime <= limiteFuturo)
+                    .GroupBy(e => e.SportKey)
                     .Select(g => new { Key = g.Key, Count = g.Count() })
-                    .ToList();
+                    .ToListAsync();
 
                 return Ok(stats);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Erro ActiveSports: {ex.Message}");
-                return StatusCode(500);
+                return StatusCode(500, new { error = "Erro ao carregar menu." });
             }
         }
 
-        // 2. Lista de Jogos
         [HttpGet("events")]
         public async Task<ActionResult<IEnumerable<SportsEventDto>>> GetEvents(
             [FromQuery] string? sport = null,
@@ -137,90 +98,126 @@ namespace Magic_casino_sportbook.Controllers
             {
                 var agora = DateTime.UtcNow;
 
-                // 1. Carrega TODAS as regras
-                var blockedConfigs = await _context.SportConfigurations
-                    .AsNoTracking()
-                    .Where(c => c.IsVisible == false)
-                    .ToListAsync();
-
-                // Prepara HashSets normalizados
-                var blockedSports = new HashSet<string>(blockedConfigs.Where(c => c.Type == "SPORT").Select(c => c.Identifier.ToLower().Trim()));
-                var blockedLeagues = new HashSet<string>(blockedConfigs.Where(c => c.Type == "LEAGUE").Select(c => c.Identifier.ToLower().Trim()));
-                var blockedTeams = new HashSet<string>(blockedConfigs.Where(c => c.Type == "TEAM").Select(c => c.Identifier.Trim())); // IDs geralmente são exatos
-
-                // 2. Query Base (Apenas filtros que o Banco suporta 100%)
                 var query = _context.SportsEvents
+                    .Include(e => e.Odds)
                     .AsNoTracking()
-                    .Where(e => e.CommenceTime > agora)
+                    // 🛑 MUDANÇA CRÍTICA AQUI 🛑
+                    // Removemos "OR e.Status == Live".
+                    // Agora, só retorna se for PREMATCH e estiver NO FUTURO.
+                    // Se virou Live? Some daqui.
+                    // Se passou do horário e não virou Live? Some daqui (Limbo).
+                    .Where(e =>
+                        e.Status == "Prematch" &&
+                        e.CommenceTime > agora // Exatamente agora. 1 segundo depois já some.
+                    )
+                    .Where(e => e.CommenceTime <= agora.AddDays(4))
                     .AsQueryable();
 
-                // Filtro de Esporte via URL (se houver) - Aplicamos ToLower aqui pois é parâmetro simples
                 if (!string.IsNullOrWhiteSpace(sport))
                 {
-                    // Nota: Se o banco reclamar disso, mudaremos, mas geralmente igualdade simples funciona
-                    var sLower = sport.Trim().ToLower();
-                    // Trazemos tudo desse esporte e filtramos o case no client se precisar, 
-                    // mas geralmente SQL suporta 'Where(x => x == y)' bem.
-                    // Para garantir, vamos trazer um pouco mais e filtrar em memória se o driver for chato.
+                    string sportTerm = sport.Trim().ToLower();
+                    query = query.Where(e => e.SportKey.ToLower() == sportTerm);
                 }
 
-                // 3. Executa a Query e traz para memória (Materialização)
-                // Trazemos os dados ordenados por tempo para pegar os próximos jogos
-                // CUIDADO: Se tiver MILHARES de jogos, isso pesa. Mas com paginação no banco é melhor.
-
-                // Estratégia Híbrida Segura:
-                // Aplicamos paginação DEPOIS do filtro de memória para garantir precisão, 
-                // mas limitamos a busca inicial para não estourar a RAM.
+                // Ordenação: Apenas por horário, já que não tem mais Live misturado
                 var rawEvents = await query
                     .OrderBy(e => e.CommenceTime)
-                    .Take(pageSize * 5) // Pegamos um buffer maior (5x) para ter margem após filtrar
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
                     .ToListAsync();
 
-                // 4. Filtragem Fina em Memória (C# Puro - 100% Seguro)
-                var filteredEvents = rawEvents.Where(e =>
+                var dtoList = new List<SportsEventDto>();
+
+                foreach (var e in rawEvents)
                 {
-                    // Normaliza dados do evento
-                    var sKey = e.SportKey?.ToLower().Trim() ?? "";
-                    var lName = e.League?.ToLower().Trim() ?? "";
-                    var hId = e.HomeTeamId ?? "";
-                    var aId = e.AwayTeamId ?? "";
+                    // Placar
+                    int? hScore = null, aScore = null;
+                    if (!string.IsNullOrEmpty(e.Score) && e.Score.Contains("-"))
+                    {
+                        var parts = e.Score.Split('-');
+                        if (parts.Length == 2 && int.TryParse(parts[0], out int h) && int.TryParse(parts[1], out int a))
+                        {
+                            hScore = h; aScore = a;
+                        }
+                    }
 
-                    // Filtro de URL (Esporte específico)
-                    if (!string.IsNullOrWhiteSpace(sport) && sKey != sport.Trim().ToLower()) return false;
+                    // Odds
+                    decimal oddHome = 0, oddDraw = 0, oddAway = 0;
+                    var mainMarkets = e.Odds.Where(o =>
+                        o.MarketName == "Resultado Final" ||
+                        o.MarketName == "Vencedor da Partida" ||
+                        o.MarketName == "Money Line"
+                    ).ToList();
 
-                    // Filtros de Admin (Bloqueios)
-                    if (blockedSports.Contains(sKey)) return false;
-                    if (blockedLeagues.Contains(lName)) return false;
-                    if (blockedTeams.Contains(hId) || blockedTeams.Contains(aId)) return false;
+                    foreach (var odd in mainMarkets)
+                    {
+                        if (IsHome(odd.OutcomeName, e.HomeTeam)) oddHome = odd.Price;
+                        else if (IsDraw(odd.OutcomeName)) oddDraw = odd.Price;
+                        else if (IsAway(odd.OutcomeName, e.AwayTeam)) oddAway = odd.Price;
+                    }
 
-                    return true;
-                })
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .Select(e => new SportsEventDto
-                {
-                    ExternalId = e.ExternalId,
-                    SportKey = e.SportKey,
-                    HomeTeam = e.HomeTeam,
-                    AwayTeam = e.AwayTeam,
-                    CommenceTime = e.CommenceTime,
-                    League = e.League,
-                    HomeTeamLogo = !string.IsNullOrEmpty(e.HomeTeamId) ? $"https://assets.b365api.com/images/team/m/{e.HomeTeamId}.png" : null,
-                    AwayTeamLogo = !string.IsNullOrEmpty(e.AwayTeamId) ? $"https://assets.b365api.com/images/team/m/{e.AwayTeamId}.png" : null,
-                    LeagueLogo = !string.IsNullOrEmpty(e.LeagueId) ? $"https://assets.b365api.com/images/league/s/{e.LeagueId}.png" : null,
-                    RawOddsHome = e.RawOddsHome,
-                    RawOddsDraw = e.RawOddsDraw,
-                    RawOddsAway = e.RawOddsAway
-                })
-                .ToList();
+                    if (oddHome == 0 && e.RawOddsHome > 0) oddHome = e.RawOddsHome;
+                    if (oddDraw == 0 && e.RawOddsDraw > 0) oddDraw = e.RawOddsDraw;
+                    if (oddAway == 0 && e.RawOddsAway > 0) oddAway = e.RawOddsAway;
 
-                return Ok(filteredEvents);
+                    dtoList.Add(new SportsEventDto
+                    {
+                        ExternalId = e.ExternalId,
+                        SportKey = e.SportKey,
+                        HomeTeam = e.HomeTeam,
+                        AwayTeam = e.AwayTeam,
+                        CommenceTime = DateTime.SpecifyKind(e.CommenceTime, DateTimeKind.Utc),
+                        League = e.League,
+                        HomeTeamLogo = (!string.IsNullOrEmpty(e.HomeTeamId) && e.HomeTeamId != "0") ? $"https://assets.b365api.com/images/team/m/{e.HomeTeamId}.png" : null,
+                        AwayTeamLogo = (!string.IsNullOrEmpty(e.AwayTeamId) && e.AwayTeamId != "0") ? $"https://assets.b365api.com/images/team/m/{e.AwayTeamId}.png" : null,
+                        LeagueLogo = (!string.IsNullOrEmpty(e.LeagueId) && e.LeagueId != "0") ? $"https://assets.b365api.com/images/league/s/{e.LeagueId}.png" : null,
+                        FlagUrl = !string.IsNullOrEmpty(e.CountryCode) ? $"https://assets.b365api.com/images/flags/{e.CountryCode}.svg" : null,
+                        CountryCode = e.CountryCode,
+                        HomeScore = hScore,
+                        AwayScore = aScore,
+                        GameTime = e.GameTime,
+                        Status = e.Status,
+                        RawOddsHome = oddHome,
+                        RawOddsDraw = oddDraw,
+                        RawOddsAway = oddAway
+                    });
+                }
+
+                return Ok(dtoList);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"ERRO CRÍTICO EVENTS: {ex.Message}");
-                return StatusCode(500, new { error = "Erro interno ao processar eventos." });
+                return StatusCode(500, new { error = "Erro interno." });
             }
+        }
+
+        // 👇 Comparadores
+        private bool IsHome(string outcomeName, string homeTeam)
+        {
+            if (string.IsNullOrEmpty(outcomeName)) return false;
+            var n = outcomeName.ToLower().Trim();
+            var h = homeTeam?.ToLower().Trim();
+            if (n == "1" || n == "casa" || n == "home") return true;
+            if (!string.IsNullOrEmpty(h) && (n == h || n.Contains(h) || h.Contains(n))) return true;
+            return false;
+        }
+
+        private bool IsAway(string outcomeName, string awayTeam)
+        {
+            if (string.IsNullOrEmpty(outcomeName)) return false;
+            var n = outcomeName.ToLower().Trim();
+            var a = awayTeam?.ToLower().Trim();
+            if (n == "2" || n == "fora" || n == "away") return true;
+            if (!string.IsNullOrEmpty(a) && (n == a || n.Contains(a) || a.Contains(n))) return true;
+            return false;
+        }
+
+        private bool IsDraw(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            var n = name.ToLower().Trim();
+            return n == "x" || n == "empate" || n == "draw";
         }
     }
 }

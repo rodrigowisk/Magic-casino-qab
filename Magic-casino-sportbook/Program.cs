@@ -10,9 +10,8 @@ using Magic_casino_sportbook.BackgroundServices;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// LOG DE INICIALIZAÇÃO
 Console.WriteLine("#############################################################");
-Console.WriteLine(">>>>> SPORTBOOK API - SISTEMA DE MÚLTIPLOS MOTORES <<<<<");
+Console.WriteLine(">>>>> SPORTBOOK API - SISTEMA UNIFICADO (BETS API) <<<<<");
 Console.WriteLine("#############################################################");
 
 // 1. DATABASE
@@ -45,10 +44,8 @@ builder.Services
         {
             OnMessageReceived = context =>
             {
-                // ✅ CONFIGURAÇÃO PARA SIGNALR: Captura o token via Query String
                 var accessToken = context.Request.Query["access_token"];
                 var path = context.HttpContext.Request.Path;
-
                 if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/gameHub"))
                 {
                     context.Token = accessToken.ToString().Replace("\"", "").Replace("'", "");
@@ -56,19 +53,11 @@ builder.Services
                 else
                 {
                     var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
-                    if (!string.IsNullOrEmpty(authHeader) &&
-                        authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                    if (!string.IsNullOrEmpty(authHeader) && authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
                     {
-                        var token = authHeader.Substring("Bearer ".Length).Trim();
-                        token = token.Replace("\"", "").Replace("'", "");
-                        context.Token = token;
+                        context.Token = authHeader.Substring("Bearer ".Length).Trim().Replace("\"", "").Replace("'", "");
                     }
                 }
-                return Task.CompletedTask;
-            },
-            OnAuthenticationFailed = context =>
-            {
-                Console.WriteLine($">>>>> [ERRO AUTH] {context.Exception.Message}");
                 return Task.CompletedTask;
             }
         };
@@ -76,7 +65,7 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
-// 3. CORS (SESSÃO CRÍTICA) ⚠️
+// 3. CORS
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend",
@@ -90,11 +79,10 @@ builder.Services.AddCors(options =>
                   )
                   .AllowAnyHeader()
                   .AllowAnyMethod()
-                  .AllowCredentials(); // ⚠️ OBRIGATÓRIO PARA SIGNALR
+                  .AllowCredentials();
         });
 });
 
-// 4. MVC / SIGNALR
 builder.Services.AddControllers();
 
 // ✅ SIGNALR + REDIS
@@ -105,11 +93,9 @@ builder.Services.AddSignalR().AddStackExchangeRedis(o =>
 });
 
 builder.Services.AddEndpointsApiExplorer();
-
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "MAGIC CASINO SPORTBOOK API", Version = "v1" });
-
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Name = "Authorization",
@@ -119,7 +105,6 @@ builder.Services.AddSwaggerGen(c =>
         In = ParameterLocation.Header,
         Description = "Bearer {token}"
     });
-
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
@@ -138,19 +123,23 @@ builder.Services.AddSwaggerGen(c =>
 
 builder.Services.AddHttpClient();
 
-// Registro dos serviços de API
+// 1. Serviços Legados (Mantidos para compatibilidade, mas corrigidos)
 builder.Services.AddHttpClient<BetsApiService>();
 builder.Services.AddHttpClient<TheOddsApiService>();
 
-// 🟢 REGISTRO DO SERVIÇO DE LIVE (Pode ser usado por controllers se necessário)
-builder.Services.AddScoped<LiveSportService>();
+// 2. 🟢 NOVO SERVIÇO DE INGESTÃO (Principal)
+builder.Services.AddHttpClient<PreMatchService>();
 
+// 3. Serviço de Live
+builder.Services.AddHttpClient<LiveSportService>();
+
+// 4. Seleção de Provedor de Odds
 string provider = Environment.GetEnvironmentVariable("ODDS_PROVIDER") ?? "BetsApi";
 
 if (provider == "BetsApi")
 {
     Console.WriteLine("🚀 MOTOR DE ODDS SELECIONADO: BetsAPI");
-    // IOddsService será usado por TODOS os robôs
+    // Injeta o BetsApiService como implementação de IOddsService
     builder.Services.AddScoped<IOddsService, BetsApiService>();
 }
 else
@@ -159,34 +148,31 @@ else
     builder.Services.AddScoped<IOddsService, TheOddsApiService>();
 }
 
+// ✅ Registra PreMatchService explicitamente como Scoped para uso no Controller
+builder.Services.AddScoped<PreMatchService>();
+
+// 5. Integração com Core (Carteira)
 builder.Services.AddHttpClient<CoreWalletService>(client =>
 {
     client.BaseAddress = new Uri("http://core:8080");
 });
 
 // =============================================================
-// 🤖 BACKGROUND SERVICES (ROBÔS)
+// 🤖 BACKGROUND SERVICES
 // =============================================================
 
-// 1. Robô de Calendário (Roda a cada 6h - Baixa jogos novos)
-builder.Services.AddHostedService<EventsScheduleWorker>();
+// 1. Robô de Ingestão UNIFICADO
+builder.Services.AddHostedService<PreMatchWorker>();
 
-// 2. Robô de Odds Pré-Jogo (Roda a cada 20min - Atualiza odds)
-builder.Services.AddHostedService<PrematchOddsWorker>();
-
-// 3. Robô Ao Vivo (Roda a cada 10s - Placar e Odds Live)
+// 2. Robô Ao Vivo
 builder.Services.AddHostedService<LiveUpdateWorker>();
 
-// 4. Robô de Placar/Pagamentos (Settlement)
+// 3. Robô de Settlement
 builder.Services.AddHostedService<LiveScoreWorker>();
-
 
 var app = builder.Build();
 
-// --- CONFIGURAÇÃO DE MIDDLEWARE (ORDEM VITAL) ---
 app.UseRouting();
-
-// CORS deve vir LOGO APÓS Routing e ANTES de Auth
 app.UseCors("AllowFrontend");
 
 if (app.Environment.IsDevelopment())
@@ -203,8 +189,6 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-
-// ✅ ROTA DO SIGNALR
 app.MapHub<GameHub>("/gameHub");
 
 // AUTO-MIGRATE
