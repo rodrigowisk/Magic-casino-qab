@@ -5,11 +5,16 @@ import { Play, Clock, ArrowLeft } from 'lucide-vue-next';
 import SportsService from '../services/SportsService';
 import TeamLogo from '../components/TeamLogo.vue';
 import { useBetStore, type BetType } from '../stores/useBetStore';
+import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signalr';
 
 // ✅ IMPORTAÇÃO DA NOVA FUNÇÃO DE BANDEIRAS
 import { getFlag } from '../utils/flags'; 
 
-// Interface flexível (Aceita maiúsculo/minúsculo)
+// --- ⚙️ CONFIGURAÇÃO DINÂMICA DA API ---
+// Pega do .env ou usa a porta 8090 do Docker (Sportbook) por padrão
+const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:8090';
+
+// Interface flexível
 interface SportEvent {
   externalId?: string;
   id?: string;
@@ -40,8 +45,10 @@ const loadingMore = ref(false);
 const events = ref<SportEvent[]>([]);
 const currentPage = ref(1);
 const hasMore = ref(true);
-// 🚀 AUMENTADO PARA 1000 PARA PEGAR JOGOS DE AMANHÃ NA PRIMEIRA CARGA
 const pageSize = 1000; 
+
+// --- STATE SIGNALR ---
+const connection = ref<HubConnection | null>(null);
 
 // --- FILTROS ---
 const openLeagues = ref<Set<string>>(new Set());
@@ -60,7 +67,7 @@ const leagueFilter = computed(() => {
 const loadTrigger = ref<HTMLElement | null>(null);
 let observer: IntersectionObserver | null = null;
 
-// --- UTILS DE DATA (CORREÇÃO FUSO) 📅 ---
+// --- UTILS ---
 const getLocalDateString = (dateObj: Date) => {
     const year = dateObj.getFullYear();
     const month = String(dateObj.getMonth() + 1).padStart(2, '0');
@@ -150,7 +157,6 @@ const fetchEvents = async (reset = false) => {
         events.value.push(...uniqueNewEvents);
     }
     
-    // Abre ligas automaticamente na primeira página
     if (currentPage.value === 1) {
         newEvents.forEach(e => { if (e.league) openLeagues.value.add(e.league); });
     }
@@ -167,17 +173,65 @@ const fetchEvents = async (reset = false) => {
 
 watch(() => route.params.id, () => fetchEvents(true), { immediate: true });
 
-onMounted(() => {
+// --- LIFECYCLE (APENAS REMOÇÃO DE JOGOS) ---
+onMounted(async () => {
+  // 1. Scroll Infinito
   observer = new IntersectionObserver((entries) => {
     if (entries[0]?.isIntersecting && !loading.value && !loadingMore.value && hasMore.value) {
       fetchEvents(false);
     }
   }, { rootMargin: '200px' });
   if (loadTrigger.value) observer.observe(loadTrigger.value);
+
+  // 2. Conexão SignalR - APENAS PARA EXPULSÃO DE JOGOS LIVE
+  try {
+    const signalRUrl = `${BACKEND_URL}/gameHub`;
+    console.log(`🔌 [PRÉ-JOGO] Conectando SignalR em: ${signalRUrl}`);
+
+    connection.value = new HubConnectionBuilder()
+      .withUrl(signalRUrl)
+      .configureLogging(LogLevel.Information)
+      .withAutomaticReconnect()
+      .build();
+
+    // 🔥 OUVINTE 1: Remove o jogo da lista de pré-jogo assim que começa
+    connection.value.on("RemoveGames", (gameIds: string[]) => {
+      console.log("🔥 [SIGNALR] Jogo começou! Removendo da lista:", gameIds);
+      
+      if (events.value.length > 0) {
+        const initialCount = events.value.length;
+        
+        events.value = events.value.filter(e => {
+            const id = getGameId(e);
+            return !gameIds.includes(id);
+        });
+        
+        const removedCount = initialCount - events.value.length;
+        if (removedCount > 0) {
+            console.log(`✅ Sucesso! ${removedCount} jogos removidos do pré-jogo.`);
+        }
+      }
+    });
+
+    // 🔇 OUVINTE 2: Silenciador de Warning (A Correção do Erro no Console)
+    // O Backend manda odds pra todo mundo. Registramos vazio para não dar erro.
+    connection.value.on("LiveOddsUpdate", () => {
+        // Shhh... apenas ignore.
+    });
+
+    await connection.value.start();
+    console.log("🟢 SignalR Conectado e Pronto!");
+
+  } catch (err) {
+    console.error("❌ Erro SignalR:", err);
+  }
 });
 
 onUnmounted(() => {
   if (observer) observer.disconnect();
+  if (connection.value) {
+    connection.value.stop();
+  }
 });
 
 const datasFiltro = computed(() => {
@@ -187,7 +241,7 @@ const datasFiltro = computed(() => {
     const d = new Date();
     d.setDate(hoje.getDate() + i);
     let label = i === 0 ? 'Hoje' : i === 1 ? 'Amanhã' : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-    const valor = getLocalDateString(d); // ✅ Correção de Fuso
+    const valor = getLocalDateString(d);
     opcoes.push({ label: label.toUpperCase(), valor });
   }
   return opcoes;

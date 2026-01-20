@@ -1,6 +1,6 @@
 ﻿using Magic_casino_sportbook.Data;
 using Magic_casino_sportbook.Models;
-using Magic_casino_sportbook.DTOs.Live; // Importe o namespace do arquivo acima
+using Magic_casino_sportbook.DTOs.Live;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
@@ -19,7 +19,7 @@ namespace Magic_casino_sportbook.Services
         }
 
         // ==============================================================================
-        // 🛠️ MÉTODO QUE CORRIGE O PROBLEMA DO PLACAR E ODDS
+        // 🛠️ ATUALIZA DADOS DE JOGOS QUE JÁ ESTÃO AO VIVO (Odds, Placar, Tempo)
         // ==============================================================================
         public async Task<List<string>> UpdateLiveGamesAsync(List<SportsEvent> liveGames, AppDbContext context)
         {
@@ -72,7 +72,7 @@ namespace Magic_casino_sportbook.Services
             if (!string.IsNullOrEmpty(ev.ScoreString))
                 game.Score = ev.ScoreString;
 
-            // ✅ CORREÇÃO APLICADA AQUI: Atualizar o tempo na tabela principal
+            // ✅ CORREÇÃO CRÍTICA: Atualizar o tempo na tabela principal para não ficar NULL
             if (!string.IsNullOrEmpty(ev.Time))
             {
                 game.GameTime = ev.Time;
@@ -85,12 +85,11 @@ namespace Magic_casino_sportbook.Services
                 endedIds.Add(game.ExternalId);
             }
 
-            // 3. 🔥 A CORREÇÃO CRÍTICA: Atualizar/Criar LiveGameStat 🔥
+            // 3. Atualizar/Criar LiveGameStat (Tabela Auxiliar)
             var liveStat = await context.LiveGameStat.FirstOrDefaultAsync(l => l.GameId == game.Id);
 
             if (liveStat == null)
             {
-                // Se não existe, CRIA! (Isso resolve o problema do NULL no SQL)
                 liveStat = new LiveGameStat
                 {
                     GameId = game.Id,
@@ -112,7 +111,6 @@ namespace Magic_casino_sportbook.Services
             liveStat.LastUpdated = DateTime.UtcNow;
 
             // 4. Atualizar Odds (Buscando nos pacotes "PA")
-            // A API envia Odds fracionadas ("1/2") ligadas a nomes ("1", "X", "2" ou nomes dos times)
             var oddsPackets = packets.Where(p => p.Type == "PA" && !string.IsNullOrEmpty(p.Odds)).ToList();
 
             foreach (var odd in oddsPackets)
@@ -120,8 +118,7 @@ namespace Magic_casino_sportbook.Services
                 decimal valorDecimal = ConvertFraction(odd.Odds);
                 if (valorDecimal <= 1.0m) continue;
 
-                // Mapeamento simples baseada no Nome
-                // (Nota: Para maior precisão, o ideal é checar o ID do mercado, mas isso funciona para 1x2 básico)
+                // Mapeamento simples baseada no Nome (1, X, 2)
                 if (odd.Name == "1" || odd.Name == game.HomeTeam)
                     game.RawOddsHome = valorDecimal;
                 else if (odd.Name == "X" || odd.Name == "Draw")
@@ -131,20 +128,36 @@ namespace Magic_casino_sportbook.Services
             }
         }
 
-        // Método auxiliar para rotação de fila (HotZone)
-        public async Task CheckForKickoffAsync(List<SportsEvent> games, AppDbContext context)
+        // ==============================================================================
+        // 🛠️ ROTINA DE KICKOFF: VERIFICA QUEM VIROU LIVE E RETORNA A LISTA
+        // ==============================================================================
+        public async Task<List<string>> CheckForKickoffAsync(List<SportsEvent> games, AppDbContext context)
         {
-            // Simplesmente atualiza o LastUpdate para jogar pro fim da fila
+            var transitionedIds = new List<string>();
+
             foreach (var g in games)
             {
                 g.LastUpdate = DateTime.UtcNow;
-                // Se o jogo já começou, muda status para Live
+
+                // Regra: Se passou do horário de início
                 if (DateTime.UtcNow >= g.CommenceTime)
                 {
-                    g.Status = "Live";
+                    // Só marca a transição se ele AINDA NÃO era Live
+                    if (g.Status != "Live")
+                    {
+                        g.Status = "Live";
+                        transitionedIds.Add(g.ExternalId); // Guarda o ID para o SignalR remover do pré-jogo
+                    }
                 }
             }
-            await context.SaveChangesAsync();
+
+            // Se houve mudanças, salva no banco
+            if (transitionedIds.Any())
+            {
+                await context.SaveChangesAsync();
+            }
+
+            return transitionedIds;
         }
 
         private decimal ConvertFraction(string fraction)

@@ -52,22 +52,21 @@ namespace Magic_casino_sportbook.BackgroundServices
                         var liveGames = await context.SportsEvents
                             .Where(g => g.Status == "Live")
                             .OrderBy(g => g.LastUpdate)
-                            .Take(20) // Lote menor para ser mais rápido
+                            .Take(20) // Lote para processamento
                             .ToListAsync(ct);
 
                         if (liveGames.Any())
                         {
-                            // Chama o serviço que AGORA preenche a tabela LiveGameStat corretamente
+                            // Atualiza dados na API e banco
                             var endedGameIds = await liveService.UpdateLiveGamesAsync(liveGames, context);
                             await context.SaveChangesAsync(ct);
 
-                            // Notifica o Frontend via SignalR
-                            // NOTA: O Frontend precisa receber o 'gameTime' e 'score' atualizados
+                            // Notifica o Frontend via SignalR (Odds e Placar)
                             await hub.Clients.All.SendAsync("LiveOddsUpdate", liveGames.Select(g => new
                             {
-                                id = g.ExternalId, // ID que o Vue usa
+                                id = g.ExternalId,
                                 score = g.Score,
-                                time = g.Status == "Live" ? "Live" : g.Status, // Ou pegue de LiveGameStat se tiver acesso aqui
+                                time = g.Status == "Live" ? "Live" : g.Status,
                                 status = g.Status,
                                 homeOdd = g.RawOddsHome,
                                 drawOdd = g.RawOddsDraw,
@@ -93,7 +92,7 @@ namespace Magic_casino_sportbook.BackgroundServices
         }
 
         // ==============================================================================
-        // 🧹 ZONA 2: VARREDURA DE PRÉ-JOGO (Muda Status para Live)
+        // 🧹 ZONA 2: VARREDURA DE PRÉ-JOGO (Muda Status para Live e Avisa Front)
         // ==============================================================================
         private async Task ProcessHotZone(CancellationToken ct)
         {
@@ -106,6 +105,9 @@ namespace Magic_casino_sportbook.BackgroundServices
                         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                         var liveService = scope.ServiceProvider.GetRequiredService<LiveSportService>();
 
+                        // Injetamos o Hub para avisar a remoção
+                        var hub = scope.ServiceProvider.GetRequiredService<IHubContext<GameHub>>();
+
                         // Pega jogos que deveriam ter começado (CommenceTime passado) mas ainda estão 'Prematch'
                         var gamesToKickoff = await context.SportsEvents
                             .Where(g => g.Status == "Prematch" &&
@@ -117,8 +119,17 @@ namespace Magic_casino_sportbook.BackgroundServices
 
                         if (gamesToKickoff.Any())
                         {
-                            _logger.LogInformation($"⚽ [KICKOFF] Verificando {gamesToKickoff.Count} jogos iniciando...");
-                            await liveService.CheckForKickoffAsync(gamesToKickoff, context);
+                            // O serviço verifica, muda status no banco e retorna QUEM mudou
+                            var newLiveIds = await liveService.CheckForKickoffAsync(gamesToKickoff, context);
+
+                            // Se a lista não estiver vazia, DISPARA O SIGNALR
+                            if (newLiveIds.Any())
+                            {
+                                // Remove da tela de Pré-Jogo (Pois agora são Live)
+                                await hub.Clients.All.SendAsync("RemoveGames", newLiveIds, ct);
+
+                                _logger.LogInformation($"⚽ [KICKOFF] {newLiveIds.Count} jogos viraram AO VIVO. Signal enviado para remoção.");
+                            }
                         }
                     }
                 }
