@@ -13,9 +13,8 @@ namespace Magic_casino_sportbook.BackgroundServices
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<LiveUpdateWorker> _logger;
 
-        // Configurações de Frequência (Profissional)
-        private const int DELAY_LIVE_MS = 3000;   // 3 segundos (Atualização em tempo real)
-        private const int DELAY_HOT_MS = 15000;   // 15 segundos (Zona Quente - Aumentei a frequência para pegar kickoff rápido)
+        private const int DELAY_LIVE_MS = 3000;   // 3 segundos
+        private const int DELAY_HOT_MS = 15000;   // 15 segundos
 
         public LiveUpdateWorker(IServiceProvider serviceProvider, ILogger<LiveUpdateWorker> logger)
         {
@@ -27,7 +26,6 @@ namespace Magic_casino_sportbook.BackgroundServices
         {
             _logger.LogInformation("🔥 [LIVE WORKER] Iniciado. Gerenciando Zonas Quente e Ao Vivo.");
 
-            // Rodamos tarefas paralelas para não travar o loop
             var liveTask = ProcessLiveZone(stoppingToken);
             var hotTask = ProcessHotZone(stoppingToken);
 
@@ -35,7 +33,7 @@ namespace Magic_casino_sportbook.BackgroundServices
         }
 
         // ==============================================================================
-        // ⚡ ZONA 1: JOGOS AO VIVO (Atualização Rápida de Placar/Odds)
+        // ⚡ ZONA 1: JOGOS AO VIVO
         // ==============================================================================
         private async Task ProcessLiveZone(CancellationToken ct)
         {
@@ -49,29 +47,23 @@ namespace Magic_casino_sportbook.BackgroundServices
                         var liveService = scope.ServiceProvider.GetRequiredService<LiveSportService>();
                         var hub = scope.ServiceProvider.GetRequiredService<IHubContext<GameHub>>();
 
-                        // 1. Busca jogos que ESTÃO marcados como LIVE no banco
-                        // Ordena pelo LastUpdate para garantir que todos sejam atualizados ciclicamente
                         var liveGames = await context.SportsEvents
                             .Where(g => g.Status == "Live")
                             .OrderBy(g => g.LastUpdate)
-                            .Take(50) // Pega em lotes maiores
+                            .Take(50)
                             .ToListAsync(ct);
 
                         if (liveGames.Any())
                         {
-                            // Atualiza placar, tempo e odds na API
-                            var endedGameIds = await liveService.UpdateLiveGamesAsync(liveGames);
-
-                            // Salva as alterações no banco (importante para persistir o Placar novo!)
+                            var endedGameIds = await liveService.UpdateLiveGamesAsync(liveGames, context);
                             await context.SaveChangesAsync(ct);
 
-                            // Notifica o Frontend via WebSocket (SignalR) com dados fresquinhos
                             if (liveGames.Any())
                             {
                                 await hub.Clients.All.SendAsync("LiveOddsUpdate", liveGames.Select(g => new
                                 {
                                     id = g.ExternalId,
-                                    score = g.Score,      // Agora com o Score corrigido do Basquete!
+                                    score = g.Score,
                                     time = g.GameTime,
                                     status = g.Status,
                                     homeOdd = g.RawOddsHome,
@@ -80,7 +72,6 @@ namespace Magic_casino_sportbook.BackgroundServices
                                 }), ct);
                             }
 
-                            // 🚨 LIMPEZA IMEDIATA: Se o jogo acabou, avisa o front para remover
                             if (endedGameIds != null && endedGameIds.Any())
                             {
                                 await hub.Clients.All.SendAsync("RemoveGames", endedGameIds, ct);
@@ -99,7 +90,7 @@ namespace Magic_casino_sportbook.BackgroundServices
         }
 
         // ==============================================================================
-        // 🔥 ZONA 2: ZONA QUENTE (Detecta Início de Jogo e Remove do Pré-Jogo)
+        // 🔥 ZONA 2: ZONA QUENTE (CheckForKickoff)
         // ==============================================================================
         private async Task ProcessHotZone(CancellationToken ct)
         {
@@ -112,24 +103,18 @@ namespace Magic_casino_sportbook.BackgroundServices
                         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                         var liveService = scope.ServiceProvider.GetRequiredService<LiveSportService>();
 
-                        // BUSCA INTELIGENTE (CORRIGIDA):
-                        // Jogos 'Prematch' que:
-                        // 1. Vão começar nos próximos 60 min (CommenceTime <= Now + 60)
-                        // 2. OU JÁ DEVERIAM TER COMEÇADO há até 2 horas (CommenceTime >= Now - 120)
-                        // Isso pega o caso do Criciúma que ficou "atrasado"
-
+                        // 🛑 AUMENTADO PARA -720 MINUTOS (12 HORAS) PARA PEGAR JOGOS ATRASADOS
                         var now = DateTime.UtcNow;
                         var hotGames = await context.SportsEvents
                             .Where(g => g.Status == "Prematch" &&
-                                        g.CommenceTime >= now.AddMinutes(-120) && // Olha 2h para trás (Segurança)
-                                        g.CommenceTime <= now.AddMinutes(60))     // Olha 1h para frente
+                                        g.CommenceTime >= now.AddMinutes(-720) &&
+                                        g.CommenceTime <= now.AddMinutes(60))
                             .ToListAsync(ct);
 
                         if (hotGames.Any())
                         {
-                            // Verifica na API se eles já viraram LIVE
-                            // Se sim, o serviço muda o status no banco E MANDA O SIGNALR "RemoveFromPrematch"
-                            await liveService.CheckForKickoffAsync(hotGames);
+                            // Console.WriteLine($"🔥 HOT ZONE: Verificando {hotGames.Count} jogos...");
+                            await liveService.CheckForKickoffAsync(hotGames, context);
                         }
                     }
                 }

@@ -3,7 +3,7 @@ import { ref, onMounted, computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import SportsService from '../services/SportsService';
 
-// --- PROPS PARA O MODO LIVE (OPCIONAIS) ---
+// --- PROPS ---
 const props = defineProps<{
   isLive?: boolean;            
   liveSports?: Set<string>;    
@@ -16,31 +16,35 @@ const emit = defineEmits(['select']);
 // --- CONFIGURAÇÃO ---
 const router = useRouter();
 const route = useRoute();
-const loading = ref(true);
-const activeSportsKeys = ref<Set<string>>(new Set());
 
-// 1️⃣ LISTA MESTRA DE ESPORTES (Sem E-Sports/Virtual)
+// Estado de carregamento
+const loadingAdmin = ref(true); // Carregando configuração do Admin
+const loadingApi = ref(true);   // Carregando disponibilidade de jogos
+
+// Sets de controle
+const adminVisibleSports = ref<Set<string>>(new Set()); // Esportes ON no admin
+const apiActiveSports = ref<Set<string>>(new Set());    // Esportes com jogos na API (> 0)
+
+// 1️⃣ LISTA MESTRA (Mapeamento de ícones e nomes)
 const ALL_SPORTS_CONFIG = [
-  { key: 'all',               name: 'Todos',           file: 'all-sports.svg' }, // Exclusivo Live
-  { key: 'soccer',            name: 'Futebol',         file: 'soccer.svg' },
-  { key: 'basketball',        name: 'Basquete',        file: 'basquet.svg' },
-  { key: 'tennis',            name: 'Tênis',           file: 'tenis.svg' },
-  { key: 'volleyball',        name: 'Vôlei',           file: 'volley.svg' },
-  { key: 'ice-hockey',        name: 'Hóquei',          file: 'hoquei.svg' },
-  { key: 'baseball',          name: 'Beisebol',        file: 'baseball.svg' },
-  { key: 'american-football', name: 'Fut. Americano',  file: 'fut-america.svg' },
-  { key: 'mma',               name: 'MMA',             file: 'mma.svg' },
-  { key: 'boxing',            name: 'Boxe',            file: 'boxing.svg' },
-  { key: 'darts',             name: 'Dardos',          file: 'dards.svg' },
+  { key: 'all',               name: 'Todos',          file: 'all-sports.svg' },
+  { key: 'soccer',            name: 'Futebol',        file: 'soccer.svg' },
+  { key: 'basketball',        name: 'Basquete',       file: 'basquet.svg' },
+  { key: 'tennis',            name: 'Tênis',          file: 'tenis.svg' },
+  { key: 'volleyball',        name: 'Vôlei',          file: 'volley.svg' },
+  { key: 'ice-hockey',        name: 'Hóquei',         file: 'hoquei.svg' },
+  { key: 'baseball',          name: 'Beisebol',       file: 'baseball.svg' },
+  { key: 'american-football', name: 'Fut. Americano', file: 'fut-america.svg' },
+  { key: 'mma',               name: 'MMA',            file: 'mma.svg' },
+  { key: 'boxing',            name: 'Boxe',           file: 'boxing.svg' },
+  { key: 'darts',             name: 'Dardos',         file: 'dards.svg' },
+  // Adicione outros mapeamentos conforme necessário
 ];
 
 // --- HELPER DE NORMALIZAÇÃO ---
 const normalizeKey = (apiKey: string): string => {
     const k = apiKey.toLowerCase();
-    
-    // Filtros de exclusão
-    if (k.includes('esport') || k.includes('e-sport') || k.includes('virtual')) return '';
-
+    if (k.includes('esport') || k.includes('virtual')) return '';
     if (k.includes('soccer') || k.includes('futebol')) return 'soccer';
     if (k.includes('basket')) return 'basketball';
     if (k.includes('tennis') && !k.includes('table')) return 'tennis';
@@ -51,69 +55,71 @@ const normalizeKey = (apiKey: string): string => {
     if (k.includes('football') || k.includes('americano')) return 'american-football';
     if (k.includes('mma') || k.includes('ufc')) return 'mma';
     if (k.includes('boxing') || k.includes('boxe')) return 'boxing';
-    
     return k; 
 };
 
-// --- COMPUTED: LISTA FINAL ORDENADA ---
+// --- COMPUTED: LISTA FINAL ---
 const orderedSports = computed(() => {
+    // 1. Se ainda não carregou a config do admin, não mostra nada (ou mostra skeleton)
+    if (loadingAdmin.value && !props.isLive) return [];
+
     const list = ALL_SPORTS_CONFIG.map(sport => {
-        let isActive = false;
+        let isVisibleInAdmin = false;
+        let hasActiveGames = false;
         let count = 0;
 
+        // --- LÓGICA LIVE ---
         if (props.isLive) {
-            // MODO LIVE
             if (sport.key === 'all') {
-                isActive = true; 
+                isVisibleInAdmin = true;
+                hasActiveGames = true; 
                 count = props.liveCounts ? Object.values(props.liveCounts).reduce((a, b) => a + b, 0) : 0;
             } else {
-                isActive = props.liveSports?.has(sport.key) || false;
+                isVisibleInAdmin = true; 
+                hasActiveGames = props.liveSports?.has(sport.key) || false;
                 count = props.liveCounts?.[sport.key] || 0;
             }
-        } else {
-            // MODO PRÉ-JOGO
+        } 
+        // --- LÓGICA PRÉ-JOGO (REQ DO USUÁRIO) ---
+        else {
             if (sport.key === 'all') {
-                isActive = false; // 'Todos' nunca ativo no pré-jogo
+                isVisibleInAdmin = false; 
             } else {
-                isActive = !loading.value && activeSportsKeys.value.has(sport.key);
+                // REGRA 1: Status Admin (ON/OFF) - Define se o ícone EXISTE na tela
+                isVisibleInAdmin = adminVisibleSports.value.has(sport.key);
+
+                // REGRA 2: Status API (Tem jogo > 0?) - Define se tem COR
+                hasActiveGames = !loadingApi.value && apiActiveSports.value.has(sport.key);
             }
         }
         
         return {
             ...sport,
-            isActive,
+            isVisible: isVisibleInAdmin, // Renderiza?
+            isActive: hasActiveGames,    // Colorido/Clicável?
             count,
             iconPath: `/images/icons/${sport.file}` 
         };
     });
 
-    // Se estiver carregando (apenas pré-jogo), mostra lista vazia para não piscar
-    if (loading.value && !props.isLive) return [];
-
-    // Filtra: 
-    // Live -> Mostra APENAS ativos.
-    // Pré-jogo -> Mostra TODOS (exceto 'all'), inativos ficam cinza.
-    let finalList = list;
-    if (props.isLive) {
-        finalList = list.filter(s => s.isActive);
-    } else {
-        finalList = list.filter(s => s.key !== 'all');
-    }
+    // Filtro FINAL: Remove da tela o que estiver OFF no Admin
+    let finalList = list.filter(s => {
+        if (props.isLive) return s.isActive; 
+        return s.isVisible;                  
+    });
 
     // Ordenação
     return finalList.sort((a, b) => {
         if (a.key === 'all') return -1;
         if (b.key === 'all') return 1;
 
-        if (props.isLive) {
-            return b.count - a.count;
-        }
+        if (props.isLive) return b.count - a.count;
 
-        // Pré-jogo: Ativos primeiro
+        // Pré-jogo: Prioriza os que estão ATIVOS (coloridos) sobre os inativos (cinza)
         if (a.isActive && !b.isActive) return -1;
         if (!a.isActive && b.isActive) return 1;
 
-        // Futebol prioridade
+        // Prioridade fixa Futebol
         if (a.key === 'soccer') return -1;
         if (b.key === 'soccer') return 1;
 
@@ -122,13 +128,11 @@ const orderedSports = computed(() => {
 });
 
 const checkIsSelected = (sportKey: string) => {
-    if (props.isLive) {
-        return props.selectedSport === sportKey;
-    }
+    if (props.isLive) return props.selectedSport === sportKey;
     return route.params.id === sportKey;
 };
 
-// --- LÓGICA DO CARROSSEL ---
+// --- INTERAÇÃO (Drag & Drop) ---
 const scrollContainer = ref<HTMLElement | null>(null);
 let isDown = false;
 let startX = 0;
@@ -160,8 +164,7 @@ const moveDrag = (e: MouseEvent) => {
 const handleSportClick = (sport: any) => {
     if (isDragging) return;
     
-    // No modo Live, só clica se estiver ativo (sempre verdade pois filtramos)
-    // No modo Pré-jogo, só clica se estiver ativo na API
+    // REGRA 3: Só clica se a API liberou (isActive = true, ou seja, count > 0)
     if (sport.isActive) {
         if (props.isLive) {
             emit('select', sport.key);
@@ -173,31 +176,75 @@ const handleSportClick = (sport: any) => {
 
 const shouldShowMenu = computed(() => {
   if (props.isLive) return true; 
-  
   const isEventDetails = route.name === 'event-details' || route.path.includes('/event/');
   const isLivePage = route.path.includes('/live');
   return !isEventDetails && !isLivePage;
 });
 
-// --- API ---
+// --- API FETCHING ---
 onMounted(async () => {
     if (props.isLive) {
-        loading.value = false;
+        loadingAdmin.value = false;
+        loadingApi.value = false;
         return;
     }
 
+    // ---------------------------------------------------------
+    // PASSO 1: BUSCAR O QUE ESTÁ "ON" NO PAINEL MASTER
+    // ---------------------------------------------------------
     try {
-        const data = await SportsService.getActiveSports();
-        const availableKeys = new Set<string>();
-        data.forEach((item: any) => {
-            const normalized = normalizeKey(item.key);
-            if (normalized) availableKeys.add(normalized);
+        const adminData = await SportsService.getAdminConfig(); 
+        
+        console.log("📦 RESPOSTA DO ADMIN CONFIG:", adminData);
+
+        const enabledSet = new Set<string>();
+        // Garante que é um array, caso venha nulo ou formato errado
+        const list = Array.isArray(adminData) ? adminData : [];
+
+        list.forEach((item: any) => {
+            // Verifica maiúsculo/minúsculo (C# vs JSON)
+            const isEnabled = item.isActive === true || item.IsActive === true;
+            const sportKey = item.key || item.Key;
+
+            if (isEnabled && sportKey) {
+                const normalized = normalizeKey(sportKey);
+                if (normalized) enabledSet.add(normalized);
+            }
         });
-        activeSportsKeys.value = availableKeys;
+
+        adminVisibleSports.value = enabledSet;
+
+    } catch (err) {
+        console.error("❌ Erro config admin", err);
+        // Fallback: Apenas futebol para não quebrar a tela, mas indicando erro
+        adminVisibleSports.value = new Set(['soccer']); 
+    } finally {
+        loadingAdmin.value = false; // Aqui os ícones aparecem (CINZA se não tiver jogo)
+    }
+
+    // ---------------------------------------------------------
+    // PASSO 2: VERIFICAR NA API QUAIS TEM JOGOS (PARA DAR COR)
+    // ---------------------------------------------------------
+    try {
+        const data = await SportsService.getActiveSports(); 
+        const availableKeys = new Set<string>();
+        
+        data.forEach((item: any) => {
+            // ⚠️ CORREÇÃO: Verifica se tem jogos (> 0)
+            // Se vier count: 0, ignoramos e o ícone fica cinza (inativo)
+            const hasGames = item.count && Number(item.count) > 0;
+
+            if (hasGames) {
+                const normalized = normalizeKey(item.key || item.name);
+                if (normalized) availableKeys.add(normalized);
+            }
+        });
+        
+        apiActiveSports.value = availableKeys;
     } catch (error) { 
-        console.error("Erro menu:", error); 
+        console.error("Erro active sports:", error); 
     } finally { 
-        loading.value = false; 
+        loadingApi.value = false; // Aqui os ícones ganham COR se tiverem jogo
     }
 });
 </script>
@@ -214,16 +261,22 @@ onMounted(async () => {
         @mousemove="moveDrag"
     >
       
+      <div v-if="loadingAdmin && !isLive" class="flex gap-3">
+         <div v-for="i in 5" :key="i" class="w-[60px] h-[50px] bg-white/5 animate-pulse rounded-md"></div>
+      </div>
+
       <div 
+        v-else
         v-for="sport in orderedSports" 
         :key="sport.key"
         @click="handleSportClick(sport)"
         class="group flex flex-col items-center min-w-[60px] relative transition-all duration-300"
         :class="[
             { 'pointer-events-none': isDragging },
+            /* Lógica de Cursor */
             sport.isActive 
                 ? 'cursor-pointer' 
-                : 'cursor-not-allowed grayscale opacity-70 hover:opacity-90' 
+                : 'cursor-not-allowed' // Mostra proibido se estiver Cinza
         ]" 
       >
         <div class="relative flex items-center justify-center mb-1.5 transition-all duration-300">
@@ -237,7 +290,7 @@ onMounted(async () => {
                         ? 'scale-125 brightness-110 drop-shadow-[0_0_8px_rgba(0,255,127,0.8)]' 
                         : (sport.isActive)
                             ? 'opacity-90 hover:opacity-100 hover:scale-110 hover:drop-shadow-[0_0_5px_rgba(255,255,255,0.3)]'
-                            : ''
+                            : 'grayscale opacity-30 contrast-50' // TOM DE CINZA AQUI
                 ]"
                 @error="(e) => (e.target as HTMLImageElement).src = '/images/icons/trophy.svg'"
              />
@@ -258,7 +311,7 @@ onMounted(async () => {
               ? 'text-[#00FF7F] drop-shadow-sm' 
               : (sport.isActive) 
                   ? 'text-gray-400 group-hover:text-gray-200'
-                  : 'text-gray-600'
+                  : 'text-gray-700' // Texto mais escuro para item desativado
           ]"
         >
           {{ sport.name }}
