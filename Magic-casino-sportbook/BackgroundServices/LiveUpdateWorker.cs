@@ -13,8 +13,8 @@ namespace Magic_casino_sportbook.BackgroundServices
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<LiveUpdateWorker> _logger;
 
-        private const int DELAY_LIVE_MS = 3000;   // 3 segundos
-        private const int DELAY_HOT_MS = 15000;   // 15 segundos
+        private const int DELAY_LIVE_MS = 3000;   // 3 segundos (Rápido para ao vivo)
+        private const int DELAY_HOT_MS = 15000;   // 15 segundos (Para checar pré-jogos)
 
         public LiveUpdateWorker(IServiceProvider serviceProvider, ILogger<LiveUpdateWorker> logger)
         {
@@ -26,6 +26,7 @@ namespace Magic_casino_sportbook.BackgroundServices
         {
             _logger.LogInformation("🔥 [LIVE WORKER] Iniciado. Gerenciando Zonas Quente e Ao Vivo.");
 
+            // Roda as duas tarefas em paralelo
             var liveTask = ProcessLiveZone(stoppingToken);
             var hotTask = ProcessHotZone(stoppingToken);
 
@@ -33,7 +34,7 @@ namespace Magic_casino_sportbook.BackgroundServices
         }
 
         // ==============================================================================
-        // ⚡ ZONA 1: JOGOS AO VIVO
+        // ⚡ ZONA 1: JOGOS AO VIVO (Atualiza Placar e Odds)
         // ==============================================================================
         private async Task ProcessLiveZone(CancellationToken ct)
         {
@@ -47,35 +48,37 @@ namespace Magic_casino_sportbook.BackgroundServices
                         var liveService = scope.ServiceProvider.GetRequiredService<LiveSportService>();
                         var hub = scope.ServiceProvider.GetRequiredService<IHubContext<GameHub>>();
 
+                        // Busca jogos marcados como 'Live', priorizando os que não atualizamos há mais tempo
                         var liveGames = await context.SportsEvents
                             .Where(g => g.Status == "Live")
                             .OrderBy(g => g.LastUpdate)
-                            .Take(50)
+                            .Take(20) // Lote menor para ser mais rápido
                             .ToListAsync(ct);
 
                         if (liveGames.Any())
                         {
+                            // Chama o serviço que AGORA preenche a tabela LiveGameStat corretamente
                             var endedGameIds = await liveService.UpdateLiveGamesAsync(liveGames, context);
                             await context.SaveChangesAsync(ct);
 
-                            if (liveGames.Any())
+                            // Notifica o Frontend via SignalR
+                            // NOTA: O Frontend precisa receber o 'gameTime' e 'score' atualizados
+                            await hub.Clients.All.SendAsync("LiveOddsUpdate", liveGames.Select(g => new
                             {
-                                await hub.Clients.All.SendAsync("LiveOddsUpdate", liveGames.Select(g => new
-                                {
-                                    id = g.ExternalId,
-                                    score = g.Score,
-                                    time = g.GameTime,
-                                    status = g.Status,
-                                    homeOdd = g.RawOddsHome,
-                                    drawOdd = g.RawOddsDraw,
-                                    awayOdd = g.RawOddsAway
-                                }), ct);
-                            }
+                                id = g.ExternalId, // ID que o Vue usa
+                                score = g.Score,
+                                time = g.Status == "Live" ? "Live" : g.Status, // Ou pegue de LiveGameStat se tiver acesso aqui
+                                status = g.Status,
+                                homeOdd = g.RawOddsHome,
+                                drawOdd = g.RawOddsDraw,
+                                awayOdd = g.RawOddsAway
+                            }), ct);
 
+                            // Se algum jogo acabou, avisa para remover da lista ao vivo
                             if (endedGameIds != null && endedGameIds.Any())
                             {
                                 await hub.Clients.All.SendAsync("RemoveGames", endedGameIds, ct);
-                                _logger.LogInformation($"🏁 [FIM DE JOGO] {endedGameIds.Count} jogos finalizados e removidos da tela.");
+                                _logger.LogInformation($"🏁 [FIM DE JOGO] {endedGameIds.Count} jogos finalizados.");
                             }
                         }
                     }
@@ -90,7 +93,7 @@ namespace Magic_casino_sportbook.BackgroundServices
         }
 
         // ==============================================================================
-        // 🔥 ZONA 2: ZONA QUENTE (CheckForKickoff)
+        // 🧹 ZONA 2: VARREDURA DE PRÉ-JOGO (Muda Status para Live)
         // ==============================================================================
         private async Task ProcessHotZone(CancellationToken ct)
         {
@@ -103,24 +106,25 @@ namespace Magic_casino_sportbook.BackgroundServices
                         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                         var liveService = scope.ServiceProvider.GetRequiredService<LiveSportService>();
 
-                        // 🛑 AUMENTADO PARA -720 MINUTOS (12 HORAS) PARA PEGAR JOGOS ATRASADOS
-                        var now = DateTime.UtcNow;
-                        var hotGames = await context.SportsEvents
+                        // Pega jogos que deveriam ter começado (CommenceTime passado) mas ainda estão 'Prematch'
+                        var gamesToKickoff = await context.SportsEvents
                             .Where(g => g.Status == "Prematch" &&
-                                        g.CommenceTime >= now.AddMinutes(-720) &&
-                                        g.CommenceTime <= now.AddMinutes(60))
+                                        g.CommenceTime <= DateTime.UtcNow &&
+                                        g.CommenceTime > DateTime.UtcNow.AddHours(-3)) // Janela de segurança
+                            .OrderBy(g => g.CommenceTime)
+                            .Take(50)
                             .ToListAsync(ct);
 
-                        if (hotGames.Any())
+                        if (gamesToKickoff.Any())
                         {
-                            // Console.WriteLine($"🔥 HOT ZONE: Verificando {hotGames.Count} jogos...");
-                            await liveService.CheckForKickoffAsync(hotGames, context);
+                            _logger.LogInformation($"⚽ [KICKOFF] Verificando {gamesToKickoff.Count} jogos iniciando...");
+                            await liveService.CheckForKickoffAsync(gamesToKickoff, context);
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError($"Erro no Loop Hot Zone: {ex.Message}");
+                    _logger.LogError($"❌ Erro na Varredura HotZone: {ex.Message}");
                 }
 
                 await Task.Delay(DELAY_HOT_MS, ct);

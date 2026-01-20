@@ -14,12 +14,16 @@ Console.WriteLine("#############################################################
 Console.WriteLine(">>>>> SPORTBOOK API - SISTEMA UNIFICADO (BETS API) <<<<<");
 Console.WriteLine("#############################################################");
 
+// =============================================================
 // 1. DATABASE
+// =============================================================
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString));
 
+// =============================================================
 // 2. JWT CONFIGURATION 🔐
+// =============================================================
 var jwtKey = "ChaveSecretaDoCassino2026SuperSeguraNaoMudeIsso";
 var keyBytes = Encoding.UTF8.GetBytes(jwtKey);
 
@@ -65,7 +69,9 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+// =============================================================
 // 3. CORS
+// =============================================================
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend",
@@ -85,13 +91,18 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddControllers();
 
-// ✅ SIGNALR + REDIS
+// =============================================================
+// 4. SIGNALR + REDIS
+// =============================================================
 builder.Services.AddSignalR().AddStackExchangeRedis(o =>
 {
     o.Configuration.EndPoints.Add("redis:6379");
     o.Configuration.AbortOnConnectFail = false;
 });
 
+// =============================================================
+// 5. SWAGGER
+// =============================================================
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -121,17 +132,17 @@ builder.Services.AddSwaggerGen(c =>
 // ✅ SERVICES DE NEGÓCIO (DI)
 // =============================================================
 
+// 1. Registra o Factory Global (Essencial para LiveSportService)
 builder.Services.AddHttpClient();
 
-// 1. Serviços Legados (Mantidos para compatibilidade, mas corrigidos)
+// 2. Serviços Legados / Específicos
 builder.Services.AddHttpClient<BetsApiService>();
 builder.Services.AddHttpClient<TheOddsApiService>();
+builder.Services.AddHttpClient<PreMatchService>(); // Registra como Typed Client
 
-// 2. 🟢 NOVO SERVIÇO DE INGESTÃO (Principal)
-builder.Services.AddHttpClient<PreMatchService>();
-
-// 3. Serviço de Live
-builder.Services.AddHttpClient<LiveSportService>();
+// 3. 🟢 CORREÇÃO: Registro do LiveSportService
+// Mudamos de AddHttpClient<> para AddScoped<> porque o construtor pede IHttpClientFactory
+builder.Services.AddScoped<LiveSportService>();
 
 // 4. Seleção de Provedor de Odds
 string provider = Environment.GetEnvironmentVariable("ODDS_PROVIDER") ?? "BetsApi";
@@ -139,7 +150,6 @@ string provider = Environment.GetEnvironmentVariable("ODDS_PROVIDER") ?? "BetsAp
 if (provider == "BetsApi")
 {
     Console.WriteLine("🚀 MOTOR DE ODDS SELECIONADO: BetsAPI");
-    // Injeta o BetsApiService como implementação de IOddsService
     builder.Services.AddScoped<IOddsService, BetsApiService>();
 }
 else
@@ -147,9 +157,6 @@ else
     Console.WriteLine("🚀 MOTOR DE ODDS SELECIONADO: The Odds API");
     builder.Services.AddScoped<IOddsService, TheOddsApiService>();
 }
-
-// ✅ Registra PreMatchService explicitamente como Scoped para uso no Controller
-builder.Services.AddScoped<PreMatchService>();
 
 // 5. Integração com Core (Carteira)
 builder.Services.AddHttpClient<CoreWalletService>(client =>
@@ -191,7 +198,9 @@ app.UseAuthorization();
 app.MapControllers();
 app.MapHub<GameHub>("/gameHub");
 
+// =============================================================
 // AUTO-MIGRATE
+// =============================================================
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
