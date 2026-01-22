@@ -10,16 +10,21 @@ import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signal
 // ✅ IMPORTAÇÃO DA NOVA FUNÇÃO DE BANDEIRAS
 import { getFlag } from '../utils/flags'; 
 
-// Interface flexível
+// Interface flexível para lidar com PascalCase (C#) e camelCase (JS)
 interface SportEvent {
   externalId?: string;
+  ExternalId?: string; // Adicionado para compatibilidade com C#
   id?: string;
+  Id?: string;
   homeTeam: string;
+  HomeTeam?: string;
   awayTeam: string;
+  AwayTeam?: string;
   commenceTime: string;
+  CommenceTime?: string;
   league?: string;
+  League?: string;
   countryCode?: string;
-  leagueId?: string;
   homeTeamLogo?: string;
   awayTeamLogo?: string;
   
@@ -71,10 +76,17 @@ const getLocalDateString = (dateObj: Date) => {
     return `${year}-${month}-${day}`;
 };
 
+// 🔥 FUNÇÃO CRÍTICA CORRIGIDA: Prioriza o ID Externo da Bet365
 const getGameId = (game: SportEvent): string => {
-  const id = game.externalId || game.id || (game as any).ExternalId;
-  if (id) return String(id);
-  return `${game.homeTeam}_${game.awayTeam}_${game.commenceTime}`;
+  // Tenta pegar ExternalId (PascalCase do C#) ou externalId (camelCase)
+  const id = game.externalId || game.ExternalId || game.id || game.Id;
+  
+  if (id) return String(id); // Garante que retorna STRING para comparação
+  
+  // Fallback único (evita erros)
+  const home = game.homeTeam || game.HomeTeam || 'Home';
+  const away = game.awayTeam || game.AwayTeam || 'Away';
+  return `${home}_${away}`;
 };
 
 const countBetsInLeague = (leagueGames: SportEvent[]) => {
@@ -111,16 +123,19 @@ const handleSelection = (game: SportEvent, type: BetType) => {
     return;
   }
 
-  const selectionName = type === '1' ? game.homeTeam : type === '2' ? game.awayTeam : 'Empate';
+  const hTeam = game.homeTeam || game.HomeTeam || '';
+  const aTeam = game.awayTeam || game.AwayTeam || '';
+  const selectionName = type === '1' ? hTeam : type === '2' ? aTeam : 'Empate';
+  const time = game.commenceTime || game.CommenceTime || new Date().toISOString();
 
   betStore.addOrReplaceSelection(
     gameId,
-    game.homeTeam,
-    game.awayTeam,
+    hTeam,
+    aTeam,
     selectionName,
     price,
     type,
-    game.commenceTime
+    time
   );
 };
 
@@ -154,7 +169,10 @@ const fetchEvents = async (reset = false) => {
     }
     
     if (currentPage.value === 1) {
-        newEvents.forEach(e => { if (e.league) openLeagues.value.add(e.league); });
+        newEvents.forEach(e => { 
+            const lg = e.league || e.League;
+            if (lg) openLeagues.value.add(lg); 
+        });
     }
     
     currentPage.value++;
@@ -179,10 +197,9 @@ onMounted(async () => {
   }, { rootMargin: '200px' });
   if (loadTrigger.value) observer.observe(loadTrigger.value);
 
-  // 2. Conexão SignalR - CORRIGIDA
+  // 2. Conexão SignalR - CORRIGIDA E ROBUSTA
   try {
-    // ✅ URL SIMPLIFICADA PARA USAR O PROXY
-    const signalRUrl = "/gameHub"; 
+    const signalRUrl = "/gameHub"; // Usa o Proxy do Nginx
     
     console.log(`🔌 [PRÉ-JOGO] Conectando SignalR em: ${signalRUrl}`);
 
@@ -192,29 +209,31 @@ onMounted(async () => {
       .withAutomaticReconnect()
       .build();
 
-    // 🔥 OUVINTE 1: Remove o jogo da lista de pré-jogo assim que começa
-    connection.value.on("RemoveGames", (gameIds: string[]) => {
-      console.log("🔥 [SIGNALR] Jogo começou! Removendo da lista:", gameIds);
+    // 🔥 OUVINTE 1: Remove o jogo da lista de pré-jogo assim que começa (CORRIGIDO)
+    connection.value.on("RemoveGames", (idsToRemove: string[]) => {
+      // Converte para Set de Strings para busca O(1) rápida e segura
+      const idsSet = new Set(idsToRemove.map(String));
       
+      console.log(`🔥 [SIGNALR] Recebido pedido para remover ${idsSet.size} jogos.`);
+
       if (events.value.length > 0) {
         const initialCount = events.value.length;
         
-        events.value = events.value.filter(e => {
-            const id = getGameId(e);
-            return !gameIds.includes(id);
+        events.value = events.value.filter(game => {
+            const gameId = getGameId(game);
+            // Se o ID do jogo estiver na lista de remoção, retorna FALSE (filtra fora)
+            return !idsSet.has(gameId);
         });
         
         const removedCount = initialCount - events.value.length;
         if (removedCount > 0) {
-            console.log(`✅ Sucesso! ${removedCount} jogos removidos do pré-jogo.`);
+            console.log(`✅ Sucesso! ${removedCount} jogos foram removidos da lista.`);
         }
       }
     });
 
-    // 🔇 OUVINTE 2: Silenciador de Warning
-    connection.value.on("LiveOddsUpdate", () => {
-        // Ignora atualizações de odds ao vivo nesta tela (é pré-jogo)
-    });
+    // 🔇 OUVINTE 2: Silenciador de Warning (Odds ao vivo não interessam aqui)
+    connection.value.on("LiveOddsUpdate", () => {});
 
     await connection.value.start();
     console.log("🟢 SignalR Conectado e Pronto!");
@@ -253,27 +272,30 @@ const betTypesToShow = computed(() => {
 const groupedEvents = computed(() => {
   const groups: Record<string, SportEvent[]> = {};
   events.value.forEach(event => {
-    if (leagueFilter.value && event.league !== leagueFilter.value) return;
+    const lg = event.league || event.League;
+    if (leagueFilter.value && lg !== leagueFilter.value) return;
     
-    if (dataSelecionada.value !== 'all') {
-        const dateObj = new Date(event.commenceTime);
+    const time = event.commenceTime || event.CommenceTime;
+    if (dataSelecionada.value !== 'all' && time) {
+        const dateObj = new Date(time);
         const eventDateLocal = getLocalDateString(dateObj);
         if (eventDateLocal !== dataSelecionada.value) return;
     }
 
-    const league = event.league || 'Outros';
-    if (!groups[league]) groups[league] = [];
-    groups[league].push(event);
+    const leagueName = lg || 'Outros';
+    if (!groups[leagueName]) groups[leagueName] = [];
+    groups[leagueName].push(event);
   });
   return groups;
 });
 
-const formatTime = (d: string) => d ? new Date(d).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--';
-const formatDate = (d: string) => {
+const formatTime = (d: string | undefined) => d ? new Date(d).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--';
+const formatDate = (d: string | undefined) => {
   if (!d) return '---';
   const date = new Date(d);
   return date.getDate().toString().padStart(2, '0') + '/' + (date.getMonth() + 1).toString().padStart(2, '0');
 };
+
 const traduzirEsporte = (key: string) => {
   if (!key) return '';
   const k = key.toLowerCase();
@@ -338,12 +360,12 @@ const handleImageError = (event: Event) => {
         <div v-show="openLeagues.has(String(league))" class="bg-stake-dark border-x border-b border-stake-card/30">
           <div v-for="game in games" :key="getGameId(game)" class="p-4 border-b border-stake-card/30 flex flex-col md:flex-row items-center gap-4 transition-all hover:bg-[#B6FF00]/[0.05]">
             <div class="flex flex-col items-center min-w-[70px]">
-              <div class="text-[10px] font-bold text-stake-blue mb-0.5">{{ formatDate(game.commenceTime) }}</div>
-              <div class="flex items-center gap-1 text-white text-sm font-bold"><Clock class="w-3 h-3 text-stake-text" /> {{ formatTime(game.commenceTime) }}</div>
+              <div class="text-[10px] font-bold text-stake-blue mb-0.5">{{ formatDate(game.commenceTime || game.CommenceTime) }}</div>
+              <div class="flex items-center gap-1 text-white text-sm font-bold"><Clock class="w-3 h-3 text-stake-text" /> {{ formatTime(game.commenceTime || game.CommenceTime) }}</div>
             </div>
             <div class="flex-1 w-full text-white cursor-pointer hover:text-stake-blue transition-colors" @click="router.push({ name: 'event-details', params: { id: getGameId(game) } })">
-              <div class="flex items-center gap-2 mb-2"><TeamLogo :teamName="game.homeTeam || ''" :remoteUrl="game.homeTeamLogo" size="w-5 h-5" /><span class="font-bold text-sm">{{ game.homeTeam }}</span></div>
-              <div class="flex items-center gap-2"><TeamLogo :teamName="game.awayTeam || ''" :remoteUrl="game.awayTeamLogo" size="w-5 h-5" /><span class="font-bold text-sm">{{ game.awayTeam }}</span></div>
+              <div class="flex items-center gap-2 mb-2"><TeamLogo :teamName="game.homeTeam || game.HomeTeam || ''" :remoteUrl="game.homeTeamLogo" size="w-5 h-5" /><span class="font-bold text-sm">{{ game.homeTeam || game.HomeTeam }}</span></div>
+              <div class="flex items-center gap-2"><TeamLogo :teamName="game.awayTeam || game.AwayTeam || ''" :remoteUrl="game.awayTeamLogo" size="w-5 h-5" /><span class="font-bold text-sm">{{ game.awayTeam || game.AwayTeam }}</span></div>
             </div>
             <div class="flex gap-2 w-full md:w-auto">
               <button v-for="type in betTypesToShow" :key="type" @click.stop="handleSelection(game, type)" :disabled="parseFloat(getOdd(game, type)) <= 1.0"
@@ -359,9 +381,6 @@ const handleImageError = (event: Event) => {
       <div ref="loadTrigger" class="h-20 flex items-center justify-center py-4">
           <div v-if="loadingMore" class="flex items-center gap-2 text-stake-blue font-bold text-xs uppercase animate-pulse">
               <div class="w-2 h-2 bg-stake-blue rounded-full animate-bounce"></div> Carregando mais jogos...
-          </div>
-          <div v-else-if="!hasMore" class="text-xs text-stake-text/30">
-              Fim da lista
           </div>
       </div>
 

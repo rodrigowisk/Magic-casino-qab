@@ -40,7 +40,9 @@ namespace Magic_casino_sportbook.Models
         [JsonPropertyName("TS")] public string? Ts { get; set; } // Segundos
         [JsonPropertyName("TT")] public string? Tt { get; set; } // Timer Ticking (1=Rodando)
         [JsonPropertyName("TU")] public string? Tu { get; set; } // Time Updated (Data)
+        [JsonPropertyName("time_status")]                        // Status jogo
 
+        public string? TimeStatus { get; set; }
         // --- DADOS DE LOG/TEXTO (ST) ---
         [JsonPropertyName("LA")] public string? La { get; set; } // Log Action (Onde pegamos o tempo real)
 

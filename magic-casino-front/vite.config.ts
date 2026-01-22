@@ -42,7 +42,7 @@ export default defineConfig({
     hmr: {
       // ⚠️ IMPORTANTE: Comentei esta linha para funcionar no LOCALHOST.
       // Se for rodar o túnel da Cloudflare novamente, descomente ela.
-       clientPort: 443 
+      //clientPort: 443 
     }
   }
 })

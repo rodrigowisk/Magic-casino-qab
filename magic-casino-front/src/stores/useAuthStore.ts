@@ -39,7 +39,7 @@ export const useAuthStore = defineStore('auth', () => {
             // 🧹 Limpeza de segurança no token
             const cleanToken = token.value.replace(/['"]+/g, '');
 
-            console.log(">>>>> [STORE] Buscando saldo via Proxy (/core)...");
+            //console.log(">>>>> [STORE] Buscando saldo via Proxy (/core)...");
 
             // ✅ CORREÇÃO:
             // Usamos '/core' para ativar o Proxy do Vite (que manda para o Nginx 8888).
@@ -51,11 +51,11 @@ export const useAuthStore = defineStore('auth', () => {
             });
             
             if (response.data && typeof response.data.balance === 'number') {
-                console.log(">>>>> [STORE] Saldo Sincronizado:", response.data.balance);
+                //console.log(">>>>> [STORE] Saldo Sincronizado:", response.data.balance);
                 updateBalance(response.data.balance);
             }
         } catch (error) {
-            console.error("Erro ao sincronizar saldo no Core:", error);
+            //console.error("Erro ao sincronizar saldo no Core:", error);
         }
     }
 

@@ -12,14 +12,9 @@ namespace Magic_casino_sportbook.BackgroundServices
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<LiveUpdateWorker> _logger;
 
-        // 📉 AJUSTE DE FLUXO: Aumentamos os tempos para economizar requisições
-        // Antes: 10000 (10s) -> Agora: 25000 (25s)
-        // Isso reduz a carga na API em mais de 50%, evitando o erro 429/409.
-        private const int DELAY_LIVE_MS = 25000;
-
-        // Antes: 15000 (15s) -> Agora: 60000 (1 minuto)
-        // Verificar se jogo começou não precisa ser tão frequente.
-        private const int DELAY_HOT_MS = 60000;
+        // Intervalos ajustados para economia e performance
+        private const int DELAY_LIVE_MS = 10000; // 10s (Atualiza placar\odd)
+        private const int DELAY_HOT_MS = 60000;  // 60s (Verifica novos jogos)
 
         public LiveUpdateWorker(IServiceProvider serviceProvider, ILogger<LiveUpdateWorker> logger)
         {
@@ -29,7 +24,7 @@ namespace Magic_casino_sportbook.BackgroundServices
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("🔥 [LIVE WORKER] Iniciado. Modo Econômico (Intervalo 25s).");
+            _logger.LogInformation("🔥 [LIVE WORKER] Iniciado v4.0 (Multiesporte - API Check).");
             await Task.WhenAll(ProcessLiveZone(stoppingToken), ProcessHotZone(stoppingToken));
         }
 
@@ -45,24 +40,27 @@ namespace Magic_casino_sportbook.BackgroundServices
                         var liveService = scope.ServiceProvider.GetRequiredService<LiveSportService>();
                         var hub = scope.ServiceProvider.GetRequiredService<IHubContext<GameHub>>();
 
-                        // Filtra jogos ativos (Soccer ou Categoria Nula)
-                        // Ordena por LastUpdate para garantir rotação da fila
+                        // 🔍 ALTERAÇÃO 1: Removido filtro de "Soccer". Agora pega TUDO.
+                        // O "LiveSportService" já sabe lidar com cada esporte.
                         var liveGames = await context.SportsEvents
-                            .Where(g => g.Status == "Live" &&
-                                       (g.SportCategory == "Soccer" || g.SportCategory == null || g.SportCategory == ""))
-                            .OrderBy(g => g.LastUpdate)
-                            .Take(10) // Lote de 10 jogos por ciclo
+                            .Where(g => g.Status == "Live")
+                            .OrderBy(g => g.LastUpdate) // Garante rotação
+                            .Take(15) // Aumentei levemente o lote para garantir cobertura
                             .ToListAsync(ct);
 
                         if (liveGames.Any())
                         {
-                            // Atualiza os dados na API
+                            // 1. Vai na API, atualiza placar e identifica quem ACABOU
+                            // O método retorna a lista de IDs que viraram "Ended"
+                            // Nota: Se você atualizou o UpdateLiveGamesAsync para pedir IServiceProvider, altere aqui.
+                            // Mantive 'context' conforme seu código original para compatibilidade, 
+                            // mas o ideal é usar o ServiceProvider para criar escopos isolados no serviço.
                             var endedGameIds = await liveService.UpdateLiveGamesAsync(liveGames, context);
 
-                            // Salva no banco (O Heartbeat atualiza o LastUpdate aqui)
+                            // 2. Salva as alterações (Placar novo ou Status Ended) no banco
                             await context.SaveChangesAsync(ct);
 
-                            // Envia para o Frontend
+                            // 3. Envia atualização de Odds/Placar para quem está na página
                             await hub.Clients.All.SendAsync("LiveOddsUpdate", liveGames.Select(g => new
                             {
                                 id = g.ExternalId,
@@ -74,9 +72,10 @@ namespace Magic_casino_sportbook.BackgroundServices
                                 awayOdd = g.RawOddsAway
                             }), ct);
 
-                            // Remove jogos que a API sinalizou como encerrados
+                            // 4. 🔥 O GRANDE FINAL: Remove da tela os jogos encerrados
                             if (endedGameIds != null && endedGameIds.Any())
                             {
+                                Console.WriteLine($"🏁 [SIGNALR] Removendo {endedGameIds.Count} jogos encerrados da tela.");
                                 await hub.Clients.All.SendAsync("RemoveGames", endedGameIds, ct);
                             }
                         }
@@ -87,7 +86,6 @@ namespace Magic_casino_sportbook.BackgroundServices
                     _logger.LogError($"Erro LiveLoop: {ex.Message}");
                 }
 
-                // Aguarda 25 segundos antes do próximo ciclo
                 await Task.Delay(DELAY_LIVE_MS, ct);
             }
         }
@@ -104,21 +102,30 @@ namespace Magic_casino_sportbook.BackgroundServices
                         var liveService = scope.ServiceProvider.GetRequiredService<LiveSportService>();
                         var hub = scope.ServiceProvider.GetRequiredService<IHubContext<GameHub>>();
 
-                        // Verifica jogos que deveriam ter começado (PreMatch -> Live)
+                        // 🔍 ALTERAÇÃO 2: Busca candidatos a Live
+                        // Adicionei .AddMinutes(5) para pegar jogos prestes a começar, permitindo
+                        // que a API valide se o jogo começou na hora ou um pouco antes.
                         var gamesToKickoff = await context.SportsEvents
                             .Where(g => g.Status == "Prematch" &&
-                                        (g.SportCategory == "Soccer" || g.SportCategory == null || g.SportCategory == "") &&
-                                        g.CommenceTime <= DateTime.UtcNow &&
-                                        g.CommenceTime > DateTime.UtcNow.AddHours(-3))
+                                    g.CommenceTime <= DateTime.UtcNow.AddMinutes(5) &&
+                                    g.CommenceTime > DateTime.UtcNow.AddHours(-3)) // Janela de segurança
                             .OrderBy(g => g.CommenceTime)
                             .Take(50)
                             .ToListAsync(ct);
 
                         if (gamesToKickoff.Any())
                         {
-                            var newLiveIds = await liveService.CheckForKickoffAsync(gamesToKickoff, context);
+                            // AQUI ESTÁ A CORREÇÃO SOLICITADA:
+                            // Não muda mais o status cegamente (CheckForKickoffAsync).
+                            // Consulta a API (VerifyKickoffWithApiAsync) para ver se está InPlay (1).
+                            // Passamos o scope.ServiceProvider para o serviço criar seu próprio cliente isolado.
+
+                            var newLiveIds = await liveService.VerifyKickoffWithApiAsync(gamesToKickoff, scope.ServiceProvider);
+
                             if (newLiveIds.Any())
                             {
+                                _logger.LogInformation($"🔥 [HOTZONE] {newLiveIds.Count} jogos confirmados LIVE pela API.");
+                                // Remove da lista "Pré-Jogo" do front (para o usuário dar F5 ou navegar pro Live)
                                 await hub.Clients.All.SendAsync("RemoveGames", newLiveIds, ct);
                             }
                         }
@@ -128,7 +135,7 @@ namespace Magic_casino_sportbook.BackgroundServices
                 {
                     _logger.LogError($"Error HotZone: {ex.Message}");
                 }
-                // Aguarda 1 minuto antes de verificar novos inícios
+
                 await Task.Delay(DELAY_HOT_MS, ct);
             }
         }

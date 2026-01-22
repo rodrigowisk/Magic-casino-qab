@@ -195,7 +195,7 @@ onMounted(async () => {
     try {
         const adminData = await SportsService.getAdminConfig(); 
         
-        console.log("📦 RESPOSTA DO ADMIN CONFIG:", adminData);
+        //console.log("📦 RESPOSTA DO ADMIN CONFIG:", adminData);
 
         const enabledSet = new Set<string>();
         // Garante que é um array, caso venha nulo ou formato errado
@@ -215,7 +215,7 @@ onMounted(async () => {
         adminVisibleSports.value = enabledSet;
 
     } catch (err) {
-        console.error("❌ Erro config admin", err);
+        //console.error("❌ Erro config admin", err);
         // Fallback: Apenas futebol para não quebrar a tela, mas indicando erro
         adminVisibleSports.value = new Set(['soccer']); 
     } finally {

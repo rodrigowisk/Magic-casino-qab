@@ -9,7 +9,7 @@ const authStore = useAuthStore();
 // ✅ MANTIDO: O SEGREDINHO DO SALDO
 onMounted(async () => {
   if (authStore.token) {
-    console.log(">>>>> APP INICIOU: Forçando atualização do saldo...");
+    //console.log(">>>>> APP INICIOU: Forçando atualização do saldo...");
     await authStore.fetchBalance();
   }
 });
