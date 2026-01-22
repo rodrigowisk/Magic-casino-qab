@@ -4,45 +4,52 @@ import vue from '@vitejs/plugin-vue'
 export default defineConfig({
   plugins: [vue()],
   server: {
-    host: '0.0.0.0',
-    port: 5173, // 💻 Porta de Desenvolvimento (Hot Reload)
+    host: '0.0.0.0', // Permite acesso via rede (celular/outros PCs)
+    port: 5173,
     strictPort: true,
     
+    // 🛡️ Segurança para Túnneis (Cloudflare/Ngrok)
+    allowedHosts: [
+      'quebrandoabanca.bet',
+      'www.quebrandoabanca.bet',
+      'localhost',
+      '.ngrok-free.app', // Adicionado por precaução caso use ngrok
+      '.cloudflare.com'   // Adicionado por precaução
+    ],
+
     // 🔗 PROXY: A Mágica Híbrida
-    // Tudo que não for arquivo do Vue (.js, .css), ele joga para o Docker (8888)
     proxy: {
+      // Regra para o SignalR (WebSocket)
       '/gameHub': {
-        target: 'http://localhost:8888', // Aponta para o NGINX do Docker
+        target: 'http://127.0.0.1:8888', // Usei IP direto para evitar delay de DNS
         changeOrigin: true,
-        ws: true, // Habilita WebSocket para o SignalR funcionar
+        ws: true, // Essencial para WebSockets
         secure: false
       },
+      // Regra para API /sportbook
       '/sportbook': {
-        target: 'http://localhost:8888',
+        target: 'http://127.0.0.1:8888',
         changeOrigin: true,
         secure: false
       },
+      // Regra para API /core (Login/Auth)
       '/core': {
-        target: 'http://localhost:8888',
+        target: 'http://127.0.0.1:8888',
         changeOrigin: true,
         secure: false
       },
+      // Regra para API /slot
       '/slot': {
-        target: 'http://localhost:8888',
+        target: 'http://127.0.0.1:8888',
         changeOrigin: true,
         secure: false
       }
     },
-    // Configuração para Tunelamento (Cloudflare/Ngrok)
-    allowedHosts: [
-      'quebrandoabanca.bet',
-      'www.quebrandoabanca.bet',
-      'localhost'
-    ],
+
     hmr: {
-      // ⚠️ IMPORTANTE: Comentei esta linha para funcionar no LOCALHOST.
-      // Se for rodar o túnel da Cloudflare novamente, descomente ela.
-      //clientPort: 443 
+      // 👇 Mantenha comentado para LOCALHOST.
+      // 👇 Descomente APENAS se estiver acessando via https://quebrandoabanca.bet
+      // clientPort: 443 
     }
   }
 })

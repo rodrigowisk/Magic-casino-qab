@@ -1,6 +1,9 @@
 ﻿using Magic_casino_sportbook.Data;
+using Magic_casino_sportbook.Hubs; // ✅ NECESSÁRIO PARA O SIGNALR
 using Magic_casino_sportbook.Models;
+using Microsoft.AspNetCore.SignalR; // ✅ NECESSÁRIO PARA O SIGNALR
 using Microsoft.EntityFrameworkCore;
+using StackExchange.Redis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -14,27 +17,40 @@ namespace Magic_casino_sportbook.Services
         private const string BASE_URL = "https://api.b365api.com";
         private readonly JsonSerializerOptions _jsonOptions;
 
+        // ✅ DEPENDÊNCIA: REDIS
+        private readonly IDatabase _redisDb;
+
+        // ✅ NOVA DEPENDÊNCIA: SIGNALR (O Mensageiro)
+        private readonly IHubContext<GameHub> _hubContext;
+
         // 🔒 O PORTEIRO GLOBAL (SEMAPHORE):
-        // Isso obriga o sistema a fazer apenas 1 chamada por vez, 
-        // não importa quantos Workers estejam rodando.
         private static readonly SemaphoreSlim _apiGate = new SemaphoreSlim(1, 1);
 
-        public LiveSportService(IHttpClientFactory httpClientFactory)
+        // ✅ CONSTRUTOR ATUALIZADO (Recebe Redis + SignalR)
+        public LiveSportService(
+            IHttpClientFactory httpClientFactory,
+            IConnectionMultiplexer redis,
+            IHubContext<GameHub> hubContext)
         {
             _httpClientFactory = httpClientFactory;
+            _hubContext = hubContext; // Injeta o SignalR
             _apiToken = Environment.GetEnvironmentVariable("BETSAPI_TOKEN") ?? "";
+
+            // Pega o banco de dados do Redis
+            _redisDb = redis.GetDatabase();
 
             _jsonOptions = new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true,
                 NumberHandling = JsonNumberHandling.AllowReadingFromString,
                 ReadCommentHandling = JsonCommentHandling.Skip,
-                AllowTrailingCommas = true
+                AllowTrailingCommas = true,
+                ReferenceHandler = ReferenceHandler.IgnoreCycles
             };
         }
 
         // ==========================================================================================
-        // 🚀 ATUALIZAR LIVE (Com Fila Global _apiGate)
+        // 🚀 ATUALIZAR LIVE (Híbrido: Redis + SQL + SignalR)
         // ==========================================================================================
         public async Task<List<string>> UpdateLiveGamesAsync(List<SportsEvent> liveGames, AppDbContext context)
         {
@@ -48,7 +64,8 @@ namespace Magic_casino_sportbook.Services
 
             foreach (var batch in batches)
             {
-                // Heartbeat
+                // Heartbeat SQL (Mantido apenas para rotação da fila do Worker)
+                // Isso gera um UPDATE leve, mas não grava as odds no disco toda hora.
                 foreach (var game in batch)
                 {
                     game.LastUpdate = DateTime.UtcNow;
@@ -58,7 +75,7 @@ namespace Magic_casino_sportbook.Services
                 var gameIds = string.Join(",", batch.Select(g => g.ExternalId.Trim()));
                 var url = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={gameIds}";
 
-                // 🔒 ENTRA NA FILA (Aguarda a vez)
+                // 🔒 ENTRA NA FILA
                 await _apiGate.WaitAsync();
                 try
                 {
@@ -70,7 +87,6 @@ namespace Magic_casino_sportbook.Services
                         if (jsonString.Contains("PARAM_INVALID"))
                         {
                             Console.WriteLine($"⚠️ [RESGATE] Lote contaminado. Verificando individualmente...");
-                            // Passa para o método de resgate (que tem seus próprios delays)
                             await ProcessIndividualFallbackAsync(client, batch, context, endedGameIds);
                         }
                         else if (!string.IsNullOrWhiteSpace(jsonString))
@@ -78,7 +94,8 @@ namespace Magic_casino_sportbook.Services
                             var data = JsonSerializer.Deserialize<B365LiveResponse>(jsonString, _jsonOptions);
                             if (data != null && data.Results != null && data.Success == 1)
                             {
-                                DispatchUpdates(data.Results, batch.ToList(), context, endedGameIds);
+                                // 🔥 AGORA É ASYNC (Grava no Redis + Envia SignalR)
+                                await DispatchUpdates(data.Results, batch.ToList(), context, endedGameIds);
                             }
                         }
                     }
@@ -94,18 +111,23 @@ namespace Magic_casino_sportbook.Services
                 }
                 finally
                 {
-                    // 🔓 LIBERA A FILA
                     _apiGate.Release();
                 }
 
-                // Delay OBRIGATÓRIO fora do lock para dar respiro à API
+                // ✅ CORREÇÃO CRÍTICA: SALVAR NO BANCO SE HOUVER MUDANÇAS (Ex: Jogo acabou)
+                // Sem isso, o status 'Ended' nunca era persistido.
+                if (context.ChangeTracker.HasChanges())
+                {
+                    await context.SaveChangesAsync();
+                }
+
                 await Task.Delay(1100);
             }
             return endedGameIds;
         }
 
         // ==========================================================================================
-        // 🚑 MÉTODO DE RESGATE (1 por 1 - Lento para segurança)
+        // 🚑 MÉTODO DE RESGATE
         // ==========================================================================================
         private async Task ProcessIndividualFallbackAsync(HttpClient client, SportsEvent[] batch, AppDbContext context, List<string> endedGameIds)
         {
@@ -121,7 +143,7 @@ namespace Magic_casino_sportbook.Services
                     {
                         Console.WriteLine($"🗑️ [LIMPEZA] Jogo inválido removido: {game.ExternalId}");
                         game.Status = "Ended";
-                        context.Entry(game).State = EntityState.Modified;
+                        context.Entry(game).State = EntityState.Modified; // Grava no SQL para limpar
                         endedGameIds.Add(game.ExternalId);
                     }
                     else
@@ -129,19 +151,17 @@ namespace Magic_casino_sportbook.Services
                         var data = JsonSerializer.Deserialize<B365LiveResponse>(jsonString, _jsonOptions);
                         if (data != null && data.Results != null)
                         {
-                            DispatchUpdates(data.Results, new List<SportsEvent> { game }, context, endedGameIds);
+                            await DispatchUpdates(data.Results, new List<SportsEvent> { game }, context, endedGameIds);
                         }
                     }
                 }
                 catch { }
-
-                // Delay generoso (1.5s) no resgate para evitar travar tudo com 429
                 await Task.Delay(1500);
             }
         }
 
         // ==========================================================================================
-        // 🕵️ HOTZONE (Com Fila Global _apiGate)
+        // 🕵️ HOTZONE (Redis + SQL Check)
         // ==========================================================================================
         public async Task<List<string>> VerifyKickoffWithApiAsync(List<SportsEvent> candidates, IServiceProvider sp)
         {
@@ -162,7 +182,6 @@ namespace Magic_casino_sportbook.Services
                 var gameIds = string.Join(",", batch.Select(g => g.ExternalId.Trim()));
                 var url = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={gameIds}";
 
-                // 🔒 ENTRA NA FILA
                 await _apiGate.WaitAsync();
                 try
                 {
@@ -172,8 +191,6 @@ namespace Magic_casino_sportbook.Services
                     if (jsonString.Contains("PARAM_INVALID"))
                     {
                         Console.WriteLine($"⚠️ [HOTZONE] Lote com ID ruim. Verificando individualmente...");
-
-                        // Fallback interno do HotZone
                         foreach (var g in batch)
                         {
                             var indUrl = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={g.ExternalId}";
@@ -182,20 +199,19 @@ namespace Magic_casino_sportbook.Services
 
                             if (!indJson.Contains("PARAM_INVALID"))
                             {
-                                ProcessHotZonePacket(indJson, new List<SportsEvent> { g }, context, newLiveIds);
+                                await ProcessHotZonePacket(indJson, new List<SportsEvent> { g }, context, newLiveIds);
                             }
                             else
                             {
                                 g.Status = "Cancelled";
                                 context.Entry(g).State = EntityState.Modified;
                             }
-                            // Delay interno para segurança
                             await Task.Delay(1500);
                         }
                     }
                     else if (!string.IsNullOrWhiteSpace(jsonString))
                     {
-                        ProcessHotZonePacket(jsonString, batch.ToList(), context, newLiveIds);
+                        await ProcessHotZonePacket(jsonString, batch.ToList(), context, newLiveIds);
                     }
                 }
                 catch (Exception ex)
@@ -204,19 +220,17 @@ namespace Magic_casino_sportbook.Services
                 }
                 finally
                 {
-                    // 🔓 LIBERA A FILA
                     _apiGate.Release();
                 }
 
                 await context.SaveChangesAsync();
-                // Delay OBRIGATÓRIO
                 await Task.Delay(1100);
             }
 
             return newLiveIds;
         }
 
-        private void ProcessHotZonePacket(string jsonString, List<SportsEvent> games, AppDbContext context, List<string> newLiveIds)
+        private async Task ProcessHotZonePacket(string jsonString, List<SportsEvent> games, AppDbContext context, List<string> newLiveIds)
         {
             var data = JsonSerializer.Deserialize<B365LiveResponse>(jsonString, _jsonOptions);
             if (data != null && data.Results != null)
@@ -229,7 +243,6 @@ namespace Magic_casino_sportbook.Services
                     var gameDb = games.FirstOrDefault(g => g.ExternalId == ev.Fi);
                     if (gameDb == null) continue;
 
-                    // --- 🛡️ BLINDAGEM 106' (Anti-Travamento no Início) ---
                     bool tempoExagerado = false;
                     if (int.TryParse(ev.Tm, out int minutos))
                     {
@@ -238,25 +251,32 @@ namespace Magic_casino_sportbook.Services
 
                     bool isLive = (ev.TimeStatus == "1") || (!string.IsNullOrEmpty(ev.Tm) && ev.Tm != "0");
 
-                    // Só deixa virar Live se NÃO estiver travado com tempo absurdo
                     if (isLive && !tempoExagerado)
                     {
                         gameDb.Status = "Live";
                         if (string.IsNullOrEmpty(gameDb.Score)) gameDb.Score = "0-0";
                         if (string.IsNullOrEmpty(gameDb.GameTime)) gameDb.GameTime = "0'";
                         gameDb.LastUpdate = DateTime.UtcNow.AddMinutes(-10);
-                        context.Entry(gameDb).State = EntityState.Modified;
+
+                        context.Entry(gameDb).State = EntityState.Modified; // SQL: Mudança de Status é crítica
                         newLiveIds.Add(gameDb.ExternalId);
+
+                        // 🔥 Grava o estado inicial no Redis também
+                        var cacheKey = $"live_game:{gameDb.ExternalId}";
+                        await _redisDb.StringSetAsync(cacheKey, JsonSerializer.Serialize(gameDb, _jsonOptions), TimeSpan.FromHours(24));
                     }
                 }
             }
         }
 
         // ==========================================================================================
-        // 🚦 DISPATCHER (Com Blindagem de Fim de Jogo)
+        // 🚦 DISPATCHER HÍBRIDO (O Coração da Mudança - COM SIGNALR)
         // ==========================================================================================
-        private void DispatchUpdates(List<List<B365Packet>> results, List<SportsEvent> batchGames, AppDbContext context, List<string> endedGameIds)
+        private async Task DispatchUpdates(List<List<B365Packet>> results, List<SportsEvent> batchGames, AppDbContext context, List<string> endedGameIds)
         {
+            // 📦 Lista para acumular atualizações e enviar ao Front de uma vez
+            var updatesToSend = new List<object>();
+
             foreach (var packets in results)
             {
                 if (packets == null || !packets.Any()) continue;
@@ -274,18 +294,17 @@ namespace Magic_casino_sportbook.Services
 
                 if (ev != null)
                 {
-                    bool mudou = false;
+                    bool mudou = false; // "mudou" agora controla apenas lógica de parsing
                     string sportKey = (gameDb.SportKey ?? "").ToLower();
 
-                    // --- 🛡️ DETECÇÃO DE JOGO TRAVADO (BLINDAGEM 106') ---
+                    // --- BLINDAGEM 106' ---
                     bool tempoExagerado = false;
                     if (int.TryParse(ev.Tm, out int minutos))
                     {
-                        // Se passou de 100 min e o relógio (TT) parou (0), consideramos ENCERRADO
                         if (minutos > 100 && ev.Tt == "0") tempoExagerado = true;
                     }
 
-                    // Encerra se a API mandar OU se nossa blindagem detectar
+                    // --- VERIFICA SE O JOGO ACABOU (CRÍTICO -> VAI PRO SQL) ---
                     if (ev.TimeStatus == "3" || ev.Status == "3" || tempoExagerado)
                     {
                         bool temDados = (!string.IsNullOrEmpty(gameDb.Score) && gameDb.Score != "0-0") ||
@@ -293,31 +312,63 @@ namespace Magic_casino_sportbook.Services
 
                         if (gameDb.Status != "Ended" && temDados)
                         {
-                            Console.WriteLine($"🏁 [FIM DETECTADO] {gameDb.HomeTeam} -> Ended. (Motivo: {(tempoExagerado ? "Tempo > 100" : "API")})");
+                            Console.WriteLine($"🏁 [FIM] {gameDb.HomeTeam} -> Ended no SQL.");
                             gameDb.Status = "Ended";
                             gameDb.GameTime = "FT";
                             if (!string.IsNullOrEmpty(ev.Ss)) gameDb.Score = ev.Ss;
+
                             endedGameIds.Add(gameDb.ExternalId);
-                            mudou = true;
+
+                            // ⚠️ IMPORTANTE: Se acabou, GRAVA NO SQL para pagar as apostas
+                            context.Entry(gameDb).State = EntityState.Modified;
                         }
                     }
                     else
                     {
+                        // --- JOGO ROLANDO (ALTA FREQUÊNCIA -> VAI PRO REDIS) ---
+
+                        // Atualiza o objeto em Memória (gameDb)
                         if (sportKey.Contains("soccer") || sportKey.Contains("futebol")) mudou = UpdateSoccer(gameDb, ev, logs);
                         else if (sportKey.Contains("basket")) mudou = UpdateBasketball(gameDb, ev);
                         else if (sportKey.Contains("tennis")) mudou = UpdateTennis(gameDb, ev);
                         else if (sportKey.Contains("volley")) mudou = UpdateVolleyball(gameDb, ev);
                         else mudou = UpdateGenericSport(gameDb, ev);
-                    }
 
-                    if (mudou) context.Entry(gameDb).State = EntityState.Modified;
+                        // Processa Odds em Memória
+                        ProcessOdds(gameDb, packets);
+
+                        // 1. 🔥 MÁGICA 1: SALVA NO REDIS (Persistência Rápida)
+                        var cacheKey = $"live_game:{gameDb.ExternalId}";
+                        await _redisDb.StringSetAsync(cacheKey, JsonSerializer.Serialize(gameDb, _jsonOptions), TimeSpan.FromHours(24));
+
+                        // 2. 🔥 MÁGICA 2: PREPARA PACOTE PARA O FRONT (SignalR)
+                        // Criamos um objeto leve só com o que mudou/importa para o Front
+                        updatesToSend.Add(new
+                        {
+                            id = gameDb.ExternalId,
+                            time = gameDb.GameTime,
+                            score = gameDb.Score,
+                            status = gameDb.Status ?? "Live", // ✅ CORREÇÃO: Usar .Status em vez de .Period
+                            homeOdd = gameDb.RawOddsHome,
+                            drawOdd = gameDb.RawOddsDraw,
+                            awayOdd = gameDb.RawOddsAway
+                        });
+
+                        // 🚫 NÃO marcamos EntityState.Modified aqui. O SQL descansa.
+                    }
                 }
-                ProcessOdds(gameDb, packets, ref context);
+            }
+
+            // 🔥 DISPARO FINAL: ENVIA O LOTE PARA O FRONTEND VIA SIGNALR
+            if (updatesToSend.Any())
+            {
+                // Console.WriteLine($"📡 Enviando {updatesToSend.Count} updates via SignalR...");
+                await _hubContext.Clients.All.SendAsync("LiveOddsUpdate", updatesToSend);
             }
         }
 
         // ==========================================================================================
-        // MÉTODOS DE PARSE
+        // MÉTODOS DE PARSE (Mantidos iguais, mas agora atualizam apenas a memória)
         // ==========================================================================================
 
         private bool UpdateSoccer(SportsEvent game, B365Packet ev, List<B365Packet> logs)
@@ -376,10 +427,9 @@ namespace Magic_casino_sportbook.Services
             return changed;
         }
 
-        private void ProcessOdds(SportsEvent game, List<B365Packet> packets, ref AppDbContext context)
+        private void ProcessOdds(SportsEvent game, List<B365Packet> packets)
         {
             var odds = packets.Where(p => (p.Type == "PA" || p.Type == "MA") && !string.IsNullOrEmpty(p.Od));
-            bool changed = false;
             foreach (var odd in odds)
             {
                 decimal valor = ConvertFraction(odd.Od);
@@ -390,11 +440,12 @@ namespace Magic_casino_sportbook.Services
                 bool isAway = n2 == "2" || name == "2" || name.Contains("away") || name.Contains("fora");
                 bool isDraw = n2 == "x" || name == "x" || name.Contains("draw") || name.Contains("empate");
 
-                if (isHome && game.RawOddsHome != valor) { game.RawOddsHome = valor; changed = true; }
-                else if (isAway && game.RawOddsAway != valor) { game.RawOddsAway = valor; changed = true; }
-                else if (isDraw && game.RawOddsDraw != valor) { game.RawOddsDraw = valor; changed = true; }
+                if (isHome) game.RawOddsHome = valor;
+                else if (isAway) game.RawOddsAway = valor;
+                else if (isDraw) game.RawOddsDraw = valor;
             }
-            if (changed) context.Entry(game).State = EntityState.Modified;
+            // OBS: Não chamamos mais context.Entry(...).State = Modified aqui.
+            // A atualização vai pro Redis no DispatchUpdates.
         }
 
         public async Task<List<string>> CheckForKickoffAsync(List<SportsEvent> games, AppDbContext context)

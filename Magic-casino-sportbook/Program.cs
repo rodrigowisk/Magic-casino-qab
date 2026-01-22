@@ -7,6 +7,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System.Text;
 using Magic_casino_sportbook.BackgroundServices;
+using StackExchange.Redis; // ✅ ADICIONADO: Necessário para IConnectionMultiplexer
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,7 +19,6 @@ Console.WriteLine("#############################################################
 // 1. DATABASE
 // =============================================================
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString)
@@ -100,12 +100,20 @@ builder.Services.AddCors(options =>
 builder.Services.AddControllers();
 
 // =============================================================
-// 4. SIGNALR + REDIS
+// 4. REDIS CONFIGURATION (CACHE + SIGNALR) 🚀
 // =============================================================
+// Pega a conexão da variável de ambiente ou usa o padrão do Docker Compose
+var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION") ?? "redis:6379";
+
+// 4.1. Injeta o Cliente Redis (Para gravar Odds/Dados)
+// Isso permite usar IConnectionMultiplexer nos Services e Controllers
+builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+    ConnectionMultiplexer.Connect(ConfigurationOptions.Parse(redisConnectionString + ",abortConnect=false")));
+
+// 4.2. Configura o SignalR Backplane (Para Websockets Escalar)
 builder.Services.AddSignalR().AddStackExchangeRedis(o =>
 {
-    o.Configuration.EndPoints.Add("redis:6379");
-    o.Configuration.AbortOnConnectFail = false;
+    o.Configuration = ConfigurationOptions.Parse(redisConnectionString + ",abortConnect=false");
 });
 
 // =============================================================
@@ -148,7 +156,7 @@ builder.Services.AddHttpClient<BetsApiService>();
 //builder.Services.AddHttpClient<TheOddsApiService>();
 builder.Services.AddHttpClient<PreMatchService>(); // Registra como Typed Client
 
-// 3. 🟢 CORREÇÃO: Registro do LiveSportService
+// 3. Registro do LiveSportService
 // Mudamos de AddHttpClient<> para AddScoped<> porque o construtor pede IHttpClientFactory
 builder.Services.AddScoped<LiveSportService>();
 
