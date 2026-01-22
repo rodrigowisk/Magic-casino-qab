@@ -42,14 +42,16 @@ const loadConfiguration = async () => {
   try {
     const response = await apiSports.get('/admin/configuration');
     
-    // CORREÇÃO: Verificação segura
-    const data = (response && response.data) ? response.data : [];
-    
-    sportsData.value = data;
+    // Verificação segura e garantia de Array
+    const rawData = (response && response.data) ? response.data : [];
+    sportsData.value = Array.isArray(rawData) ? rawData : [];
 
-    if (sportsData.value.length > 0 && !selectedSportKey.value) {
-      selectedSportKey.value = sportsData.value[0].key;
+    // ✅ CORREÇÃO: Uso de variável segura para evitar erro TS2532
+    const firstSport = sportsData.value[0];
+    if (firstSport && !selectedSportKey.value) {
+      selectedSportKey.value = firstSport.key;
     }
+
   } catch (error) {
     console.error('Erro ao carregar:', error);
     Swal.fire({
@@ -59,6 +61,7 @@ const loadConfiguration = async () => {
       background: '#1e293b',
       color: '#fff'
     });
+    sportsData.value = []; // Evita estado inconsistente
   } finally {
     isLoading.value = false;
   }
@@ -67,9 +70,11 @@ const loadConfiguration = async () => {
 const saveChanges = async () => {
   try {
     isLoading.value = true;
+    
+    // Envia apenas os dados necessários
     const response = await apiSports.post('/admin/configuration', sportsData.value);
     
-    // CORREÇÃO: Verificação segura para mensagem
+    // Verificação segura para mensagem
     const msg = (response && response.data && response.data.message) ? response.data.message : 'Configurações atualizadas.';
 
     Swal.fire({
@@ -100,7 +105,8 @@ const selectSport = (key: string) => { selectedSportKey.value = key; };
 const toggleLeagueExpansion = (league: League) => { league.isExpanded = !league.isExpanded; };
 
 const syncLeagueTeams = (league: League) => {
-  if (league.teams && league.teams.length > 0) {
+  // TypeScript Guard: Garante que teams existe antes de iterar
+  if (league.teams && Array.isArray(league.teams) && league.teams.length > 0) {
     league.teams.forEach(team => {
       team.isActive = league.isActive;
     });
@@ -180,13 +186,14 @@ onMounted(() => { loadConfiguration(); });
             Ligas de {{ currentSport.name }}
           </h3>
           <span class="text-[10px] text-gray-400 bg-white px-2 py-0.5 rounded border">
-            {{ currentSport.leagues.length }} ligas encontradas
+            {{ currentSport.leagues?.length || 0 }} ligas encontradas
           </span>
         </div>
 
         <div class="flex-1 overflow-y-auto custom-scrollbar p-2">
-          <div class="space-y-1"> <div 
-              v-for="league in currentSport.leagues" 
+          <div class="space-y-1"> 
+            <div 
+              v-for="league in (currentSport.leagues || [])" 
               :key="league.id"
               class="border rounded overflow-hidden transition-all duration-150"
               :class="league.isActive ? 'border-gray-200' : 'border-red-100 bg-red-50/50'"
@@ -198,7 +205,7 @@ onMounted(() => { loadConfiguration(); });
                   </button>
                   <span class="font-semibold text-gray-700 text-xs truncate">{{ league.name }}</span>
                   <span class="text-[10px] bg-blue-100 text-blue-800 px-1.5 rounded-full font-bold min-w-[20px] text-center">
-                      {{ league.teams.length }}
+                      {{ league.teams?.length || 0 }}
                   </span>
                 </div>
                 
@@ -214,11 +221,11 @@ onMounted(() => { loadConfiguration(); });
               </div>
 
               <div v-if="league.isExpanded" class="p-2 bg-white border-t border-gray-100">
-                <div v-if="league.teams.length === 0" class="text-xs text-gray-400 italic text-center py-1">
+                <div v-if="!league.teams || league.teams.length === 0" class="text-xs text-gray-400 italic text-center py-1">
                     Vazio.
                 </div>
                 <div v-else class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                  <div v-for="team in league.teams" :key="team.id" 
+                  <div v-for="team in (league.teams || [])" :key="team.id" 
                        class="flex items-center justify-between px-2 py-1 rounded border text-xs transition-all hover:border-blue-300 group" 
                        :class="team.isActive ? 'bg-white border-gray-200' : 'bg-gray-50 border-dashed border-gray-300 opacity-60'">
                     

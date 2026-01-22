@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import AuthService from '../services/AuthService';
-import axios from 'axios'; // ✅ IMPORTANTE: Usamos axios puro para ir em outra porta
+import axios from 'axios'; 
 
 export const useAuthStore = defineStore('auth', () => {
     // 1. Carrega o que está na memória do navegador
@@ -36,15 +36,15 @@ export const useAuthStore = defineStore('auth', () => {
         if (!token.value) return;
 
         try {
-            // 🧹 Limpeza de segurança no token (remove aspas extras se tiver)
+            // 🧹 Limpeza de segurança no token
             const cleanToken = token.value.replace(/['"]+/g, '');
 
-            console.log(">>>>> [STORE] Buscando saldo direto no Core (8080)...");
+            console.log(">>>>> [STORE] Buscando saldo via Proxy (/core)...");
 
-            // ✅ MUDANÇA CRUCIAL:
-            // Em vez de usar apiSports (8090), vamos direto no CORE (8080)
-            // Isso evita o erro 401 do Sportbook e qualquer problema de comunicação entre containers
-            const response = await axios.get('http://localhost:8080/api/user/my-balance', {
+            // ✅ CORREÇÃO:
+            // Usamos '/core' para ativar o Proxy do Vite (que manda para o Nginx 8888).
+            // O Nginx então remove '/core' e manda para o container na porta 8080.
+            const response = await axios.get('/core/api/user/my-balance', {
                 headers: {
                     Authorization: `Bearer ${cleanToken}`
                 }

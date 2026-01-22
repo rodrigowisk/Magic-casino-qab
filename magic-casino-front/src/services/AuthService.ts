@@ -1,12 +1,26 @@
 import axios from 'axios';
 
+// ✅ CORREÇÃO:
+// Mudamos de 'http://localhost:8080/api/user' para '/core/api/user'.
+// 1. O '/core' avisa o Nginx/Vite para mandar para o container "core".
+// 2. O '/api/user' é o caminho que o backend espera receber.
 const authApi = axios.create({
-    baseURL: 'http://localhost:8080/api/user', 
+    baseURL: '/core/api/user', 
     timeout: 10000
+});
+
+// (Opcional) Adicione o interceptor do Token aqui também se precisar de autenticação nas rotas de usuário
+authApi.interceptors.request.use((config) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+        config.headers.Authorization = `Bearer ${token.replace(/['"]+/g, '')}`;
+    }
+    return config;
 });
 
 export default {
     async login(cpf: string, password: string) {
+        // Agora vai bater em: /core/api/user/login
         const response = await authApi.post('/login', { 
             code: cpf,
             password: password 
@@ -38,9 +52,6 @@ export default {
             
             localStorage.setItem('user', JSON.stringify(userFormatted));
 
-            // --- O TRUQUE ---
-            // Retornamos o objeto 'user' formatado dentro da resposta
-            // Assim o MainLayout pega o 'balance' certo imediatamente.
             return {
                 ...response.data,
                 user: userFormatted 
@@ -63,6 +74,8 @@ export default {
     logout() {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
+        // Opcional: Recarregar a página para limpar estados da memória
+        // window.location.reload(); 
     },
 
     getCurrentUser() {

@@ -3,33 +3,12 @@ import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signalr';
 import { Radio, AlertCircle, ChevronDown, ChevronRight, Timer, ArrowUp, ArrowDown, Lock } from 'lucide-vue-next';
-import apiSports from '../services/apiSports';
+import axios from 'axios'; // ✅ CORREÇÃO: Importando axios direto para corrigir a rota
 import TeamLogo from '../components/TeamLogo.vue';
 import { useBetStore, type BetType } from '../stores/useBetStore';
 
 // Importação do Menu Híbrido
 import TopSportsMenu from '../components/TopSportsMenu.vue';
-
-// --- ⚙️ CONFIGURAÇÃO DE URL INTELIGENTE (CORREÇÃO DO ERRO 404) ---
-const getBaseUrl = () => {
-  // Pega a URL do .env (ex: http://localhost:8090/api/sports)
-  const envUrl = import.meta.env.VITE_API_URL || 'http://localhost:8888';
-  try {
-    const url = new URL(envUrl);
-    
-    // Se estiver apontando direto para o backend (8090), forçamos para o NGINX (8888)
-    if (url.port === '8090' && url.hostname === 'localhost') {
-        return `${url.protocol}//${url.hostname}:8888`;
-    }
-    
-    // Retorna apenas a origem (http://dominio:porta), removendo "/api/sports"
-    return url.origin; 
-  } catch {
-    return 'http://localhost:8888';
-  }
-};
-
-const BASE_URL = getBaseUrl();
 
 // --- INTERFACES ---
 interface LiveGame {
@@ -91,7 +70,11 @@ const getSportCategory = (gameOrKey: LiveGame | string): string => {
 // --- DATA FETCHING ---
 const fetchInitialData = async () => {
   try {
-    const response = await apiSports.get('/LiveEvents'); 
+    // ✅ CORREÇÃO CRUCIAL:
+    // O endpoint '/api/LiveEvents' está na raiz do Sportbook, não dentro de '/api/sports'.
+    // Usamos o axios direto com o prefixo do Nginx '/sportbook'.
+    const response = await axios.get('/sportbook/api/LiveEvents');
+    
     if (response.data && Array.isArray(response.data)) {
         events.value = response.data.map((e: any) => {
             // Parse inicial seguro do placar
@@ -147,8 +130,8 @@ const updateOddWithAnimation = (game: LiveGame, field: 'homeOdd' | 'drawOdd' | '
 onMounted(async () => {
   await fetchInitialData();
   
-  // URL Corrigida: http://localhost:8888/gameHub
-  const signalRUrl = `${BASE_URL}/gameHub`;
+  // Caminho relativo simples para usar o Proxy
+  const signalRUrl = "/gameHub";
   console.log(`📡 [AO VIVO] Conectando SignalR em: ${signalRUrl}`);
 
   connection = new HubConnectionBuilder()
@@ -168,6 +151,8 @@ onMounted(async () => {
         if (index !== -1) {
             const game = events.value[index];
             
+            if (!game) return; 
+
             // Atualiza Tempo
             if (update.time) game.currentMinute = update.time;
             
@@ -264,13 +249,16 @@ const isSelected = (game: LiveGame, type: BetType) => betStore.selections.find(s
 const getOddValue = (game: LiveGame, type: string) => (type === '1' ? game.homeOdd : type === 'X' ? game.drawOdd : game.awayOdd).toFixed(2);
 const getBetTypes = (game: LiveGame) => (game.drawOdd > 0.01) ? ['1', 'X', '2'] : ['1', '2'];
 const isNumericTime = (time: string) => time && /\d/.test(time);
-const getFlagUrl = (game: LiveGame) => {
+
+const getFlagUrl = (game: LiveGame | undefined) => {
+  if (!game) return '/images/flags/un.svg'; 
   if (game.countryCode) return `/images/flags/${game.countryCode.toLowerCase()}.svg`;
   const leagueName = (game.league || '').toLowerCase();
   const map: Record<string, string> = { brazil: 'br', england: 'gb', spain: 'es', italy: 'it', germany: 'de', france: 'fr', usa: 'us', portugal: 'pt', argentina: 'ar', russia: 'ru', netherlands: 'nl' };
   const found = Object.keys(map).find(c => leagueName.includes(c));
   return found ? `/images/flags/${map[found]}.svg` : '/images/flags/un.svg';
 };
+
 const getOddDirection = (game: LiveGame, type: string) => { if (type === '1') return game.homeOddDir; if (type === 'X') return game.drawOddDir; if (type === '2') return game.awayOddDir; return null; };
 const getOddFlash = (game: LiveGame, type: string) => { if (type === '1') return game.homeOddFlash; if (type === 'X') return game.drawOddFlash; if (type === '2') return game.awayOddFlash; return false; };
 const getOddRaw = (game: LiveGame, type: string) => { if (type === '1') return game.homeOdd; if (type === 'X') return game.drawOdd; if (type === '2') return game.awayOdd; return 0; };

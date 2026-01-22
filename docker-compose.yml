@@ -1,18 +1,18 @@
 services:
-  # ✅ FRONTEND VUE.JS
+  # ✅ FRONTEND
   frontend:
     build:
       context: .
       dockerfile: magic-casino-front/Dockerfile
     container_name: frontend
-    image: magic-casino-frontend:dev
-    ports:
-      - "80:80"
+    image: magic-casino-frontend:prod
+    expose:
+      - "80"
     restart: always
     depends_on:
       - core
 
-  # ✅ SERVIÇO DE CACHE (REDIS)
+  # ✅ REDIS
   redis:
     image: redis:alpine
     container_name: redis
@@ -20,94 +20,81 @@ services:
     ports:
       - "6379:6379"
 
-  # 🚀 SERVIÇO CORE
+  # ✅ CORE (Backend Principal)
   core:
     build:
       context: .
       dockerfile: Magic-casino/Dockerfile
-    image: magic-casino-core:dev
+    image: magic-casino-core:prod
     container_name: core
+    # Mudei para formato de MAPA (sem tracinhos) para evitar erros
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__Redis=redis:6379
-      # Puxando do .env 👇
-      - ConnectionStrings__DefaultConnection=${DB_CONN_CORE}
-      - Jwt__Key=${JWT_SECRET}
-      - Jwt__Issuer=${JWT_ISSUER}
-      - Jwt__Audience=${JWT_AUDIENCE}
-    ports:
-      - "8080:8080"
-      - "8081:8081"
+      ConnectionStrings__Redis: "redis:6379"
+      ConnectionStrings__DefaultConnection: "${DB_CONN_CORE}"
+      Jwt__Key: "${JWT_SECRET}"
+      Jwt__Issuer: "${JWT_ISSUER}"
+      Jwt__Audience: "${JWT_AUDIENCE}"
+    expose:
+      - "8080"
     restart: always
     depends_on:
       - redis
 
-  # ⚽ SERVIÇO SPORTBOOK
+  # ✅ SPORTBOOK (Onde estava o erro)
   sportbook:
     build:
       context: .
       dockerfile: Magic-casino-sportbook/Dockerfile
-    image: magic-casino-sportbook:dev
+    image: magic-casino-sportbook:prod
     container_name: sportbook
+    # AQUI ESTAVA O ERRO. Agora está corrigido (Mapa chave: valor):
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__Redis=redis:6379
-      # Puxando do .env 👇
-      - ConnectionStrings__DefaultConnection=${DB_CONN_SPORTBOOK}
-      - OddsApiKey=${ODDS_API_KEY}
-      - Jwt__Key=${JWT_SECRET}
-      - Jwt__Issuer=${JWT_ISSUER}
-      - Jwt__Audience=${JWT_AUDIENCE}
-      - ODDS_PROVIDER=${ODDS_PROVIDER}
-      - BETSAPI_TOKEN=${BETSAPI_TOKEN}
-    ports:
-      - "8090:8080"
-      - "8091:8081"
+      ASPNETCORE_ENVIRONMENT: "Development"  # <--- Habilita o Swagger
+      ConnectionStrings__Redis: "redis:6379"
+      ConnectionStrings__DefaultConnection: "${DB_CONN_SPORTBOOK}"
+      OddsApiKey: "${ODDS_API_KEY}"
+      Jwt__Key: "${JWT_SECRET}"
+      Jwt__Issuer: "${JWT_ISSUER}"
+      Jwt__Audience: "${JWT_AUDIENCE}"
+      ODDS_PROVIDER: "${ODDS_PROVIDER}"
+      BETSAPI_TOKEN: "${BETSAPI_TOKEN}"
+    expose:
+      - "8080"
     restart: always
     depends_on:
       - redis
 
-  # 🎰 SERVIÇO SLOT
+  # ✅ SLOT
   slot:
     build:
       context: .
       dockerfile: Magic-casino-slot/Dockerfile
-    image: magic-casino-slot:dev
+    image: magic-casino-slot:prod
     container_name: slot
+    # Padronizado para Mapa também
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__Redis=redis:6379
-      # Puxando do .env 👇
-      - ConnectionStrings__DefaultConnection=${DB_CONN_SLOT}
-      - Jwt__Key=${JWT_SECRET}
-      - Jwt__Issuer=${JWT_ISSUER}
-      - Jwt__Audience=${JWT_AUDIENCE}
-    ports:
-      - "8100:8080"
-      - "8101:8081"
+      ConnectionStrings__Redis: "redis:6379"
+      ConnectionStrings__DefaultConnection: "${DB_CONN_SLOT}"
+      Jwt__Key: "${JWT_SECRET}"
+      Jwt__Issuer: "${JWT_ISSUER}"
+      Jwt__Audience: "${JWT_AUDIENCE}"
+    expose:
+      - "8080"
     restart: always
     depends_on:
       - redis
 
-  # 🏆 SERVIÇO TOURNAMENT (NOVO)
-  tournament:
-    build:
-      context: .
-      dockerfile: Magic-casino-tournament/Dockerfile
-    image: magic-casino-tournament:dev
-    container_name: tournament
-    environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__Redis=redis:6379
-      # Conecta no MESMO banco dos outros (magic_sportbook) usando usuário padrão
-      # Se você tiver uma variável no .env para isso, pode usar, senão use esta direta:
-      - ConnectionStrings__DefaultConnection=${DB_CONN_TOURNAMENT}
-      - Jwt__Key=${JWT_SECRET}
-      - Jwt__Issuer=${JWT_ISSUER}
-      - Jwt__Audience=${JWT_AUDIENCE}
+  # 🚦 GATEWAY (NGINX)
+  nginx:
+    image: nginx:alpine
+    container_name: nginx_gateway
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
-      - "8110:8080"
-    restart: always
+      - "8888:8888"
     depends_on:
-      - redis
-      # - db  <-- Descomente se o serviço 'db' estiver definido neste arquivo (ele não apareceu no trecho que vc mandou)
+      - frontend
+      - sportbook
+      - core
+      - slot
+    restart: always

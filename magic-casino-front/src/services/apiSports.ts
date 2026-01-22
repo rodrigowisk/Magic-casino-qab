@@ -1,24 +1,29 @@
 import axios from "axios";
 
 const apiSports = axios.create({
-  baseURL: "http://localhost:8090/api",
-  timeout: 10000,
+  // ✅ CORREÇÃO FORÇADA:
+  // Definimos direto "/sportbook/api".
+  // Assim, quando o botão de aposta chamar "/bets/place",
+  // a URL final será exata: "/sportbook/api/bets/place".
+  baseURL: "/sportbook/api", 
+  timeout: 15000,
 });
 
 apiSports.interceptors.request.use((config) => {
-  // 🛡️ MODO BLINDADO: Lê direto do navegador, ignorando atrasos da Store
+  // 🛡️ MODO BLINDADO: Pega o token limpo
   let token = localStorage.getItem('token');
 
   if (token) {
-    // 1. Limpeza Pesada: Remove aspas, espaços e caracteres estranhos
+    // Remove aspas, espaços e garante que não é null/undefined string
     token = token.replace(/['"]+/g, '').trim();
     
-    // 2. Validação final antes de anexar
     if (token && token !== 'null' && token !== 'undefined') {
         config.headers.Authorization = `Bearer ${token}`;
     }
   }
   return config;
+}, (error) => {
+    return Promise.reject(error);
 });
 
 export default apiSports;

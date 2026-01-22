@@ -114,14 +114,15 @@ const getBetTypeForSlip = (odd: any, marketName: string): string => {
     return translateMarket(marketName);
 };
 
-// CORREÇÃO: Verificação segura de event.value e odds, COM ORDENAÇÃO DE MERCADO
+// ✅ CORREÇÃO APLICADA: Uso de variável local 'evt' para garantir tipagem
 const groupedMarkets = computed<Record<string, any[]>>(() => {
-    if (!event.value || !event.value.odds) return {};
+    const evt = event.value; // Captura o valor atual para garantir que não é null
+    if (!evt || !evt.odds) return {};
 
     const groups: Record<string, any[]> = {};
 
-    // 1. Agrupa as odds traduzindo os nomes
-    event.value.odds.forEach((odd) => {
+    // 1. Agrupa as odds traduzindo os nomes (Usa 'evt' em vez de 'event.value')
+    evt.odds.forEach((odd) => {
         const name = translateMarket(odd.marketName);
 
         if (name === 'Dupla Hipótese') {
@@ -136,7 +137,7 @@ const groupedMarkets = computed<Record<string, any[]>>(() => {
     // 2. Ordena as ODDS dentro de cada grupo
     Object.keys(groups).forEach(key => {
         if (isMarket1x2(key)) {
-            groups[key].sort((a, b) => {
+            groups[key]?.sort((a, b) => {
                 const typeA = getBetTypeForSlip(a, key);
                 const typeB = getBetTypeForSlip(b, key);
 
@@ -151,7 +152,7 @@ const groupedMarkets = computed<Record<string, any[]>>(() => {
         }
 
         if (key === 'Dupla Hipótese') {
-            groups[key].sort((a, b) => {
+            groups[key]?.sort((a, b) => {
                 const nameA = asString(a.outcomeName).toLowerCase();
                 const nameB = asString(b.outcomeName).toLowerCase();
                 if (nameA.includes('12') || (nameA.includes('casa') && nameA.includes('fora'))) return 0;
@@ -160,20 +161,20 @@ const groupedMarkets = computed<Record<string, any[]>>(() => {
         }
     });
 
-    // 3. (NOVO) Ordena os MERCADOS para colocar "Resultado Final" no topo
+    // 3. Ordena os MERCADOS para colocar "Resultado Final" no topo
     const sortedKeys = Object.keys(groups).sort((a, b) => {
-        // Se a for Resultado Final, ele vem antes (-1)
         if (a === 'Resultado Final') return -1;
-        // Se b for Resultado Final, ele vem antes (1)
         if (b === 'Resultado Final') return 1;
-        // Para os outros, mantém a ordem original ou alfabética (aqui mantendo original/insert order)
         return 0;
     });
 
     // Reconstrói o objeto na ordem certa
     const sortedGroups: Record<string, any[]> = {};
     sortedKeys.forEach(key => {
-        sortedGroups[key] = groups[key];
+        const g = groups[key];
+        if (g) { // ✅ Garante que 'g' existe antes de atribuir
+            sortedGroups[key] = g;
+        }
     });
 
     return sortedGroups;

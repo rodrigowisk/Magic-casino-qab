@@ -10,28 +10,6 @@ import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signal
 // ✅ IMPORTAÇÃO DA NOVA FUNÇÃO DE BANDEIRAS
 import { getFlag } from '../utils/flags'; 
 
-// --- ⚙️ CONFIGURAÇÃO DE URL INTELIGENTE (CORREÇÃO DE ROTA) ---
-const getBaseUrl = () => {
-  // Pega a URL do .env (ex: http://localhost:8090/api/sports)
-  const envUrl = import.meta.env.VITE_API_URL || 'http://localhost:8888';
-  try {
-    const url = new URL(envUrl);
-    
-    // Se a URL estiver apontando direto para o backend (8090), 
-    // forçamos para o NGINX (8888) para garantir que o roteamento e o túnel funcionem.
-    if (url.port === '8090' && url.hostname === 'localhost') {
-        return `${url.protocol}//${url.hostname}:8888`;
-    }
-    
-    // Retorna apenas a origem (http://dominio:porta), removendo "/api/sports"
-    return url.origin; 
-  } catch {
-    return 'http://localhost:8888';
-  }
-};
-
-const BASE_URL = getBaseUrl(); 
-
 // Interface flexível
 interface SportEvent {
   externalId?: string;
@@ -203,8 +181,9 @@ onMounted(async () => {
 
   // 2. Conexão SignalR - CORRIGIDA
   try {
-    // Monta a URL correta: http://localhost:8888/gameHub
-    const signalRUrl = `${BASE_URL}/gameHub`; 
+    // ✅ URL SIMPLIFICADA PARA USAR O PROXY
+    const signalRUrl = "/gameHub"; 
+    
     console.log(`🔌 [PRÉ-JOGO] Conectando SignalR em: ${signalRUrl}`);
 
     connection.value = new HubConnectionBuilder()
@@ -348,7 +327,7 @@ const handleImageError = (event: Event) => {
           class="bg-stake-card p-3 flex items-center justify-between border-l-4 border-stake-blue cursor-pointer hover:brightness-110 transition-all select-none">
           <div class="flex items-center gap-3">
             
-            <img :src="getFlag(league, games[0].countryCode)" class="w-5 h-3.5 rounded-sm shadow-sm object-cover bg-black/20" @error="handleImageError" />
+            <img :src="getFlag(league, games[0]?.countryCode)" class="w-5 h-3.5 rounded-sm shadow-sm object-cover bg-black/20" @error="handleImageError" />
             
             <h3 class="text-white font-bold text-sm uppercase">{{ league }}</h3>
             <span v-if="countBetsInLeague(games) > 0" class="bg-yellow-500 text-black text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full ml-1">{{ countBetsInLeague(games) }}</span>
