@@ -1,9 +1,10 @@
 ﻿using Magic_casino_sportbook.Data;
 using Magic_casino_sportbook.Models;
+using Magic_casino_sportbook.Services; // Adicionado para acessar CoreWalletService
 using Microsoft.EntityFrameworkCore;
+using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Net;
 
 namespace Magic_casino_sportbook.BackgroundServices
 {
@@ -24,15 +25,8 @@ namespace Magic_casino_sportbook.BackgroundServices
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             Console.WriteLine("\n-------------------------------------------------------------");
-            Console.WriteLine("🏁 [VERSION CHECK] LiveScoreWorker: VERSÃO 4.0 (PRODUTOR-CONSUMIDOR) 🏁");
+            Console.WriteLine("🏁 [LIVE SCORE] WORKER 5.0: PAGAMENTO QAB AUTOMÁTICO 🏁");
             Console.WriteLine("-------------------------------------------------------------\n");
-
-            Console.WriteLine("💰 [SETTLEMENT] Worker de Pagamentos Iniciado (Modo Econômico).");
-
-            if (string.IsNullOrEmpty(_betsApiToken))
-            {
-                Console.WriteLine("⚠️ [SETTLEMENT] AVISO: Token não encontrado!");
-            }
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -41,34 +35,34 @@ namespace Magic_casino_sportbook.BackgroundServices
                     using (var scope = _serviceProvider.CreateScope())
                     {
                         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                        await SettleBetsAsync(context);
+                        // ✅ Injetamos o serviço de carteira para fazer o pagamento
+                        var walletService = scope.ServiceProvider.GetRequiredService<CoreWalletService>();
+
+                        await SettleBetsAsync(context, walletService);
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"❌ [SETTLEMENT] Erro Crítico: {ex.Message}");
-                    await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+                    Console.WriteLine($"❌ [WORKER ERRO]: {ex.Message}");
                 }
 
-                // Verifica a cada 45 segundos
-                await Task.Delay(TimeSpan.FromSeconds(45), stoppingToken);
+                await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
             }
         }
 
-        private async Task SettleBetsAsync(AppDbContext context)
+        private async Task SettleBetsAsync(AppDbContext context, CoreWalletService walletService)
         {
-            // 1. Busca todas as apostas pendentes no banco
-            var pendingBets = await context.BetSelections
+            // 1. Busca apostas pendentes + Dados do Bilhete Pai
+            var pendingSelections = await context.BetSelections
+                .Include(s => s.Bet)
                 .Where(s => s.Status == "pending")
                 .ToListAsync();
 
-            if (!pendingBets.Any()) return;
+            if (!pendingSelections.Any()) return;
 
-            // 2. Coleta os IDs dos jogos dessas apostas
-            var matchIds = pendingBets.Select(b => b.MatchId).Distinct().ToList();
+            var matchIds = pendingSelections.Select(b => b.MatchId).Distinct().ToList();
 
-            // 3. ESTRATÉGIA DE OURO: Busca os dados dos jogos no SEU BANCO LOCAL
-            // Não gastamos API aqui. Confiamos que o LiveSportService já atualizou o banco.
+            // 2. Busca jogos no banco local
             var dbGames = await context.SportsEvents
                 .Where(g => matchIds.Contains(g.ExternalId))
                 .ToListAsync();
@@ -77,73 +71,105 @@ namespace Magic_casino_sportbook.BackgroundServices
             var gamesToForceUpdate = new List<string>();
             bool dbChanged = false;
 
-            // 4. Processamento Local (Custo Zero)
-            foreach (var bet in pendingBets)
+            // 3. Processa Resultados
+            foreach (var selection in pendingSelections)
             {
-                if (gamesMap.TryGetValue(bet.MatchId, out var game))
+                if (gamesMap.TryGetValue(selection.MatchId, out var game))
                 {
-                    // CENÁRIO A: O jogo já está marcado como encerrado no banco (Sucesso!)
-                    if (game.Status == "Ended" && !string.IsNullOrEmpty(game.Score) && game.Score != "0-0")
+                    // Verifica se o jogo acabou
+                    if ((game.Status == "Ended" || game.Status == "3") && !string.IsNullOrEmpty(game.Score) && game.Score != "0-0")
                     {
-                        Console.WriteLine($"💰 [PAGAMENTO] Processando aposta {bet.Id} localmente (Jogo {game.HomeTeam} Encerrado: {game.Score}).");
-                        ProcessBetResult(bet, game.Score);
-                        dbChanged = true;
-                        continue;
-                    }
+                        Console.WriteLine($"🔍 [JOGO FINALIZADO] ID: {game.ExternalId} | Placar: {game.Score}");
 
-                    // CENÁRIO B: Rede de Segurança (Fallback)
-                    // Se o jogo começou há mais de 5 horas e ainda está "Live", o robô principal pode ter falhado.
-                    // Adiciona na lista para chamar a API.
-                    if (game.CommenceTime < DateTime.UtcNow.AddHours(-5))
+                        // Atualiza status da SELEÇÃO
+                        ProcessSelectionResult(selection, game.Score);
+
+                        // Verifica status do BILHETE (Paga se ganhou)
+                        if (selection.Bet != null)
+                        {
+                            await CheckAndSettleTicketAsync(selection.Bet, context, walletService);
+                        }
+
+                        dbChanged = true;
+                    }
+                    // Fallback para jogos velhos travados
+                    else if (game.CommenceTime < DateTime.UtcNow.AddHours(-5))
                     {
-                        if (!gamesToForceUpdate.Contains(game.ExternalId))
-                            gamesToForceUpdate.Add(game.ExternalId);
+                        if (!gamesToForceUpdate.Contains(game.ExternalId)) gamesToForceUpdate.Add(game.ExternalId);
                     }
                 }
                 else
                 {
-                    // Jogo não existe no banco (Muito raro): Adiciona para buscar na API
-                    if (!gamesToForceUpdate.Contains(bet.MatchId))
-                        gamesToForceUpdate.Add(bet.MatchId);
+                    if (!gamesToForceUpdate.Contains(selection.MatchId)) gamesToForceUpdate.Add(selection.MatchId);
                 }
             }
 
             if (dbChanged) await context.SaveChangesAsync();
 
-            // 5. Chamada de Emergência (Só executa se tiver jogo "travado" ou sumido)
+            // 4. Resgate na API se necessário
             if (gamesToForceUpdate.Any() && !string.IsNullOrEmpty(_betsApiToken))
             {
-                Console.WriteLine($"⚠️ [RESGATE] Buscando {gamesToForceUpdate.Count} jogos antigos/travados na API...");
-                // Processa em lotes de 10 para não estourar a API
                 var batches = gamesToForceUpdate.Chunk(10);
                 foreach (var batch in batches)
                 {
-                    await FetchAndSettleFromApi(batch.ToList(), context);
+                    await FetchAndSettleFromApi(batch.ToList(), context, walletService);
                 }
             }
         }
 
-        private void ProcessBetResult(BetSelection bet, string score)
+        // --- LÓGICA DO BILHETE E PAGAMENTO ---
+        private async Task CheckAndSettleTicketAsync(Bet ticket, AppDbContext context, CoreWalletService walletService)
         {
-            bet.FinalScore = score;
-            bool won = CheckWinner(bet.MarketName, bet.OutcomeName, score);
+            // Recarrega todas as seleções desse bilhete para ter certeza
+            var allSelections = await context.BetSelections
+                .Where(s => s.BetId == ticket.Id)
+                .ToListAsync();
 
-            if (won)
+            // Se ainda tem jogo rolando, não faz nada
+            if (allSelections.Any(s => s.Status == "pending")) return;
+
+            // Se alguma perdeu, o bilhete perdeu
+            if (allSelections.Any(s => s.Status == "Lost"))
             {
-                bet.Status = "Won";
-                bet.IsWinner = true;
-                Console.WriteLine($"✅ [GREEN] Aposta {bet.Id} Venceu! (Placar: {score})");
-                // TODO: AQUI VOCÊ DEVE CHAMAR O SERVIÇO PARA CREDITAR O SALDO DO USUÁRIO
+                if (ticket.Status != "Lost")
+                {
+                    ticket.Status = "Lost";
+                    Console.WriteLine($"🎫 [TICKET PERDIDO] ID: {ticket.Id} | CPF: {ticket.UserCpf}");
+                }
+                return;
             }
-            else
+
+            // Se todas ganharam e o bilhete ainda não foi pago
+            if (allSelections.All(s => s.Status == "Won") && ticket.Status != "Won")
             {
-                bet.Status = "Lost";
-                bet.IsWinner = false;
-                Console.WriteLine($"❌ [RED] Aposta {bet.Id} Perdeu. (Placar: {score})");
+                Console.WriteLine($"🏆 [VITÓRIA] Ticket {ticket.Id} VENCEU! Pagando R$ {ticket.PotentialReturn}...");
+
+                // 💰 PAGAMENTO REAL NA CARTEIRA QAB
+                var result = await walletService.CreditFundsAsync(ticket.UserCpf, ticket.PotentialReturn);
+
+                if (result.Success)
+                {
+                    ticket.Status = "Won";
+                    Console.WriteLine($"✅ [PAGAMENTO SUCESSO] Saldo creditado para {ticket.UserCpf}");
+                }
+                else
+                {
+                    Console.WriteLine($"❌ [ERRO PAGAMENTO] Core recusou: {result.Message}");
+                    // Não marcamos como 'Won' no banco para tentar pagar de novo no próximo ciclo
+                }
             }
         }
 
-        private async Task FetchAndSettleFromApi(List<string> matchIds, AppDbContext context)
+        // --- MÉTODOS AUXILIARES ---
+        private void ProcessSelectionResult(BetSelection selection, string score)
+        {
+            selection.FinalScore = score;
+            bool won = CheckWinner(selection.MarketName, selection.OutcomeName, score);
+            selection.Status = won ? "Won" : "Lost";
+            selection.IsWinner = won;
+        }
+
+        private async Task FetchAndSettleFromApi(List<string> matchIds, AppDbContext context, CoreWalletService walletService)
         {
             var idsString = string.Join(",", matchIds);
             var client = _httpClientFactory.CreateClient();
@@ -152,34 +178,38 @@ namespace Magic_casino_sportbook.BackgroundServices
             try
             {
                 var response = await client.GetAsync(url);
-
-                if (response.StatusCode == HttpStatusCode.TooManyRequests)
-                {
-                    Console.WriteLine("⚠️ [API] 429 Too Many Requests. Pulando resgate.");
-                    return;
-                }
-
                 if (response.IsSuccessStatusCode)
                 {
                     var json = await response.Content.ReadAsStringAsync();
-                    var options = new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true,
-                        NumberHandling = JsonNumberHandling.AllowReadingFromString,
-                        ReadCommentHandling = JsonCommentHandling.Skip,
-                        AllowTrailingCommas = true
-                    };
-
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true, NumberHandling = JsonNumberHandling.AllowReadingFromString };
                     var data = JsonSerializer.Deserialize<B365LiveResponse>(json, options);
 
                     if (data?.Results != null)
                     {
                         var allPackets = data.Results.SelectMany(l => l).ToList();
-                        var groupedGames = allPackets.Where(p => !string.IsNullOrEmpty(p.Fi)).GroupBy(p => p.Fi);
-
-                        foreach (var gameGroup in groupedGames)
+                        foreach (var ev in allPackets.Where(p => p.Type == "EV"))
                         {
-                            await ProcessGameSettlement(gameGroup.ToList(), context);
+                            if (ev.Status == "3" || ev.TimeStatus == "3")
+                            {
+                                var gameDb = await context.SportsEvents.FirstOrDefaultAsync(g => g.ExternalId == ev.Fi);
+                                if (gameDb != null)
+                                {
+                                    gameDb.Status = "Ended";
+                                    gameDb.Score = ev.Ss;
+
+                                    // Processa apostas desse jogo recuperado
+                                    var betsForGame = await context.BetSelections
+                                        .Include(b => b.Bet)
+                                        .Where(b => b.MatchId == ev.Fi && b.Status == "pending")
+                                        .ToListAsync();
+
+                                    foreach (var betSel in betsForGame)
+                                    {
+                                        ProcessSelectionResult(betSel, ev.Ss ?? "0-0");
+                                        if (betSel.Bet != null) await CheckAndSettleTicketAsync(betSel.Bet, context, walletService);
+                                    }
+                                }
+                            }
                         }
                         await context.SaveChangesAsync();
                     }
@@ -191,77 +221,29 @@ namespace Magic_casino_sportbook.BackgroundServices
             }
         }
 
-        private async Task ProcessGameSettlement(List<B365Packet> packets, AppDbContext context)
-        {
-            var ev = packets.FirstOrDefault(p => p.Type == "EV");
-            if (ev == null || string.IsNullOrEmpty(ev.Ss)) return;
-
-            // --- DETECÇÃO DE FIM DE JOGO ---
-            bool gameFinished = false;
-            if (ev.Status == "3") gameFinished = true;
-            if (ev.Tm == "FT" || ev.Time == "FT" || ev.Time == "Ended") gameFinished = true;
-
-            // --- FORÇA ENCERRAMENTO NO BANCO (Se a API diz que acabou) ---
-            if (gameFinished)
-            {
-                var gameDb = await context.SportsEvents.FirstOrDefaultAsync(g => g.ExternalId == ev.Fi);
-                if (gameDb != null && gameDb.Status != "Ended")
-                {
-                    Console.WriteLine($"🏁 [RESGATE] Forçando encerramento do jogo {gameDb.HomeTeam} (ID: {ev.Fi})");
-                    gameDb.Status = "Ended";
-                    gameDb.Score = ev.Ss; // Atualiza o placar final também
-                }
-            }
-
-            // Só paga se acabou
-            if (!gameFinished) return;
-
-            var bets = await context.BetSelections
-                .Where(b => b.MatchId == ev.Fi && b.Status == "pending")
-                .ToListAsync();
-
-            foreach (var bet in bets)
-            {
-                ProcessBetResult(bet, ev.Ss);
-            }
-        }
-
         private bool CheckWinner(string market, string outcome, string score)
         {
             try
             {
+                if (string.IsNullOrEmpty(score) || !score.Contains("-")) return false;
                 var parts = score.Split('-');
-                if (parts.Length < 2) return false;
+                if (!int.TryParse(parts[0], out int home) || !int.TryParse(parts[1], out int away)) return false;
 
-                // Tenta parsear como inteiros (Futebol, Basquete, etc)
-                if (!int.TryParse(parts[0], out int homeScore) || !int.TryParse(parts[1], out int awayScore))
+                var mkt = market?.ToLower().Trim();
+                var sel = outcome?.ToLower().Trim();
+
+                if (mkt.Contains("result") || mkt.Contains("vencedor") || mkt == "1x2")
                 {
-                    // Se falhar (ex: Tênis pode ter formato diferente), retorna falso por segurança
-                    return false;
+                    if (sel == "1" || sel.Contains("home") || sel.Contains("casa")) return home > away;
+                    if (sel == "2" || sel.Contains("away") || sel.Contains("fora")) return away > home;
+                    if (sel == "x" || sel.Contains("draw") || sel.Contains("empate")) return home == away;
                 }
 
-                var marketName = market?.Trim();
-                var selection = outcome?.Trim();
-
-                if (marketName == "Resultado Final" || marketName == "Full Time Result" || marketName == "1X2" || marketName == "Vencedor")
-                {
-                    if (selection == "Casa" || selection == "1" || selection == "Home" || selection.Contains("1")) return homeScore > awayScore;
-                    if (selection == "Fora" || selection == "2" || selection == "Away" || selection.Contains("2")) return awayScore > homeScore;
-                    if (selection == "Empate" || selection == "X" || selection == "Draw") return homeScore == awayScore;
-                }
-
-                if (marketName == "Ambos Marcam" || marketName == "Both Teams to Score")
-                {
-                    if (selection == "Sim" || selection == "Yes") return homeScore > 0 && awayScore > 0;
-                    if (selection == "Não" || selection == "No") return homeScore == 0 || awayScore == 0;
-                }
+                // Lógica simples de gols (Over/Under seria mais complexo e requer o valor da linha)
 
                 return false;
             }
-            catch
-            {
-                return false;
-            }
+            catch { return false; }
         }
     }
 }

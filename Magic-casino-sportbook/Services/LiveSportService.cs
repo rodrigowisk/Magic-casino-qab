@@ -14,6 +14,11 @@ namespace Magic_casino_sportbook.Services
         private const string BASE_URL = "https://api.b365api.com";
         private readonly JsonSerializerOptions _jsonOptions;
 
+        // 🔒 O PORTEIRO GLOBAL (SEMAPHORE):
+        // Isso obriga o sistema a fazer apenas 1 chamada por vez, 
+        // não importa quantos Workers estejam rodando.
+        private static readonly SemaphoreSlim _apiGate = new SemaphoreSlim(1, 1);
+
         public LiveSportService(IHttpClientFactory httpClientFactory)
         {
             _httpClientFactory = httpClientFactory;
@@ -29,7 +34,7 @@ namespace Magic_casino_sportbook.Services
         }
 
         // ==========================================================================================
-        // 🚀 ATUALIZAR LIVE (Com Lógica de Economia Inteligente)
+        // 🚀 ATUALIZAR LIVE (Com Fila Global _apiGate)
         // ==========================================================================================
         public async Task<List<string>> UpdateLiveGamesAsync(List<SportsEvent> liveGames, AppDbContext context)
         {
@@ -39,7 +44,6 @@ namespace Magic_casino_sportbook.Services
             var client = _httpClientFactory.CreateClient();
             client.Timeout = TimeSpan.FromSeconds(10);
 
-            // ✅ VOLTAMOS PARA O LOTE DE 10 (Economia)
             var batches = liveGames.Chunk(10).ToList();
 
             foreach (var batch in batches)
@@ -54,6 +58,8 @@ namespace Magic_casino_sportbook.Services
                 var gameIds = string.Join(",", batch.Select(g => g.ExternalId.Trim()));
                 var url = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={gameIds}";
 
+                // 🔒 ENTRA NA FILA (Aguarda a vez)
+                await _apiGate.WaitAsync();
                 try
                 {
                     var response = await client.GetAsync(url);
@@ -61,17 +67,14 @@ namespace Magic_casino_sportbook.Services
                     {
                         var jsonString = await response.Content.ReadAsStringAsync();
 
-                        // 🚨 CENÁRIO DE ERRO: Lote contaminado
                         if (jsonString.Contains("PARAM_INVALID"))
                         {
-                            Console.WriteLine($"⚠️ [RESGATE] Lote contaminado ({batch.Length} jogos). Iniciando varredura individual...");
-
-                            // 🔍 ESTRATÉGIA DE RESGATE: Verifica 1 por 1 só desse lote
+                            Console.WriteLine($"⚠️ [RESGATE] Lote contaminado. Verificando individualmente...");
+                            // Passa para o método de resgate (que tem seus próprios delays)
                             await ProcessIndividualFallbackAsync(client, batch, context, endedGameIds);
                         }
                         else if (!string.IsNullOrWhiteSpace(jsonString))
                         {
-                            // CENÁRIO FELIZ: Lote processado com 1 requisição
                             var data = JsonSerializer.Deserialize<B365LiveResponse>(jsonString, _jsonOptions);
                             if (data != null && data.Results != null && data.Success == 1)
                             {
@@ -89,14 +92,20 @@ namespace Magic_casino_sportbook.Services
                 {
                     Console.WriteLine($"❌ Erro Update: {ex.Message}");
                 }
+                finally
+                {
+                    // 🔓 LIBERA A FILA
+                    _apiGate.Release();
+                }
 
-                await Task.Delay(1000); // Delay entre lotes
+                // Delay OBRIGATÓRIO fora do lock para dar respiro à API
+                await Task.Delay(1100);
             }
             return endedGameIds;
         }
 
         // ==========================================================================================
-        // 🚑 MÉTODO DE RESGATE (Executado apenas quando o lote falha)
+        // 🚑 MÉTODO DE RESGATE (1 por 1 - Lento para segurança)
         // ==========================================================================================
         private async Task ProcessIndividualFallbackAsync(HttpClient client, SportsEvent[] batch, AppDbContext context, List<string> endedGameIds)
         {
@@ -108,19 +117,15 @@ namespace Magic_casino_sportbook.Services
                     var response = await client.GetAsync(url);
                     var jsonString = await response.Content.ReadAsStringAsync();
 
-                    // 💀 ACHEI O CULPADO!
                     if (jsonString.Contains("PARAM_INVALID"))
                     {
-                        Console.WriteLine($"🗑️ [LIMPEZA] Jogo inválido removido: {game.ExternalId} ({game.HomeTeam})");
-
-                        // Marca como encerrado para sair da lista Live e parar de travar o sistema
+                        Console.WriteLine($"🗑️ [LIMPEZA] Jogo inválido removido: {game.ExternalId}");
                         game.Status = "Ended";
                         context.Entry(game).State = EntityState.Modified;
                         endedGameIds.Add(game.ExternalId);
                     }
                     else
                     {
-                        // Jogo inocente: Processa ele normalmente
                         var data = JsonSerializer.Deserialize<B365LiveResponse>(jsonString, _jsonOptions);
                         if (data != null && data.Results != null)
                         {
@@ -128,17 +133,15 @@ namespace Magic_casino_sportbook.Services
                         }
                     }
                 }
-                catch
-                {
-                    // Ignora erro individual para não travar o resgate
-                }
+                catch { }
 
-                await Task.Delay(200); // Delay curto para o resgate não demorar tanto
+                // Delay generoso (1.5s) no resgate para evitar travar tudo com 429
+                await Task.Delay(1500);
             }
         }
 
         // ==========================================================================================
-        // 🕵️ HOTZONE (Verifica Início) - Mesma lógica de economia
+        // 🕵️ HOTZONE (Com Fila Global _apiGate)
         // ==========================================================================================
         public async Task<List<string>> VerifyKickoffWithApiAsync(List<SportsEvent> candidates, IServiceProvider sp)
         {
@@ -159,6 +162,8 @@ namespace Magic_casino_sportbook.Services
                 var gameIds = string.Join(",", batch.Select(g => g.ExternalId.Trim()));
                 var url = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={gameIds}";
 
+                // 🔒 ENTRA NA FILA
+                await _apiGate.WaitAsync();
                 try
                 {
                     var response = await client.GetAsync(url);
@@ -166,11 +171,9 @@ namespace Magic_casino_sportbook.Services
 
                     if (jsonString.Contains("PARAM_INVALID"))
                     {
-                        // Se falhar no HotZone, não precisamos ser tão agressivos. 
-                        // Apenas logamos e pulamos, pois o jogo inválido provavelmente é um Prematch que foi cancelado.
-                        // Mas para garantir que jogos bons entrem, fazemos um fallback simples:
                         Console.WriteLine($"⚠️ [HOTZONE] Lote com ID ruim. Verificando individualmente...");
 
+                        // Fallback interno do HotZone
                         foreach (var g in batch)
                         {
                             var indUrl = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={g.ExternalId}";
@@ -183,11 +186,11 @@ namespace Magic_casino_sportbook.Services
                             }
                             else
                             {
-                                // Marca como cancelado para sair da lista de verificação
                                 g.Status = "Cancelled";
                                 context.Entry(g).State = EntityState.Modified;
                             }
-                            await Task.Delay(200);
+                            // Delay interno para segurança
+                            await Task.Delay(1500);
                         }
                     }
                     else if (!string.IsNullOrWhiteSpace(jsonString))
@@ -199,9 +202,15 @@ namespace Magic_casino_sportbook.Services
                 {
                     Console.WriteLine($"⚠️ HotZone Check Erro: {ex.Message}");
                 }
+                finally
+                {
+                    // 🔓 LIBERA A FILA
+                    _apiGate.Release();
+                }
 
                 await context.SaveChangesAsync();
-                await Task.Delay(1000);
+                // Delay OBRIGATÓRIO
+                await Task.Delay(1100);
             }
 
             return newLiveIds;
@@ -220,18 +229,22 @@ namespace Magic_casino_sportbook.Services
                     var gameDb = games.FirstOrDefault(g => g.ExternalId == ev.Fi);
                     if (gameDb == null) continue;
 
-                    // LÓGICA DE STATUS: 1 = In Play
+                    // --- 🛡️ BLINDAGEM 106' (Anti-Travamento no Início) ---
+                    bool tempoExagerado = false;
+                    if (int.TryParse(ev.Tm, out int minutos))
+                    {
+                        if (minutos > 100 && ev.Tt == "0") tempoExagerado = true;
+                    }
+
                     bool isLive = (ev.TimeStatus == "1") || (!string.IsNullOrEmpty(ev.Tm) && ev.Tm != "0");
 
-                    if (isLive)
+                    // Só deixa virar Live se NÃO estiver travado com tempo absurdo
+                    if (isLive && !tempoExagerado)
                     {
                         gameDb.Status = "Live";
                         if (string.IsNullOrEmpty(gameDb.Score)) gameDb.Score = "0-0";
                         if (string.IsNullOrEmpty(gameDb.GameTime)) gameDb.GameTime = "0'";
-
-                        // Prioridade máxima
                         gameDb.LastUpdate = DateTime.UtcNow.AddMinutes(-10);
-
                         context.Entry(gameDb).State = EntityState.Modified;
                         newLiveIds.Add(gameDb.ExternalId);
                     }
@@ -240,7 +253,7 @@ namespace Magic_casino_sportbook.Services
         }
 
         // ==========================================================================================
-        // 🚦 DISPATCHER (Mantido igual)
+        // 🚦 DISPATCHER (Com Blindagem de Fim de Jogo)
         // ==========================================================================================
         private void DispatchUpdates(List<List<B365Packet>> results, List<SportsEvent> batchGames, AppDbContext context, List<string> endedGameIds)
         {
@@ -264,52 +277,55 @@ namespace Magic_casino_sportbook.Services
                     bool mudou = false;
                     string sportKey = (gameDb.SportKey ?? "").ToLower();
 
-                    if (sportKey.Contains("soccer") || sportKey.Contains("futebol"))
-                        mudou = UpdateSoccer(gameDb, ev, logs);
-                    else if (sportKey.Contains("basketball") || sportKey.Contains("basquete") || sportKey.Contains("nba"))
-                        mudou = UpdateBasketball(gameDb, ev);
-                    else if (sportKey.Contains("tennis") || sportKey.Contains("tenis") || sportKey.Contains("table"))
-                        mudou = UpdateTennis(gameDb, ev);
-                    else if (sportKey.Contains("volleyball") || sportKey.Contains("volei"))
-                        mudou = UpdateVolleyball(gameDb, ev);
-                    else
-                        mudou = UpdateGenericSport(gameDb, ev);
-
-                    // Verifica Fim de Jogo
-                    if (ev.TimeStatus == "3" || ev.Status == "3")
+                    // --- 🛡️ DETECÇÃO DE JOGO TRAVADO (BLINDAGEM 106') ---
+                    bool tempoExagerado = false;
+                    if (int.TryParse(ev.Tm, out int minutos))
                     {
-                        bool jogoValido = (!string.IsNullOrEmpty(gameDb.Score) && gameDb.Score != "0-0") ||
-                                          (!string.IsNullOrEmpty(gameDb.GameTime) && gameDb.GameTime != "0'");
+                        // Se passou de 100 min e o relógio (TT) parou (0), consideramos ENCERRADO
+                        if (minutos > 100 && ev.Tt == "0") tempoExagerado = true;
+                    }
 
-                        if (gameDb.Status != "Ended" && jogoValido)
+                    // Encerra se a API mandar OU se nossa blindagem detectar
+                    if (ev.TimeStatus == "3" || ev.Status == "3" || tempoExagerado)
+                    {
+                        bool temDados = (!string.IsNullOrEmpty(gameDb.Score) && gameDb.Score != "0-0") ||
+                                        (!string.IsNullOrEmpty(gameDb.GameTime) && gameDb.GameTime != "0'");
+
+                        if (gameDb.Status != "Ended" && temDados)
                         {
-                            Console.WriteLine($"🏁 [FIM] {gameDb.HomeTeam} ({sportKey}) Encerrado pela API.");
+                            Console.WriteLine($"🏁 [FIM DETECTADO] {gameDb.HomeTeam} -> Ended. (Motivo: {(tempoExagerado ? "Tempo > 100" : "API")})");
                             gameDb.Status = "Ended";
+                            gameDb.GameTime = "FT";
+                            if (!string.IsNullOrEmpty(ev.Ss)) gameDb.Score = ev.Ss;
                             endedGameIds.Add(gameDb.ExternalId);
                             mudou = true;
                         }
                     }
+                    else
+                    {
+                        if (sportKey.Contains("soccer") || sportKey.Contains("futebol")) mudou = UpdateSoccer(gameDb, ev, logs);
+                        else if (sportKey.Contains("basket")) mudou = UpdateBasketball(gameDb, ev);
+                        else if (sportKey.Contains("tennis")) mudou = UpdateTennis(gameDb, ev);
+                        else if (sportKey.Contains("volley")) mudou = UpdateVolleyball(gameDb, ev);
+                        else mudou = UpdateGenericSport(gameDb, ev);
+                    }
 
                     if (mudou) context.Entry(gameDb).State = EntityState.Modified;
                 }
-
                 ProcessOdds(gameDb, packets, ref context);
             }
         }
 
-        // --- MÉTODOS DE PARSE (Mantenha os que você já tem abaixo: UpdateSoccer, etc) ---
-        // (Estou colando os mesmos para manter o arquivo completo e funcional)
+        // ==========================================================================================
+        // MÉTODOS DE PARSE
+        // ==========================================================================================
 
         private bool UpdateSoccer(SportsEvent game, B365Packet ev, List<B365Packet> logs)
         {
             bool changed = false;
             if (!string.IsNullOrEmpty(ev.Ss) && ev.Ss.Contains("-"))
             {
-                if (game.Score != ev.Ss)
-                {
-                    Console.WriteLine($"⚽ [GOL] {game.HomeTeam}: {ev.Ss}");
-                    game.Score = ev.Ss; changed = true;
-                }
+                if (game.Score != ev.Ss) { Console.WriteLine($"⚽ {game.HomeTeam}: {ev.Ss}"); game.Score = ev.Ss; changed = true; }
             }
             else if (string.IsNullOrEmpty(game.Score)) { game.Score = "0-0"; changed = true; }
 
@@ -326,7 +342,6 @@ namespace Magic_casino_sportbook.Services
                     }
                 }
             }
-
             if (game.GameTime != novoTempo && novoTempo != "0'") { game.GameTime = novoTempo; changed = true; }
             return changed;
         }
@@ -335,10 +350,7 @@ namespace Magic_casino_sportbook.Services
         {
             bool changed = false;
             if (!string.IsNullOrEmpty(ev.Ss) && game.Score != ev.Ss) { game.Score = ev.Ss; changed = true; }
-            if (!string.IsNullOrEmpty(ev.Tm) && ev.Tm != "0")
-            {
-                string t = ev.Tm + "'"; if (game.GameTime != t) { game.GameTime = t; changed = true; }
-            }
+            if (!string.IsNullOrEmpty(ev.Tm) && ev.Tm != "0") { string t = ev.Tm + "'"; if (game.GameTime != t) { game.GameTime = t; changed = true; } }
             return changed;
         }
 
@@ -360,10 +372,7 @@ namespace Magic_casino_sportbook.Services
         {
             bool changed = false;
             if (!string.IsNullOrEmpty(ev.Ss) && game.Score != ev.Ss) { game.Score = ev.Ss; changed = true; }
-            if (!string.IsNullOrEmpty(ev.Tm) && ev.Tm != "0")
-            {
-                string t = ev.Tm + "'"; if (game.GameTime != t) { game.GameTime = t; changed = true; }
-            }
+            if (!string.IsNullOrEmpty(ev.Tm) && ev.Tm != "0") { string t = ev.Tm + "'"; if (game.GameTime != t) { game.GameTime = t; changed = true; } }
             return changed;
         }
 
@@ -377,7 +386,6 @@ namespace Magic_casino_sportbook.Services
                 if (valor <= 1.0m) continue;
                 string n2 = (odd.N2 ?? "").Trim();
                 string name = (odd.Na ?? "").ToLower().Trim();
-
                 bool isHome = n2 == "1" || name == "1" || name.Contains("home") || name.Contains("casa");
                 bool isAway = n2 == "2" || name == "2" || name.Contains("away") || name.Contains("fora");
                 bool isDraw = n2 == "x" || name == "x" || name.Contains("draw") || name.Contains("empate");

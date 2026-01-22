@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signalr';
 import { Radio, AlertCircle, ChevronDown, ChevronRight, Timer, ArrowUp, ArrowDown, Lock } from 'lucide-vue-next';
-import axios from 'axios'; // ✅ CORREÇÃO: Importando axios direto para corrigir a rota
+import axios from 'axios'; 
 import TeamLogo from '../components/TeamLogo.vue';
 import { useBetStore, type BetType } from '../stores/useBetStore';
 
@@ -70,9 +70,6 @@ const getSportCategory = (gameOrKey: LiveGame | string): string => {
 // --- DATA FETCHING ---
 const fetchInitialData = async () => {
   try {
-    // ✅ CORREÇÃO CRUCIAL:
-    // O endpoint '/api/LiveEvents' está na raiz do Sportbook, não dentro de '/api/sports'.
-    // Usamos o axios direto com o prefixo do Nginx '/sportbook'.
     const response = await axios.get('/sportbook/api/LiveEvents');
     
     if (response.data && Array.isArray(response.data)) {
@@ -90,7 +87,7 @@ const fetchInitialData = async () => {
 
             return {
                 ...e,
-                gameId: e.externalId || e.gameId, // Prioriza externalId
+                gameId: e.externalId || e.gameId, 
                 sportKey: e.sportKey || 'soccer',
                 league: e.league || 'Ao Vivo',
                 currentMinute: e.gameTime || e.currentMinute || '0',
@@ -130,7 +127,6 @@ const updateOddWithAnimation = (game: LiveGame, field: 'homeOdd' | 'drawOdd' | '
 onMounted(async () => {
   await fetchInitialData();
   
-  // Caminho relativo simples para usar o Proxy
   const signalRUrl = "/gameHub";
   console.log(`📡 [AO VIVO] Conectando SignalR em: ${signalRUrl}`);
 
@@ -145,28 +141,22 @@ onMounted(async () => {
     if (!updatedGames || !Array.isArray(updatedGames)) return;
     
     updatedGames.forEach(update => {
-        // Backend manda 'id' que corresponde ao 'gameId' (ExternalId)
         const index = events.value.findIndex(g => g.gameId === update.id); 
         
         if (index !== -1) {
             const game = events.value[index];
-            
             if (!game) return; 
 
-            // Atualiza Tempo
             if (update.time) game.currentMinute = update.time;
             
-            // Atualiza Placar (Parse de "2-1")
             if (update.score && update.score.includes('-')) {
                 const parts = update.score.split('-');
                 game.homeScore = parseInt(parts[0]) || 0;
                 game.awayScore = parseInt(parts[1]) || 0;
             }
 
-            // Atualiza Status/Periodo se disponível
             if (update.status) game.period = update.status;
 
-            // Atualiza Odds com Animação
             if (update.homeOdd) updateOddWithAnimation(game, 'homeOdd', update.homeOdd);
             if (update.drawOdd) updateOddWithAnimation(game, 'drawOdd', update.drawOdd);
             if (update.awayOdd) updateOddWithAnimation(game, 'awayOdd', update.awayOdd);
@@ -247,7 +237,18 @@ const goToDetails = (gameId: string) => { router.push({ name: 'event-details', p
 const handleImageError = (event: Event) => { (event.target as HTMLImageElement).src = '/images/flags/un.svg'; };
 const isSelected = (game: LiveGame, type: BetType) => betStore.selections.find(s => s.id === game.gameId)?.type === type;
 const getOddValue = (game: LiveGame, type: string) => (type === '1' ? game.homeOdd : type === 'X' ? game.drawOdd : game.awayOdd).toFixed(2);
-const getBetTypes = (game: LiveGame) => (game.drawOdd > 0.01) ? ['1', 'X', '2'] : ['1', '2'];
+
+// 🔥 CORREÇÃO APLICADA AQUI:
+const getBetTypes = (game: LiveGame) => {
+    const sport = getSportCategory(game);
+    // Se for futebol, tem empate (3 opções)
+    if (sport === 'soccer') {
+        return ['1', 'X', '2'];
+    }
+    // Qualquer outro esporte (basquete, tenis, etc), NÃO tem empate (2 opções)
+    return ['1', '2'];
+};
+
 const isNumericTime = (time: string) => time && /\d/.test(time);
 
 const getFlagUrl = (game: LiveGame | undefined) => {

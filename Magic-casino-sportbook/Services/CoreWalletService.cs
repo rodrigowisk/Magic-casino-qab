@@ -12,8 +12,7 @@ namespace Magic_casino_sportbook.Services
             _httpClient = httpClient;
         }
 
-
-        // Método novo para consultar saldo
+        // 1. Consultar Saldo
         public async Task<decimal> GetBalanceAsync(string userCpf, string token)
         {
             try
@@ -24,10 +23,7 @@ namespace Magic_casino_sportbook.Services
                         new AuthenticationHeaderValue("Bearer", token.Replace("Bearer ", ""));
                 }
 
-                // Chama o Core para pegar o saldo da carteira de apostas (Qab)
-                // Nota: O Core precisa ter um endpoint GET /api/internal/wallet/{cpf} ou similar.
-                // Se não tiver, vamos usar a rota de User do Core se houver, ou criar uma query direta.
-                // Vamos assumir uma rota simples de consulta no Core:
+                // Busca o saldo da carteira de apostas (Qab)
                 var response = await _httpClient.GetAsync($"/api/internal/wallet/balance/{userCpf}");
 
                 if (response.IsSuccessStatusCode)
@@ -43,18 +39,39 @@ namespace Magic_casino_sportbook.Services
             }
         }
 
-
+        // 2. Debitar Aposta (Usado pelo Controller ao criar a aposta)
         public async Task<(bool Success, string Message)> DeductFundsAsync(string userCpf, decimal amount, string token)
         {
-            // ✅ CORREÇÃO: Adicionado 'ReferenceId' que o Core exige
             var payload = new
             {
                 UserCpf = userCpf,
                 Amount = amount,
                 Source = "Sportbook",
-                ReferenceId = Guid.NewGuid().ToString() // Gera um ID único para a transação
+                ReferenceId = Guid.NewGuid().ToString()
             };
 
+            return await SendTransactionAsync("/api/internal/wallet/deduct", payload, token);
+        }
+
+        // 3. Creditar Prêmio (Usado pelo Worker ao pagar a aposta)
+        public async Task<(bool Success, string Message)> CreditFundsAsync(string userCpf, decimal amount)
+        {
+            var payload = new
+            {
+                UserCpf = userCpf,
+                Amount = amount,
+                Source = "Sportbook", // O Core deve identificar "Sportbook" e somar no balance_qab
+                Type = "Win",         // Tipo da transação
+                ReferenceId = Guid.NewGuid().ToString()
+            };
+
+            // Worker não tem token de usuário, passa null (o Core deve aceitar chamada interna)
+            return await SendTransactionAsync("/api/internal/wallet/credit", payload, null);
+        }
+
+        // 4. Método Auxiliar (Para não repetir código)
+        private async Task<(bool Success, string Message)> SendTransactionAsync(string endpoint, object payload, string? token)
+        {
             try
             {
                 if (!string.IsNullOrEmpty(token))
@@ -63,7 +80,7 @@ namespace Magic_casino_sportbook.Services
                         new AuthenticationHeaderValue("Bearer", token.Replace("Bearer ", ""));
                 }
 
-                var response = await _httpClient.PostAsJsonAsync("/api/internal/wallet/deduct", payload);
+                var response = await _httpClient.PostAsJsonAsync(endpoint, payload);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -71,7 +88,7 @@ namespace Magic_casino_sportbook.Services
                 }
 
                 var errorMsg = await response.Content.ReadAsStringAsync();
-                Console.WriteLine($">>>>> [ERRO CORE] Status: {response.StatusCode} | Motivo: {errorMsg}");
+                Console.WriteLine($">>>>> [ERRO CORE] Endpoint: {endpoint} | Status: {response.StatusCode} | Motivo: {errorMsg}");
 
                 return (false, $"Erro Core ({response.StatusCode}): {errorMsg}");
             }
