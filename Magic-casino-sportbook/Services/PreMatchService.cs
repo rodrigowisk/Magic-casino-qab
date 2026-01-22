@@ -20,8 +20,7 @@ namespace Magic_casino_sportbook.Services
         private const int MAX_PAGES = 50;
         private const int MAX_RETRIES = 3;
 
-        // 🛑 LISTA NEGRA DE ESPORTES VIRTUAIS (Fácil de transformar em dinâmico depois)
-        // No futuro, você pode carregar isso de uma tabela do banco: _context.BlockedTerms.ToList()
+        // 🛑 LISTA NEGRA DE ESPORTES VIRTUAIS
         private readonly string[] _excludedTerms = new[]
         {
             "ESOCCER", "E-SOCCER", "E SOCCER",
@@ -129,14 +128,9 @@ namespace Magic_casino_sportbook.Services
                             string externalId = GetStr(item, "id");
                             if (string.IsNullOrEmpty(externalId)) continue;
 
-                            // -----------------------------------------------------------
-                            // 🛑 BLOQUEIO DE ESPORTES VIRTUAIS (CHECKPOINT)
-                            // -----------------------------------------------------------
+                            // Filtro de Virtuais
                             string leagueName = "Desconhecido";
-                            if (item.TryGetProperty("league", out var lObj))
-                            {
-                                leagueName = GetStr(lObj, "name") ?? "Desconhecido";
-                            }
+                            if (item.TryGetProperty("league", out var lObj)) leagueName = GetStr(lObj, "name") ?? "Desconhecido";
 
                             string homeName = "";
                             if (item.TryGetProperty("home", out var h)) homeName = GetStr(h, "name");
@@ -144,9 +138,7 @@ namespace Magic_casino_sportbook.Services
                             string awayName = "";
                             if (item.TryGetProperty("away", out var a)) awayName = GetStr(a, "name");
 
-                            // Se for virtual, PULA para o próximo e não salva
                             if (IsVirtualOrEsport(leagueName, homeName, awayName)) continue;
-                            // -----------------------------------------------------------
 
                             eventIdsForOdds.Add(externalId);
 
@@ -252,6 +244,7 @@ namespace Magic_casino_sportbook.Services
 
                                         foreach (var m in parsedMarkets)
                                         {
+                                            // 1. Atualiza tabela detalhada (Para apostas)
                                             var existing = dbEvent.Odds.FirstOrDefault(o => o.MarketName == m.MarketName && o.OutcomeName == m.OutcomeName);
 
                                             if (existing != null)
@@ -272,6 +265,21 @@ namespace Magic_casino_sportbook.Services
                                                     LastUpdate = DateTime.UtcNow
                                                 });
                                             }
+
+                                            // =================================================================
+                                            // 2. ✅ CORREÇÃO: PREENCHE AS COLUNAS DO DBEAVER/FRONTEND
+                                            // Se for o mercado principal, salva nas colunas da tabela principal
+                                            // =================================================================
+                                            if (m.MarketName == "Resultado Final" || m.MarketName == "Vencedor da Partida" ||
+                                                m.MarketName == "Match Winner" || m.MarketName == "Money Line")
+                                            {
+                                                if (IsHome(m.OutcomeName, dbEvent.HomeTeam))
+                                                    dbEvent.RawOddsHome = m.Price;
+                                                else if (IsDraw(m.OutcomeName))
+                                                    dbEvent.RawOddsDraw = m.Price;
+                                                else if (IsAway(m.OutcomeName, dbEvent.AwayTeam))
+                                                    dbEvent.RawOddsAway = m.Price;
+                                            }
                                         }
                                     }
                                     dbEvent.LastUpdate = DateTime.UtcNow;
@@ -288,12 +296,37 @@ namespace Magic_casino_sportbook.Services
             });
         }
 
-        // 💎 O FILTRO INTELIGENTE
+        // =================================================================
+        // FUNÇÕES AUXILIARES PARA IDENTIFICAR QUEM É QUEM NAS ODDS
+        // =================================================================
+        private bool IsHome(string outcome, string homeTeam)
+        {
+            if (string.IsNullOrEmpty(outcome)) return false;
+            var o = outcome.ToLower().Trim();
+            var h = homeTeam?.ToLower().Trim() ?? "xxx";
+            // Verifica "1", "Casa", "Home" ou se o nome do time está na aposta
+            return o == "1" || o == "home" || o == "casa" || o == h || o.Contains(h) || h.Contains(o);
+        }
+
+        private bool IsAway(string outcome, string awayTeam)
+        {
+            if (string.IsNullOrEmpty(outcome)) return false;
+            var o = outcome.ToLower().Trim();
+            var a = awayTeam?.ToLower().Trim() ?? "xxx";
+            // Verifica "2", "Fora", "Away" ou se o nome do time está na aposta
+            return o == "2" || o == "away" || o == "fora" || o == a || o.Contains(a) || a.Contains(o);
+        }
+
+        private bool IsDraw(string outcome)
+        {
+            if (string.IsNullOrEmpty(outcome)) return false;
+            var o = outcome.ToLower().Trim();
+            return o == "x" || o == "draw" || o == "empate";
+        }
+
         private bool IsVirtualOrEsport(string league, string home, string away)
         {
             var text = $"{league} {home} {away}".ToUpper();
-
-            // Verifica se contém qualquer termo da lista negra
             foreach (var term in _excludedTerms)
             {
                 if (text.Contains(term)) return true;

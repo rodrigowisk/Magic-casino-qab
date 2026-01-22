@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { HubConnectionBuilder, HubConnection } from '@microsoft/signalr';
+import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signalr';
 import { Radio, AlertCircle, ChevronDown, ChevronRight, Timer, ArrowUp, ArrowDown, Lock } from 'lucide-vue-next';
 import apiSports from '../services/apiSports';
 import TeamLogo from '../components/TeamLogo.vue';
@@ -9,6 +9,27 @@ import { useBetStore, type BetType } from '../stores/useBetStore';
 
 // Importação do Menu Híbrido
 import TopSportsMenu from '../components/TopSportsMenu.vue';
+
+// --- ⚙️ CONFIGURAÇÃO DE URL INTELIGENTE (CORREÇÃO DO ERRO 404) ---
+const getBaseUrl = () => {
+  // Pega a URL do .env (ex: http://localhost:8090/api/sports)
+  const envUrl = import.meta.env.VITE_API_URL || 'http://localhost:8888';
+  try {
+    const url = new URL(envUrl);
+    
+    // Se estiver apontando direto para o backend (8090), forçamos para o NGINX (8888)
+    if (url.port === '8090' && url.hostname === 'localhost') {
+        return `${url.protocol}//${url.hostname}:8888`;
+    }
+    
+    // Retorna apenas a origem (http://dominio:porta), removendo "/api/sports"
+    return url.origin; 
+  } catch {
+    return 'http://localhost:8888';
+  }
+};
+
+const BASE_URL = getBaseUrl();
 
 // --- INTERFACES ---
 interface LiveGame {
@@ -28,6 +49,7 @@ interface LiveGame {
   drawOdd: number;
   awayOdd: number;
   countryCode?: string;
+  // Propriedades de Animação
   homeOddDir?: 'up' | 'down' | null;
   homeOddFlash?: boolean;
   drawOddDir?: 'up' | 'down' | null;
@@ -71,10 +93,35 @@ const fetchInitialData = async () => {
   try {
     const response = await apiSports.get('/LiveEvents'); 
     if (response.data && Array.isArray(response.data)) {
-        events.value = response.data;
+        events.value = response.data.map((e: any) => {
+            // Parse inicial seguro do placar
+            let hScore = 0, aScore = 0;
+            if (e.score && e.score.includes('-')) {
+                const parts = e.score.split('-');
+                hScore = parseInt(parts[0]) || 0;
+                aScore = parseInt(parts[1]) || 0;
+            } else {
+                hScore = e.homeScore || 0;
+                aScore = e.awayScore || 0;
+            }
+
+            return {
+                ...e,
+                gameId: e.externalId || e.gameId, // Prioriza externalId
+                sportKey: e.sportKey || 'soccer',
+                league: e.league || 'Ao Vivo',
+                currentMinute: e.gameTime || e.currentMinute || '0',
+                homeScore: hScore,
+                awayScore: aScore,
+                homeOdd: e.rawOddsHome ?? e.homeOdd ?? 0,
+                drawOdd: e.rawOddsDraw ?? e.drawOdd ?? 0,
+                awayOdd: e.rawOddsAway ?? e.awayOdd ?? 0
+            };
+        });
     } else {
         events.value = [];
     }
+    // Abre todas as ligas inicialmente
     events.value.forEach(e => {
         if(e.league) openLeagues.value.add(e.league);
     });
@@ -100,50 +147,65 @@ const updateOddWithAnimation = (game: LiveGame, field: 'homeOdd' | 'drawOdd' | '
 onMounted(async () => {
   await fetchInitialData();
   
+  // URL Corrigida: http://localhost:8888/gameHub
+  const signalRUrl = `${BASE_URL}/gameHub`;
+  console.log(`📡 [AO VIVO] Conectando SignalR em: ${signalRUrl}`);
+
   connection = new HubConnectionBuilder()
-    .withUrl('http://localhost:8090/gameHub') 
+    .withUrl(signalRUrl) 
     .withAutomaticReconnect()
+    .configureLogging(LogLevel.Information)
     .build();
 
-  connection.on('ReceiveLiveUpdate', (updatedGames: any[]) => {
+  // 1. ATUALIZAÇÃO (LiveOddsUpdate)
+  connection.on('LiveOddsUpdate', (updatedGames: any[]) => {
     if (!updatedGames || !Array.isArray(updatedGames)) return;
+    
     updatedGames.forEach(update => {
-        const index = events.value.findIndex(g => g.gameId === update.gameId);
+        // Backend manda 'id' que corresponde ao 'gameId' (ExternalId)
+        const index = events.value.findIndex(g => g.gameId === update.id); 
+        
         if (index !== -1) {
             const game = events.value[index];
-            game.homeScore = update.homeScore ?? game.homeScore;
-            game.awayScore = update.awayScore ?? game.awayScore;
-            game.currentMinute = update.currentMinute ?? game.currentMinute;
-            game.period = update.period ?? game.period;
-            if (update.countryCode) game.countryCode = update.countryCode;
+            
+            // Atualiza Tempo
+            if (update.time) game.currentMinute = update.time;
+            
+            // Atualiza Placar (Parse de "2-1")
+            if (update.score && update.score.includes('-')) {
+                const parts = update.score.split('-');
+                game.homeScore = parseInt(parts[0]) || 0;
+                game.awayScore = parseInt(parts[1]) || 0;
+            }
+
+            // Atualiza Status/Periodo se disponível
+            if (update.status) game.period = update.status;
+
+            // Atualiza Odds com Animação
             if (update.homeOdd) updateOddWithAnimation(game, 'homeOdd', update.homeOdd);
             if (update.drawOdd) updateOddWithAnimation(game, 'drawOdd', update.drawOdd);
             if (update.awayOdd) updateOddWithAnimation(game, 'awayOdd', update.awayOdd);
-        } else {
-            if (!update.homeTeam || !update.awayTeam) return;
-            const newGame: LiveGame = {
-                gameId: update.gameId,
-                sportKey: update.sportKey || 'soccer',
-                homeTeam: update.homeTeam,
-                awayTeam: update.awayTeam,
-                league: update.league || 'Ao Vivo',
-                countryCode: update.countryCode,
-                commenceTime: new Date().toISOString(),
-                homeScore: update.homeScore || 0,
-                awayScore: update.awayScore || 0,
-                currentMinute: update.currentMinute || '0',
-                period: update.period || '1T',
-                homeOdd: update.homeOdd || 0,
-                drawOdd: update.drawOdd || 0,
-                awayOdd: update.awayOdd || 0,
-                homeTeamLogo: update.homeTeamLogo,
-                awayTeamLogo: update.awayTeamLogo
-            };
-            events.value.push(newGame);
         }
     });
   });
-  try { await connection.start(); console.log("🟢 Conectado ao SignalR!"); } catch (err) { console.error("❌ Erro ao conectar SignalR:", err); }
+
+  // 2. REMOÇÃO (RemoveGames)
+  connection.on('RemoveGames', (endedIds: string[]) => {
+      if (events.value.length > 0) {
+          const initialCount = events.value.length;
+          events.value = events.value.filter(e => !endedIds.includes(e.gameId));
+          if (events.value.length < initialCount) {
+              console.log(`🏁 Removidos ${initialCount - events.value.length} jogos encerrados.`);
+          }
+      }
+  });
+
+  try { 
+      await connection.start(); 
+      console.log("🟢 Conectado ao SignalR Ao Vivo!"); 
+  } catch (err) { 
+      console.error("❌ Erro ao conectar SignalR:", err); 
+  }
 });
 
 onUnmounted(() => {

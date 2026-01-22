@@ -1,8 +1,9 @@
 ﻿using Magic_casino_sportbook.Data;
-using Magic_casino_sportbook.Models;
-using Magic_casino_sportbook.DTOs.Live; // Garante que usa o DTO correto
+using Magic_casino_sportbook.Models; // Usa o novo B365PacketModels.cs
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Net;
 
 namespace Magic_casino_sportbook.BackgroundServices
 {
@@ -22,6 +23,11 @@ namespace Magic_casino_sportbook.BackgroundServices
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            // 🔥 LOG ÚNICO PARA GARANTIR VERSÃO 🔥
+            Console.WriteLine("\n\n-------------------------------------------------------------");
+            Console.WriteLine("🏁 [VERSION CHECK] LiveScoreWorker: VERSÃO 3.0 (COMPILADO SEM DTO) 🏁");
+            Console.WriteLine("-------------------------------------------------------------\n\n");
+
             Console.WriteLine("💰 [SETTLEMENT] Worker de Pagamentos Iniciado.");
 
             if (string.IsNullOrEmpty(_betsApiToken))
@@ -42,6 +48,7 @@ namespace Magic_casino_sportbook.BackgroundServices
                 catch (Exception ex)
                 {
                     Console.WriteLine($"❌ [SETTLEMENT] Erro Crítico: {ex.Message}");
+                    await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
                 }
 
                 await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
@@ -58,11 +65,10 @@ namespace Magic_casino_sportbook.BackgroundServices
 
             if (!pendingSelections.Any()) return;
 
-            // Agrupa IDs
-            var matchIds = pendingSelections.Select(s => s.MatchId).Distinct().Take(10).ToList();
+            // Agrupa IDs (lote pequeno de 5 para evitar 429 Too Many Requests)
+            var matchIds = pendingSelections.Select(s => s.MatchId).Distinct().Take(5).ToList();
             var idsString = string.Join(",", matchIds);
 
-            // Log para confirmar quais jogos estamos verificando
             Console.WriteLine($"🔍 [SETTLEMENT] Verificando {matchIds.Count} jogos: {idsString}");
 
             var client = _httpClientFactory.CreateClient();
@@ -71,20 +77,42 @@ namespace Magic_casino_sportbook.BackgroundServices
             try
             {
                 var response = await client.GetAsync(url);
+
+                if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                {
+                    Console.WriteLine("⚠️ [SETTLEMENT] API Sobrecarregada (Erro 429). Pausando 10 segundos...");
+                    await Task.Delay(10000);
+                    return;
+                }
+
                 if (response.IsSuccessStatusCode)
                 {
                     var json = await response.Content.ReadAsStringAsync();
 
-                    // Log do tamanho do JSON para garantir que não veio vazio
-                    // Console.WriteLine($"📦 [SETTLEMENT] JSON recebido ({json.Length} bytes)"); 
+                    var options = new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true,
+                        NumberHandling = JsonNumberHandling.AllowReadingFromString,
+                        ReadCommentHandling = JsonCommentHandling.Skip,
+                        AllowTrailingCommas = true
+                    };
 
-                    var data = JsonSerializer.Deserialize<B365LiveResponse>(json);
+                    // Agora usa a classe B365LiveResponse do arquivo corrigido
+                    var data = JsonSerializer.Deserialize<B365LiveResponse>(json, options);
 
                     if (data?.Results != null)
                     {
-                        foreach (var gamePackets in data.Results)
+                        // A API retorna uma lista de listas
+                        var allPackets = data.Results.SelectMany(l => l).ToList();
+
+                        // O modelo usa 'Fi' (que mapeia para FI no JSON)
+                        var groupedGames = allPackets
+                             .Where(p => !string.IsNullOrEmpty(p.Fi))
+                             .GroupBy(p => p.Fi);
+
+                        foreach (var gameGroup in groupedGames)
                         {
-                            await ProcessGameSettlement(gamePackets, context);
+                            await ProcessGameSettlement(gameGroup.ToList(), context);
                         }
                     }
                     await context.SaveChangesAsync();
@@ -96,7 +124,7 @@ namespace Magic_casino_sportbook.BackgroundServices
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ [SETTLEMENT] Erro HTTP: {ex.Message}");
+                Console.WriteLine($"❌ [SETTLEMENT] Erro HTTP ou Parse: {ex.Message}");
             }
         }
 
@@ -106,54 +134,46 @@ namespace Magic_casino_sportbook.BackgroundServices
 
             if (ev == null) return;
 
-            // 🔥 LOG DETETIVE: Mostra exatamente o que o C# está lendo do JSON
-            Console.WriteLine($"🕵️ [JOGO {ev.FixtureId}] Status='{ev.Status}' | Tempo='{ev.Time}' | Placar='{ev.ScoreString}'");
-
-            if (string.IsNullOrEmpty(ev.ScoreString)) return;
+            // Usa Ss (que mapeia para SS no JSON)
+            if (string.IsNullOrEmpty(ev.Ss)) return;
 
             // --- LÓGICA DE FIM DE JOGO ---
             bool gameFinished = false;
 
+            // Mapeamento correto: Tm (TM), Time (time)
             if (ev.Status == "3") gameFinished = true;
-            if (ev.Time == "FT" || ev.Time == "Ended") gameFinished = true;
+            if (ev.Tm == "FT" || ev.Time == "FT" || ev.Time == "Ended") gameFinished = true;
 
-            // Lógica Ninja (Status 0 + Tempo 90)
-            if (!gameFinished && ev.Time == "90" && ev.Status == "0" && ev.ScoreString != "0-0")
-            {
-                gameFinished = true;
-                Console.WriteLine($"🥷 [JOGO {ev.FixtureId}] Ativando Lógica Ninja (Status 0 mas Tempo 90)");
-            }
-
-            if (!gameFinished)
-            {
-                // Console.WriteLine($"⏳ [JOGO {ev.FixtureId}] Ainda rolando. Ignorando.");
-                return;
-            }
+            if (!gameFinished) return;
 
             // --- FASE DE PAGAMENTO ---
+            // Usa ev.Fi (FixtureId)
             var bets = await context.BetSelections
-                .Where(b => b.MatchId == ev.FixtureId && b.Status == "pending")
+                .Where(b => b.MatchId == ev.Fi && b.Status == "pending")
                 .ToListAsync();
 
-            Console.WriteLine($"🤑 [JOGO {ev.FixtureId}] Finalizado! Processando {bets.Count} apostas...");
+            if (bets.Any())
+            {
+                Console.WriteLine($"🤑 [JOGO {ev.Fi}] Finalizado! Placar: {ev.Ss}. Processando {bets.Count} apostas...");
+            }
 
             foreach (var bet in bets)
             {
-                bet.FinalScore = ev.ScoreString;
+                bet.FinalScore = ev.Ss;
 
-                bool won = CheckWinner(bet.MarketName, bet.OutcomeName, ev.ScoreString);
+                bool won = CheckWinner(bet.MarketName, bet.OutcomeName, ev.Ss);
 
                 if (won)
                 {
                     bet.Status = "Won";
                     bet.IsWinner = true;
-                    Console.WriteLine($"✅ [GREEN] Aposta {bet.Id} (Apostou: {bet.OutcomeName}) Venceu! Placar: {ev.ScoreString}");
+                    Console.WriteLine($"✅ [GREEN] Aposta {bet.Id} (Apostou: {bet.OutcomeName}) Venceu!");
                 }
                 else
                 {
                     bet.Status = "Lost";
                     bet.IsWinner = false;
-                    Console.WriteLine($"❌ [RED] Aposta {bet.Id} (Apostou: {bet.OutcomeName}) Perdeu. Placar: {ev.ScoreString}");
+                    Console.WriteLine($"❌ [RED] Aposta {bet.Id} (Apostou: {bet.OutcomeName}) Perdeu.");
                 }
             }
         }
@@ -163,17 +183,19 @@ namespace Magic_casino_sportbook.BackgroundServices
             try
             {
                 var parts = score.Split('-');
+                if (parts.Length < 2) return false;
+
                 int homeScore = int.Parse(parts[0]);
                 int awayScore = int.Parse(parts[1]);
 
                 var marketName = market?.Trim();
                 var selection = outcome?.Trim();
 
-                if (marketName == "Resultado Final" || marketName == "Full Time Result")
+                if (marketName == "Resultado Final" || marketName == "Full Time Result" || marketName == "1X2")
                 {
-                    if (selection == "Casa" || selection == "1") return homeScore > awayScore;
-                    if (selection == "Fora" || selection == "2") return awayScore > homeScore;
-                    if (selection == "Empate" || selection == "X") return homeScore == awayScore;
+                    if (selection == "Casa" || selection == "1" || selection == "Home") return homeScore > awayScore;
+                    if (selection == "Fora" || selection == "2" || selection == "Away") return awayScore > homeScore;
+                    if (selection == "Empate" || selection == "X" || selection == "Draw") return homeScore == awayScore;
                 }
 
                 if (marketName == "Ambos Marcam" || marketName == "Both Teams to Score")

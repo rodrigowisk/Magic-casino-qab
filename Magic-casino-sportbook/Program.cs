@@ -18,8 +18,13 @@ Console.WriteLine("#############################################################
 // 1. DATABASE
 // =============================================================
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
+
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(connectionString));
+    options.UseNpgsql(connectionString)
+           .EnableSensitiveDataLogging() // <--- O PULO DO GATO: Mostra os valores reais no log
+           .EnableDetailedErrors());     // <--- Ajuda a detalhar erros de SQL
+
 
 // =============================================================
 // 2. JWT CONFIGURATION 🔐
@@ -81,7 +86,10 @@ builder.Services.AddCors(options =>
                     "http://localhost:5173",
                     "http://127.0.0.1:5173",
                     "http://localhost:8080",
-                    "http://127.0.0.1:8080"
+                    "http://127.0.0.1:8080",
+                    // 🌍 CASO 2: Domínio Real (Produção/Túnel)
+                    "https://quebrandoabanca.bet",
+                    "https://www.quebrandoabanca.bet"
                   )
                   .AllowAnyHeader()
                   .AllowAnyMethod()
@@ -137,14 +145,17 @@ builder.Services.AddHttpClient();
 
 // 2. Serviços Legados / Específicos
 builder.Services.AddHttpClient<BetsApiService>();
-builder.Services.AddHttpClient<TheOddsApiService>();
+//builder.Services.AddHttpClient<TheOddsApiService>();
 builder.Services.AddHttpClient<PreMatchService>(); // Registra como Typed Client
 
 // 3. 🟢 CORREÇÃO: Registro do LiveSportService
 // Mudamos de AddHttpClient<> para AddScoped<> porque o construtor pede IHttpClientFactory
 builder.Services.AddScoped<LiveSportService>();
 
-// 4. Seleção de Provedor de Odds
+// 4. Fila de Robos - Porteiro
+builder.Services.AddSingleton<BetsApiGatekeeper>();
+
+// 5. Seleção de Provedor de Odds
 string provider = Environment.GetEnvironmentVariable("ODDS_PROVIDER") ?? "BetsApi";
 
 if (provider == "BetsApi")

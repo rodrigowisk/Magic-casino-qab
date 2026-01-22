@@ -10,9 +10,27 @@ import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signal
 // ✅ IMPORTAÇÃO DA NOVA FUNÇÃO DE BANDEIRAS
 import { getFlag } from '../utils/flags'; 
 
-// --- ⚙️ CONFIGURAÇÃO DINÂMICA DA API ---
-// Pega do .env ou usa a porta 8090 do Docker (Sportbook) por padrão
-const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:8090';
+// --- ⚙️ CONFIGURAÇÃO DE URL INTELIGENTE (CORREÇÃO DE ROTA) ---
+const getBaseUrl = () => {
+  // Pega a URL do .env (ex: http://localhost:8090/api/sports)
+  const envUrl = import.meta.env.VITE_API_URL || 'http://localhost:8888';
+  try {
+    const url = new URL(envUrl);
+    
+    // Se a URL estiver apontando direto para o backend (8090), 
+    // forçamos para o NGINX (8888) para garantir que o roteamento e o túnel funcionem.
+    if (url.port === '8090' && url.hostname === 'localhost') {
+        return `${url.protocol}//${url.hostname}:8888`;
+    }
+    
+    // Retorna apenas a origem (http://dominio:porta), removendo "/api/sports"
+    return url.origin; 
+  } catch {
+    return 'http://localhost:8888';
+  }
+};
+
+const BASE_URL = getBaseUrl(); 
 
 // Interface flexível
 interface SportEvent {
@@ -173,7 +191,7 @@ const fetchEvents = async (reset = false) => {
 
 watch(() => route.params.id, () => fetchEvents(true), { immediate: true });
 
-// --- LIFECYCLE (APENAS REMOÇÃO DE JOGOS) ---
+// --- LIFECYCLE (SIGNALR E SCROLL) ---
 onMounted(async () => {
   // 1. Scroll Infinito
   observer = new IntersectionObserver((entries) => {
@@ -183,9 +201,10 @@ onMounted(async () => {
   }, { rootMargin: '200px' });
   if (loadTrigger.value) observer.observe(loadTrigger.value);
 
-  // 2. Conexão SignalR - APENAS PARA EXPULSÃO DE JOGOS LIVE
+  // 2. Conexão SignalR - CORRIGIDA
   try {
-    const signalRUrl = `${BACKEND_URL}/gameHub`;
+    // Monta a URL correta: http://localhost:8888/gameHub
+    const signalRUrl = `${BASE_URL}/gameHub`; 
     console.log(`🔌 [PRÉ-JOGO] Conectando SignalR em: ${signalRUrl}`);
 
     connection.value = new HubConnectionBuilder()
@@ -213,10 +232,9 @@ onMounted(async () => {
       }
     });
 
-    // 🔇 OUVINTE 2: Silenciador de Warning (A Correção do Erro no Console)
-    // O Backend manda odds pra todo mundo. Registramos vazio para não dar erro.
+    // 🔇 OUVINTE 2: Silenciador de Warning
     connection.value.on("LiveOddsUpdate", () => {
-        // Shhh... apenas ignore.
+        // Ignora atualizações de odds ao vivo nesta tela (é pré-jogo)
     });
 
     await connection.value.start();

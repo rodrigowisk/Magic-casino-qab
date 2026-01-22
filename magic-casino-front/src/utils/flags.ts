@@ -66,8 +66,6 @@ const COUNTRY_MAP: Record<string, string> = {
     'saudi': 'sa', 'arabia': 'sa',
     'india': 'in',
     'thailand': 'th',
-    'malaysia': 'my',
-    'singapore': 'sg',
 
     // --- Internacional / Outros ---
     'world': 'un', 'mundo': 'un', 'fifa': 'un', 'uefa': 'eu', 'libertadores': 'un',

@@ -88,6 +88,72 @@ namespace Magic_casino_sportbook.Controllers
             }
         }
 
+
+        [HttpGet("debug-live-soccer")]
+        public async Task<IActionResult> DebugLiveSoccer()
+        {
+            try
+            {
+                var token = Environment.GetEnvironmentVariable("BETSAPI_TOKEN") ?? "SEU_TOKEN_SE_ENV_FALHAR";
+
+                // 1. Consulta a API da BetsAPI (Endpoint INPLAY)
+                using var client = new HttpClient();
+                var url = $"https://api.b365api.com/v1/events/inplay?sport_id=1&token={token}";
+                var response = await client.GetAsync(url);
+                var json = await response.Content.ReadAsStringAsync();
+
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                if (!doc.RootElement.TryGetProperty("results", out var results))
+                {
+                    return Ok(new { error = "API não retornou 'results'.", raw = json });
+                }
+
+                var apiGames = new List<object>();
+                var apiIds = new List<string>();
+
+                foreach (var item in results.EnumerateArray())
+                {
+                    // Filtra ligas virtuais (opcional, mas bom para limpar a vista)
+                    var league = item.GetProperty("league").GetProperty("name").GetString();
+                    if (league.Contains("Esoccer") || league.Contains("Virtual")) continue;
+
+                    string id = item.GetProperty("id").GetString();
+                    string home = item.GetProperty("home").GetProperty("name").GetString();
+                    string away = item.GetProperty("away").GetProperty("name").GetString();
+                    string time = item.TryGetProperty("timer", out var t) && t.TryGetProperty("tm", out var tm)
+                                  ? tm.GetInt32().ToString()
+                                  : "0";
+
+                    apiIds.Add(id);
+                    apiGames.Add(new { Id = id, League = league, Match = $"{home} vs {away}", Time = time });
+                }
+
+                // 2. Consulta o Banco de Dados
+                var dbGames = await _context.SportsEvents
+                    .Where(e => e.Status == "Live" && e.SportKey == "soccer")
+                    .Select(e => e.ExternalId)
+                    .ToListAsync();
+
+                // 3. Compara
+                var missingInDb = apiIds.Except(dbGames).ToList();
+
+                return Ok(new
+                {
+                    TotalNaApi_FutebolReal = apiIds.Count,
+                    TotalNoBanco_Live = dbGames.Count,
+                    FaltandoNoBanco = missingInDb.Count,
+                    ListaJogosApi = apiGames, // Mostra quem são
+                    IdsFaltantes = missingInDb
+                });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+
+
         [HttpGet("events")]
         public async Task<ActionResult<IEnumerable<SportsEventDto>>> GetEvents(
             [FromQuery] string? sport = null,
