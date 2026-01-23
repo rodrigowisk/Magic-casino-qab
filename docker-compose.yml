@@ -19,7 +19,8 @@ services:
     restart: always
     ports:
       - "6379:6379"
-
+    command: redis-server --save "" --appendonly no
+  
   # ✅ CORE (Backend Principal)
   core:
     build:

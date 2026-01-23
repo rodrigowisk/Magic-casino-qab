@@ -304,15 +304,19 @@ namespace Magic_casino_sportbook.Services
                         if (minutos > 100 && ev.Tt == "0") tempoExagerado = true;
                     }
 
-                    // --- VERIFICA SE O JOGO ACABOU (CRÍTICO -> VAI PRO SQL) ---
-                    if (ev.TimeStatus == "3" || ev.Status == "3" || tempoExagerado)
+                    // --- 🔥 CORREÇÃO: VERIFICA SE O JOGO ACABOU (CRÍTICO -> VAI PRO SQL) ---
+                    // Adicionado lógica para detectar fim mesmo quando Status/TS é "0" mas TM é "90"
+                    bool apiStatusFinal = ev.TimeStatus == "3" || ev.Status == "3";
+                    bool tempoFinalStatusZero = (ev.TimeStatus == "0" || ev.Status == "0") && ev.Tm == "90";
+
+                    if (apiStatusFinal || tempoFinalStatusZero || tempoExagerado)
                     {
                         bool temDados = (!string.IsNullOrEmpty(gameDb.Score) && gameDb.Score != "0-0") ||
                                         (!string.IsNullOrEmpty(gameDb.GameTime) && gameDb.GameTime != "0'");
 
                         if (gameDb.Status != "Ended" && temDados)
                         {
-                            Console.WriteLine($"🏁 [FIM] {gameDb.HomeTeam} -> Ended no SQL.");
+                            Console.WriteLine($"🏁 [FIM] {gameDb.HomeTeam} (ID: {gameDb.ExternalId}) -> Ended no SQL.");
                             gameDb.Status = "Ended";
                             gameDb.GameTime = "FT";
                             if (!string.IsNullOrEmpty(ev.Ss)) gameDb.Score = ev.Ss;
