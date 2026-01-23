@@ -114,14 +114,12 @@ const getBetTypeForSlip = (odd: any, marketName: string): string => {
     return translateMarket(marketName);
 };
 
-// ✅ CORREÇÃO APLICADA: Uso de variável local 'evt' para garantir tipagem
 const groupedMarkets = computed<Record<string, any[]>>(() => {
-    const evt = event.value; // Captura o valor atual para garantir que não é null
+    const evt = event.value; 
     if (!evt || !evt.odds) return {};
 
     const groups: Record<string, any[]> = {};
 
-    // 1. Agrupa as odds traduzindo os nomes (Usa 'evt' em vez de 'event.value')
     evt.odds.forEach((odd) => {
         const name = translateMarket(odd.marketName);
 
@@ -134,7 +132,6 @@ const groupedMarkets = computed<Record<string, any[]>>(() => {
         groups[name].push(odd);
     });
 
-    // 2. Ordena as ODDS dentro de cada grupo
     Object.keys(groups).forEach(key => {
         if (isMarket1x2(key)) {
             groups[key]?.sort((a, b) => {
@@ -161,18 +158,16 @@ const groupedMarkets = computed<Record<string, any[]>>(() => {
         }
     });
 
-    // 3. Ordena os MERCADOS para colocar "Resultado Final" no topo
     const sortedKeys = Object.keys(groups).sort((a, b) => {
         if (a === 'Resultado Final') return -1;
         if (b === 'Resultado Final') return 1;
         return 0;
     });
 
-    // Reconstrói o objeto na ordem certa
     const sortedGroups: Record<string, any[]> = {};
     sortedKeys.forEach(key => {
         const g = groups[key];
-        if (g) { // ✅ Garante que 'g' existe antes de atribuir
+        if (g) { 
             sortedGroups[key] = g;
         }
     });
@@ -195,7 +190,6 @@ const getMethodTable = (odds: any[]) => {
         let method = "Vencer";
         let teamType = "";
 
-        // Non-null assertions seguras pois verificamos event.value antes
         if (name.includes(event.value!.homeTeam)) {
             method = name.replace(event.value!.homeTeam, "").replace(" - ", "").trim();
             teamType = 'home';
@@ -326,133 +320,117 @@ onMounted(fetchDetails);
 </script>
 
 <template>
-    <div class="space-y-4 pb-20 max-w-5xl mx-auto p-4 md:p-0">
-        <div class="flex items-center gap-4 pb-2">
+    <div class="space-y-3 pb-20 pt-2 px-2 md:px-0">
+        
+        <div class="flex items-center gap-2 pb-2 border-b border-stake-dark/50">
             <button @click="router.back()"
-                class="bg-stake-card p-2 rounded hover:bg-white/10 text-white transition-colors border border-transparent hover:border-stake-text/30">
-                <ArrowLeft class="w-5 h-5" />
+                class="bg-stake-card p-1.5 rounded hover:bg-white/10 text-white transition-colors border border-transparent">
+                <ArrowLeft class="w-4 h-4" />
             </button>
 
-            <h2 class="text-white text-xl font-bold uppercase italic whitespace-nowrap">
-                <span class="text-stake-blue">#</span> {{ event?.league || 'Detalhes do Evento' }}
+            <h2 class="text-white text-sm font-bold uppercase italic whitespace-nowrap tracking-wide">
+                <span class="text-stake-blue">#</span> {{ event?.league || 'Detalhes' }}
             </h2>
         </div>
 
-        <div v-if="loading" class="text-stake-text animate-pulse pl-2 font-bold uppercase tracking-widest text-sm">
+        <div v-if="loading" class="text-stake-text animate-pulse pl-2 font-bold uppercase tracking-widest text-xs">
             Carregando mercados...
         </div>
 
-        <div v-else-if="event" class="space-y-4">
+        <div v-else-if="event" class="space-y-3">
 
-            <div
-                class="bg-stake-card border-l-4 border-stake-blue rounded p-6 shadow-lg relative overflow-hidden group">
-                <div
-                    class="absolute top-0 right-0 p-4 opacity-5 pointer-events-none group-hover:opacity-10 transition-opacity">
-                    <Clock class="w-32 h-32 text-stake-blue" />
+            <div class="bg-[#1e293b] rounded border border-white/5 p-3 flex items-center justify-between shadow-lg relative overflow-hidden">
+                <div class="absolute inset-0 bg-gradient-to-r from-blue-500/5 to-transparent pointer-events-none"></div>
+
+                <div class="flex-1 flex flex-col items-center justify-center gap-1 z-10">
+                    <TeamLogo :teamName="event.homeTeam" size="w-8 h-8" />
+                    <h1 class="text-white font-bold text-xs text-center leading-tight truncate w-full px-1">
+                        {{ event.homeTeam }}
+                    </h1>
                 </div>
 
-                <div class="flex flex-col md:flex-row items-center gap-6 justify-between relative z-10">
-                    <div class="flex-1 flex flex-col items-center md:items-end text-center md:text-right gap-2">
-                        <TeamLogo :teamName="event.homeTeam" size="w-12 h-12 md:w-16 md:h-16" />
-                        <h1 class="text-white font-black text-lg md:text-2xl uppercase leading-tight">
-                            {{ event.homeTeam }}
-                        </h1>
-                    </div>
-
-                    <div class="flex flex-col items-center min-w-[100px]">
-                        <div class="text-3xl font-black text-stake-blue italic opacity-80 select-none">VS</div>
-                        <div class="mt-2 flex flex-col items-center">
-                            <span class="text-stake-blue font-bold text-xs uppercase">
-                                {{ formatDate(event.commenceTime) }}
-                            </span>
-                            <div
-                                class="flex items-center gap-1 text-white font-bold text-sm bg-black/20 px-3 py-1 rounded-full mt-1 border border-white/5">
-                                <Clock class="w-3.5 h-3.5 text-stake-text" />
-                                {{ formatTime(event.commenceTime) }}
-                            </div>
+                <div class="flex flex-col items-center justify-center min-w-[80px] z-10 border-x border-white/5 px-2 mx-1">
+                    <div class="text-lg font-black text-stake-blue italic leading-none">VS</div>
+                    <div class="mt-1 flex flex-col items-center">
+                        <span class="text-stake-text font-bold text-[10px] uppercase leading-none">
+                            {{ formatDate(event.commenceTime) }}
+                        </span>
+                        <div class="flex items-center gap-1 text-white font-bold text-xs mt-0.5">
+                            <Clock class="w-3 h-3 text-stake-blue" />
+                            {{ formatTime(event.commenceTime) }}
                         </div>
                     </div>
+                </div>
 
-                    <div class="flex-1 flex flex-col items-center md:items-start text-center md:text-left gap-2">
-                        <TeamLogo :teamName="event.awayTeam" size="w-12 h-12 md:w-16 md:h-16" />
-                        <h1 class="text-white font-black text-lg md:text-2xl uppercase leading-tight">
-                            {{ event.awayTeam }}
-                        </h1>
-                    </div>
+                <div class="flex-1 flex flex-col items-center justify-center gap-1 z-10">
+                    <TeamLogo :teamName="event.awayTeam" size="w-8 h-8" />
+                    <h1 class="text-white font-bold text-xs text-center leading-tight truncate w-full px-1">
+                        {{ event.awayTeam }}
+                    </h1>
                 </div>
             </div>
 
             <div v-for="(odds, marketName) in groupedMarkets" :key="marketName" class="rounded overflow-hidden">
 
                 <div @click="toggleMarket(marketName)"
-                    class="bg-stake-card p-3 flex items-center justify-between border-l-4 border-stake-blue cursor-pointer hover:brightness-110 transition-all select-none group">
-                    <div class="flex items-center gap-3">
-                        <Trophy class="w-4 h-4 text-stake-blue group-hover:scale-110 transition-transform" />
-                        <h3 class="text-white font-bold text-sm uppercase tracking-wide">
+                    class="bg-[#1e293b] p-2 flex items-center justify-between border-l-2 border-stake-blue cursor-pointer hover:bg-[#253248] transition-all select-none group">
+                    <div class="flex items-center gap-2">
+                        <Trophy class="w-3.5 h-3.5 text-stake-blue opacity-80" />
+                        <h3 class="text-white font-bold text-xs uppercase tracking-wide">
                             {{ marketName }}
                         </h3>
 
                         <span v-if="countSelectedInMarket(odds) > 0"
-                            class="ml-2 bg-yellow-500 text-black text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full shadow-[0_0_10px_rgba(234,179,8,0.5)] scale-100 animate-in zoom-in">
+                            class="ml-1 bg-yellow-500 text-black text-[9px] font-black w-4 h-4 flex items-center justify-center rounded-full shadow-[0_0_8px_rgba(234,179,8,0.5)] animate-in zoom-in">
                             {{ countSelectedInMarket(odds) }}
                         </span>
                     </div>
 
                     <component :is="expandedMarkets.has(marketName) ? ChevronDown : ChevronRight"
-                        class="w-5 h-5 text-stake-text" />
+                        class="w-4 h-4 text-stake-text" />
                 </div>
 
                 <div v-show="expandedMarkets.has(marketName)"
-                    class="bg-stake-dark p-4 border-x border-b border-stake-card/30">
+                    class="bg-[#0f172a] p-2 border-x border-b border-stake-card/20">
 
-                    <div v-if="marketName === 'Método de Vitória'" class="flex flex-col gap-2">
-                        <div class="grid grid-cols-3 text-xs text-stake-text font-bold uppercase mb-1 px-2">
-                            <div class="text-left">Método</div>
-                            <div class="text-center">{{ event.homeTeam }}</div>
-                            <div class="text-center">{{ event.awayTeam }}</div>
-                        </div>
-
+                    <div v-if="marketName === 'Método de Vitória'" class="flex flex-col gap-1">
                         <div v-for="(row, method) in getMethodTable(odds)" :key="method"
-                            class="grid grid-cols-3 items-center gap-2 border-b border-white/5 pb-2 last:border-0">
-                            <div class="text-xs text-white font-bold capitalize truncate pr-2">{{ method }}</div>
+                            class="grid grid-cols-3 items-center gap-1 border-b border-white/5 pb-1 last:border-0">
+                            <div class="text-[10px] text-white font-bold capitalize truncate pr-1">{{ method }}</div>
 
                             <button v-if="row.home" @click="handleSelection(row.home)"
-                                :class="['py-2 rounded text-center transition-all', isSelected(row.home) ? 'bg-stake-blue text-white' : 'bg-stake-card hover:bg-white/5 text-stake-blue']">
-                                <span class="font-black text-sm">{{ Number(row.home.price).toFixed(2) }}</span>
+                                :class="['py-1.5 rounded text-center transition-all', isSelected(row.home) ? 'bg-stake-blue text-white' : 'bg-[#1e293b] hover:bg-white/5 text-stake-blue']">
+                                <span class="font-bold text-xs">{{ Number(row.home.price).toFixed(2) }}</span>
                             </button>
-                            <div v-else class="text-center text-white/10">-</div>
+                            <div v-else class="text-center text-white/10 text-xs">-</div>
 
                             <button v-if="row.away" @click="handleSelection(row.away)"
-                                :class="['py-2 rounded text-center transition-all', isSelected(row.away) ? 'bg-stake-blue text-white' : 'bg-stake-card hover:bg-white/5 text-stake-blue']">
-                                <span class="font-black text-sm">{{ Number(row.away.price).toFixed(2) }}</span>
+                                :class="['py-1.5 rounded text-center transition-all', isSelected(row.away) ? 'bg-stake-blue text-white' : 'bg-[#1e293b] hover:bg-white/5 text-stake-blue']">
+                                <span class="font-bold text-xs">{{ Number(row.away.price).toFixed(2) }}</span>
                             </button>
-                            <div v-else class="text-center text-white/10">-</div>
+                            <div v-else class="text-center text-white/10 text-xs">-</div>
                         </div>
                     </div>
 
-                    <div v-else class="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <div v-else class="grid grid-cols-3 md:grid-cols-4 gap-2">
                         <button v-for="odd in odds" :key="odd.id || odd.outcomeName" @click="handleSelection(odd)"
                             :class="[
-                                'py-3 px-3 rounded flex flex-col items-center border transition-all relative overflow-hidden group/btn active:scale-95',
+                                'h-[42px] px-1 rounded-sm flex flex-col items-center justify-center border border-transparent transition-all relative overflow-hidden group/btn active:scale-95',
                                 isSelected(odd)
-                                    ? 'bg-stake-blue border-stake-blue shadow-[0_0_15px_rgba(0,231,1,0.4)]'
-                                    : 'bg-stake-card border-transparent hover:border-stake-text/30 hover:bg-[#ff7a00]/[0.05]'
+                                    ? 'bg-stake-blue shadow-[0_0_8px_rgba(0,146,255,0.4)]'
+                                    : 'bg-[#1e293b] hover:bg-[#253248]'
                             ]">
-                            <div class="flex flex-col items-center text-center gap-0.5 z-10 w-full">
-                                <span :class="[
-                                    'text-[10px] font-bold uppercase truncate w-full px-1',
-                                    isSelected(odd) ? 'text-white' : 'text-stake-text group-hover/btn:text-white'
+                            
+                            <div :class="[
+                                    'text-[9px] font-bold uppercase truncate w-full text-center leading-none mb-1',
+                                    isSelected(odd) ? 'text-white' : 'text-stake-text/70 group-hover/btn:text-white'
                                 ]">
-                                    {{ getDisplayLabel(odd, marketName) }}
-                                </span>
+                                {{ getDisplayLabel(odd, marketName) }}
+                                <span v-if="odd.point" class="ml-0.5 text-stake-blue/90 font-black">{{ odd.point > 0 ? '+' : '' }}{{ odd.point }}</span>
+                            </div>
 
-                                <span v-if="odd.point" class="text-[9px] font-bold text-stake-blue/90">
-                                    {{ odd.point > 0 ? '+' : '' }}{{ odd.point }}
-                                </span>
-
-                                <span class="text-base font-black text-white mt-0.5">
-                                    {{ Number(odd.price).toFixed(2) }}
-                                </span>
+                            <div class="text-xs font-black text-white leading-none">
+                                {{ Number(odd.price).toFixed(2) }}
                             </div>
                         </button>
                     </div>

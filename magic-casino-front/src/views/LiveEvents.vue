@@ -2,7 +2,8 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signalr';
-import { Radio, AlertCircle, ChevronDown, ChevronRight, Timer, ArrowUp, ArrowDown, Lock } from 'lucide-vue-next';
+// 🔥 CORREÇÃO FINAL: Removido 'Timer' que causava erro no build
+import { Radio, AlertCircle, ChevronDown, ChevronRight, ArrowUp, ArrowDown, Lock } from 'lucide-vue-next';
 import axios from 'axios'; 
 import TeamLogo from '../components/TeamLogo.vue';
 import { useBetStore, type BetType } from '../stores/useBetStore';
@@ -291,6 +292,13 @@ const getFlagUrl = (game: LiveGame | undefined) => {
 const getOddDirection = (game: LiveGame, type: string) => { if (type === '1') return game.homeOddDir; if (type === 'X') return game.drawOddDir; if (type === '2') return game.awayOddDir; return null; };
 const getOddFlash = (game: LiveGame, type: string) => { if (type === '1') return game.homeOddFlash; if (type === 'X') return game.drawOddFlash; if (type === '2') return game.awayOddFlash; return false; };
 const getOddRaw = (game: LiveGame, type: string) => { if (type === '1') return game.homeOdd; if (type === 'X') return game.drawOdd; if (type === '2') return game.awayOdd; return 0; };
+
+// 🔥 NOVA FUNÇÃO: Conta jogos selecionados dentro da liga
+const getLeagueSelectionCount = (games: LiveGame[]) => {
+    return games.reduce((count, game) => {
+        return count + (betStore.selections.some(s => s.id === game.gameId) ? 1 : 0);
+    }, 0);
+};
 </script>
 
 <template>
@@ -329,7 +337,14 @@ const getOddRaw = (game: LiveGame, type: string) => { if (type === '1') return g
                     <div class="flex items-center gap-2">
                         <img :src="getFlagUrl(games[0])" class="w-4 h-3 rounded-[1px] shadow-sm" @error="handleImageError" />
                         <h3 class="text-white font-bold text-xs uppercase tracking-wide">{{ league }}</h3>
-                        <span class="text-[10px] text-stake-text/60 font-bold bg-black/20 px-1.5 py-0.5 rounded-full">{{ games.length }}</span>
+                        
+                        <span v-if="getLeagueSelectionCount(games) > 0" class="text-[10px] text-black font-bold bg-yellow-400 px-1.5 py-0.5 rounded-full shadow-sm animate-pulse">
+                            {{ getLeagueSelectionCount(games) }}
+                        </span>
+                        <span v-else class="text-[10px] text-stake-text/60 font-bold bg-black/20 px-1.5 py-0.5 rounded-full">
+                            {{ games.length }}
+                        </span>
+
                     </div>
                     <component :is="openLeagues.has(String(league)) ? ChevronDown : ChevronRight" class="w-4 h-4 text-stake-text" />
                 </div>

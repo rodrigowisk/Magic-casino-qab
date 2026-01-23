@@ -3,7 +3,7 @@ import { ref, computed, watch, nextTick } from 'vue';
 import { useBetStore } from '../stores/useBetStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import apiSports from '../services/apiSports'; 
-import { X, Trash2, Trophy, Loader2, Zap, Layers, ChevronRight, AlertCircle } from 'lucide-vue-next';
+import { X, Trash2, Trophy, Loader2, ChevronRight, AlertCircle } from 'lucide-vue-next';
 import Swal from 'sweetalert2';
 
 defineProps<{ isOpen?: boolean }>();
@@ -47,6 +47,7 @@ const Toast = Swal.mixin({
   }
 });
 
+// Calcula o retorno (mantém numérico/string interna com ponto para cálculo)
 const potentialReturn = computed(() => {
   const valor = stake.value || 0;
   const odds = store.totalOdds || 0;
@@ -55,7 +56,7 @@ const potentialReturn = computed(() => {
 
 const isUserLoggedIn = computed(() => !!(authStore?.token && authStore?.user));
 
-const truncateName = (name: string, limit: number = 18) => {
+const truncateName = (name: string, limit: number = 20) => {
   if (!name) return '';
   return name.length > limit ? name.substring(0, limit) + '...' : name;
 };
@@ -63,9 +64,14 @@ const truncateName = (name: string, limit: number = 18) => {
 const getMarketLabel = (type: string | undefined, marketName: string | undefined) => {
   const raw = type || marketName || '';
   if (['1', '2', 'X', 'x'].includes(raw)) {
-    return 'RESULTADO FINAL';
+    return 'Resultado Final';
   }
   return raw; 
+};
+
+// Formata moeda para padrão Brasileiro (R$ 1.000,00)
+const formatCurrency = (value: number | string) => {
+    return Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 };
 
 const handlePlaceBet = async () => {
@@ -136,125 +142,152 @@ const handlePlaceBet = async () => {
 </script>
 
 <template>
-  <div class="flex flex-col h-full bg-[#1e293b] text-gray-300 font-sans border-l border-gray-700">
+  <div class="flex flex-col h-full bg-[#0f172a] text-slate-300 font-sans border-l border-slate-800/50 shadow-2xl">
+    
     <div 
         @click="emit('toggle')"
-        class="p-4 border-b border-gray-700 bg-[#162032] flex items-center justify-between cursor-pointer hover:bg-[#1c283d] transition-colors"
+        class="h-12 px-3 border-b border-slate-800 bg-[#1e293b] flex items-center justify-between cursor-pointer hover:bg-[#253248] transition-colors"
     >
       <div class="flex items-center gap-2">
-        <h3 class="text-white font-bold flex items-center gap-2 select-none">
-            <Trophy class="w-5 h-5 text-yellow-500" />
-            Apostas
-            <span v-if="store.count > 0" class="bg-yellow-500 text-gray-900 text-[10px] px-1.5 py-0.5 rounded-full font-black">
-            {{ store.count }}
-            </span>
+        <div class="bg-yellow-500/10 p-1 rounded">
+            <Trophy class="w-4 h-4 text-yellow-500" />
+        </div>
+        <h3 class="text-white font-bold text-sm uppercase tracking-wide">
+            Cupom
         </h3>
+        <span v-if="store.count > 0" class="bg-blue-600 text-white text-[10px] px-1.5 rounded-full font-bold min-w-[18px] text-center">
+            {{ store.count }}
+        </span>
       </div>
       <div class="flex items-center gap-3">
-        <button v-if="store.count > 0" @click.stop="store.clearStore()" class="text-xs text-gray-400 hover:text-red-400 flex items-center gap-1 transition-colors uppercase font-bold mr-2">
-            Limpar <Trash2 class="w-4 h-4" />
+        <button v-if="store.count > 0" @click.stop="store.clearStore()" class="text-[10px] text-slate-400 hover:text-red-400 flex items-center gap-1 transition-colors uppercase font-bold tracking-wider">
+            LIMPAR <Trash2 class="w-3 h-3" />
         </button>
-        <ChevronRight class="w-5 h-5 text-gray-400 hover:text-white" />
+        <ChevronRight class="w-4 h-4 text-slate-500 hover:text-white" />
       </div>
     </div>
 
-    <div class="flex flex-col flex-1 overflow-hidden bg-[#1e293b]">
-        <div v-if="store.count > 0" class="px-4 pt-4">
-            <div v-if="store.count === 1" class="bg-gray-800/40 border border-gray-700 rounded-md p-2 flex items-center justify-center gap-2">
-                <Zap class="w-3.5 h-3.5 text-yellow-500" />
-                <span class="text-[10px] font-black text-gray-400 uppercase tracking-widest">Aposta Simples</span>
+    <div class="flex flex-col flex-1 overflow-hidden bg-[#0f172a]">
+        
+        <div v-if="store.count === 0" class="flex-1 flex flex-col items-center justify-center opacity-40 p-6 text-center">
+            <div class="bg-slate-800/50 w-12 h-12 rounded-full flex items-center justify-center mb-3">
+                <Trophy class="w-6 h-6 text-slate-500" />
             </div>
-            <div v-else class="bg-blue-600/10 border border-blue-500/30 rounded-md p-2 flex items-center justify-center gap-2">
-                <Layers class="w-3.5 h-3.5 text-blue-400" />
-                <span class="text-[10px] font-black text-blue-400 uppercase tracking-widest italic">Aposta Múltipla</span>
-            </div>
+            <p class="text-slate-400 text-xs font-bold uppercase tracking-wide">Cupom Vazio</p>
+            <p class="text-slate-600 text-[10px] mt-1">Selecione odds para começar</p>
         </div>
 
-        <div class="flex-1 overflow-hidden flex flex-col">
-            <div v-if="store.count === 0" class="text-center py-10 opacity-50 flex flex-col items-center flex-1 justify-center">
-                <div class="bg-[#0f172a] w-16 h-16 rounded-full flex items-center justify-center mb-3">
-                    <Trophy class="w-8 h-8 text-gray-600" />
-                </div>
-                <p class="text-gray-400 text-sm font-medium">Seu cupom está vazio.</p>
-                <p class="text-gray-500 text-xs">Selecione uma cotação para começar.</p>
+        <div 
+            v-else 
+            ref="selectionsContainer"
+            class="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar"
+        >
+            <div class="sticky top-0 z-10 flex justify-center mb-2 pointer-events-none">
+                <span class="bg-blue-600/90 backdrop-blur text-white text-[9px] font-black uppercase tracking-widest px-3 py-0.5 rounded shadow-lg border border-blue-400/20">
+                    {{ store.count === 1 ? 'Aposta Simples' : 'Múltipla (' + store.count + ')' }}
+                </span>
             </div>
 
-            <div 
-                v-else 
-                ref="selectionsContainer"
-                class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar"
-            >
-                <div v-for="item in store.selections" :key="item.id" class="bg-[#0f172a] rounded-lg p-3 border border-gray-700 relative group hover:border-gray-600 transition-colors shadow-sm overflow-hidden">
-                    
-                    <button @click="store.removeSelection(item.id)" class="absolute top-2 right-2 text-gray-500 hover:text-red-500 transition-colors p-1 z-10">
-                        <X class="w-4 h-4" />
-                    </button>
+            <div v-for="item in store.selections" :key="item.id" class="bg-[#1e293b] rounded border border-slate-700/50 hover:border-slate-600 transition-all group relative overflow-hidden">
+                
+                <button @click="store.removeSelection(item.id)" class="absolute top-0 right-0 p-1.5 text-slate-600 hover:text-red-500 transition-colors z-10 opacity-0 group-hover:opacity-100">
+                    <X class="w-3.5 h-3.5" />
+                </button>
 
-                    <div class="flex flex-col h-full justify-between">
-                        <div class="text-[10px] font-medium flex items-center gap-1 flex-wrap pr-8 mb-2 text-left w-full">
-                            <router-link 
-                                :to="{ name: 'event-details', params: { id: String(item.id).split('_')[0] } }" 
-                                class="text-gray-200 uppercase font-bold hover:text-blue-400 hover:underline transition-colors leading-tight"
-                                @click="emit('toggle')"
-                            >
-                                {{ truncateName(item.homeTeam) }} x {{ truncateName(item.awayTeam) }}
-                            </router-link>
+                <div class="p-2.5">
+                    <div class="pr-4 mb-1.5">
+                        <div class="text-[11px] font-bold text-white leading-tight truncate">
+                            {{ truncateName(item.homeTeam) }} 
+                            <span class="text-slate-500 font-normal">vs</span> 
+                            {{ truncateName(item.awayTeam) }}
                         </div>
-                        
-                        <div class="flex items-center justify-between mt-1 gap-2">
-                            <span class="bg-[#1e293b] text-[10px] text-gray-400 px-2 py-1.5 rounded uppercase font-bold tracking-wider text-left flex-1 truncate">
-                                {{ getMarketLabel(item.type, item.marketName) }}: <span class="text-blue-400">{{ item.selection }}</span>
-                            </span>
+                    </div>
+                    
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="flex flex-col min-w-0">
+                            <span class="text-[9px] text-slate-500 font-bold uppercase truncate">{{ getMarketLabel(item.type, item.marketName) }}</span>
+                            <span class="text-[11px] text-blue-400 font-bold truncate">{{ item.selection }}</span>
+                        </div>
 
-                            <span class="text-white font-bold bg-blue-600/20 text-blue-400 px-2 py-1.5 text-xs border border-blue-500/20 min-w-[50px] text-center rounded shrink-0">
-                                {{ (item.odds || 0).toFixed(2) }}
-                            </span>
+                        <div class="bg-[#0f172a] text-yellow-400 font-mono font-bold text-xs px-2 py-1 rounded border border-slate-700 shadow-inner">
+                            {{ (item.odds || 0).toFixed(2) }}
                         </div>
                     </div>
                 </div>
+                <div class="absolute left-0 top-0 bottom-0 w-[2px] bg-blue-500"></div>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="store.count > 0" class="bg-[#162032] border-t border-slate-700 p-3 shadow-[0_-4px_10px_rgba(0,0,0,0.5)] z-20">
+        
+        <div class="flex items-end justify-between mb-3 text-xs">
+            <div class="flex flex-col">
+                <span class="text-[10px] text-slate-500 uppercase font-bold tracking-wide">Odd Total</span>
+                <span class="text-yellow-400 font-bold font-mono text-sm bg-yellow-400/10 px-1.5 rounded w-fit">{{ (store.totalOdds || 0).toFixed(2) }}</span>
+            </div>
+            <div class="flex flex-col items-end">
+                <span class="text-[10px] text-slate-500 uppercase font-bold tracking-wide">Retorno Potencial</span>
+                <span class="text-green-400 font-bold font-mono text-sm bg-green-400/10 px-1.5 rounded">
+                    {{ formatCurrency(potentialReturn) }}
+                </span>
             </div>
         </div>
 
-        <div class="p-4 bg-[#162032] border-t border-gray-700 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.3)] z-10">
-            <div class="space-y-2 mb-4 text-sm">
-                <div class="flex justify-between text-gray-400 items-center">
-                    <span>Retorno Potencial:</span>
-                    <span class="text-green-400 font-bold text-lg">R$ {{ potentialReturn }}</span>
-                </div>
+        <div class="relative mb-3 group">
+            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <span class="text-slate-500 font-bold text-xs">R$</span>
             </div>
+            
+            <input 
+                v-model="stake" 
+                type="number" 
+                placeholder="Valor da Aposta" 
+                :disabled="!isUserLoggedIn" 
+                class="w-full bg-[#0b1120] text-white text-sm font-bold border border-slate-700 rounded pl-9 pr-3 py-2.5 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all placeholder:text-slate-600 disabled:opacity-50"
+                :class="stakeError ? 'border-red-500 animate-shake' : ''"
+            />
 
-            <div class="mb-4 flex gap-2 h-[50px]">
-                <div class="bg-[#0f172a] border border-gray-600 rounded-lg px-3 flex flex-col justify-center items-center min-w-[85px]">
-                    <span class="text-[10px] text-gray-500 uppercase font-bold leading-none mb-1">Valor Odd</span>
-                    <span class="text-yellow-400 font-bold text-lg leading-none">{{ (store.totalOdds || 0).toFixed(2) }}</span>
-                </div>
-
-                <div class="relative group flex-1 h-full">
-                    
-                    <span 
-                        v-if="stakeError" 
-                        class="absolute -top-6 left-0 text-[#ff5555] text-[10px] font-bold bg-[#ff5555]/10 px-2 py-0.5 rounded border border-[#ff5555]/20 flex items-center gap-1 animate-pulse z-20"
-                    >
-                        <AlertCircle class="w-3 h-3" /> Digite um valor válido!
-                    </span>
-
-                    <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-bold">R$</span>
-                    <input 
-                        v-model="stake" 
-                        type="number" 
-                        placeholder="0.00" 
-                        :disabled="!isUserLoggedIn" 
-                        class="w-full h-full bg-[#0f172a] border rounded-lg pl-10 pr-4 text-white font-bold focus:outline-none transition-all disabled:opacity-50"
-                        :class="stakeError ? 'border-red-500 focus:border-red-500 text-red-100' : 'border-gray-600 focus:border-blue-500'"
-                    >
-                </div>
-            </div>
-
-            <button @click="handlePlaceBet" :disabled="isLoading || store.count === 0" class="w-full py-3.5 rounded-lg font-bold uppercase tracking-wide transition-all transform active:scale-[0.98] disabled:opacity-50 flex justify-center items-center gap-2" :class="store.count > 0 ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-gray-700 text-gray-400'">
-                <Loader2 v-if="isLoading" class="w-5 h-5 animate-spin" />
-                <span v-else>{{ isUserLoggedIn ? 'FAZER APOSTA' : 'ENTRE PARA APOSTAR' }}</span>
-            </button>
+            <span v-if="stakeError" class="absolute right-3 top-1/2 -translate-y-1/2 text-red-500 flex items-center gap-1 text-[10px] font-bold">
+                <AlertCircle class="w-3 h-3" /> Inválido
+            </span>
         </div>
+
+        <button 
+            @click="handlePlaceBet" 
+            :disabled="isLoading || store.count === 0" 
+            class="w-full py-2.5 rounded bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-400 text-white font-bold text-xs uppercase tracking-widest shadow-lg shadow-green-900/20 transition-all transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2 border border-green-400/20"
+        >
+            <Loader2 v-if="isLoading" class="w-4 h-4 animate-spin" />
+            <span v-else>{{ isUserLoggedIn ? 'CONFIRMAR APOSTA' : 'ENTRE PARA APOSTAR' }}</span>
+        </button>
+
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Scrollbar fina para o cupom */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #0f172a; 
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #334155; 
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #475569; 
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+.animate-shake {
+  animation: shake 0.3s ease-in-out;
+}
+</style>

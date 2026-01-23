@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { Play, Clock, ArrowLeft } from 'lucide-vue-next';
+// 🔥 CORREÇÃO: Adicionado AlertCircle e removidos Play/Clock
+import { ArrowLeft, ChevronDown, ChevronRight, Calendar, AlertCircle } from 'lucide-vue-next';
 import SportsService from '../services/SportsService';
 import TeamLogo from '../components/TeamLogo.vue';
 import { useBetStore, type BetType } from '../stores/useBetStore';
@@ -313,74 +314,103 @@ const handleImageError = (event: Event) => {
 </script>
 
 <template>
-  <div class="space-y-4 pb-20">
-    <div class="flex flex-col md:flex-row md:items-center gap-4 pb-2">
-      <div class="flex items-center gap-3">
-        <button v-if="leagueFilter" @click="router.push({ name: 'sport-events', params: { id: sportKey } })" class="bg-stake-card p-2 rounded hover:bg-white/10 text-white transition">
-          <ArrowLeft class="w-5 h-5" />
+  <div class="space-y-2 pt-2 pb-20">
+    
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-2 pb-1.5 border-b border-stake-dark/50">
+      
+      <div class="flex items-center gap-2">
+        <button v-if="leagueFilter" @click="router.push({ name: 'sport-events', params: { id: sportKey } })" class="bg-stake-card p-1.5 rounded hover:bg-white/10 text-white transition">
+          <ArrowLeft class="w-4 h-4" />
         </button>
-        <h2 class="text-white text-xl font-bold uppercase italic whitespace-nowrap">
-          <span class="text-stake-blue">#</span> {{ leagueFilter || traduzirEsporte(sportKey) }}
+        <div class="bg-blue-500/10 p-1 rounded-full animate-pulse">
+            <Calendar class="w-4 h-4 text-blue-500" />
+        </div>
+        <h2 class="text-white text-sm font-bold uppercase italic whitespace-nowrap tracking-wide">
+          {{ leagueFilter || traduzirEsporte(sportKey) }}
         </h2>
       </div>
-      <div class="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+
+      <div class="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
         <button v-for="data in datasFiltro" :key="data.valor" @click="dataSelecionada = data.valor"
-          :class="['px-4 py-1.5 rounded font-bold text-[11px] uppercase whitespace-nowrap transition', dataSelecionada === data.valor ? 'bg-stake-blue text-white' : 'bg-stake-card text-stake-text hover:bg-stake-hover']">
+          :class="['px-3 py-1 rounded-[4px] font-bold text-[10px] uppercase whitespace-nowrap transition', dataSelecionada === data.valor ? 'bg-stake-blue text-white shadow-sm' : 'bg-stake-card text-stake-text hover:bg-stake-hover']">
           {{ data.label }}
         </button>
       </div>
     </div>
 
-    <div v-if="loading" class="space-y-3">
-        <div v-for="i in 5" :key="i" class="bg-stake-card h-24 rounded animate-pulse border border-white/5"></div>
+    <div v-if="loading" class="space-y-3 pt-2">
+        <div v-for="i in 5" :key="i" class="bg-stake-card h-20 rounded animate-pulse border border-white/5"></div>
     </div>
 
-    <div v-else class="space-y-4">
+    <div v-else class="space-y-3 pt-2">
       
       <div v-if="Object.keys(groupedEvents).length === 0" class="py-10 text-center text-stake-text opacity-50 border border-dashed border-stake-text/20 rounded">
-        <p>Nenhum jogo carregado para esta data.</p>
-        <button @click="fetchEvents(false)" class="mt-3 text-stake-blue font-bold text-xs hover:underline cursor-pointer">
-            Buscar mais jogos...
+        <AlertCircle class="w-8 h-8 mb-2 opacity-50 mx-auto"/>
+        <p class="text-xs">Nenhum jogo encontrado para este filtro.</p>
+        <button @click="fetchEvents(false)" class="mt-2 text-stake-blue font-bold text-[10px] hover:underline cursor-pointer uppercase">
+            Atualizar Lista
         </button>
       </div>
 
       <div v-else v-for="(games, league) in groupedEvents" :key="league" class="rounded overflow-hidden">
+        
         <div @click="openLeagues.has(String(league)) ? openLeagues.delete(String(league)) : openLeagues.add(String(league))"
-          class="bg-stake-card p-3 flex items-center justify-between border-l-4 border-stake-blue cursor-pointer hover:brightness-110 transition-all select-none">
-          <div class="flex items-center gap-3">
+          class="bg-stake-card/60 backdrop-blur-sm p-2 flex items-center justify-between border-l-2 border-stake-blue cursor-pointer hover:bg-stake-card transition-all select-none">
+          <div class="flex items-center gap-2">
             
-            <img :src="getFlag(league, games[0]?.countryCode)" class="w-5 h-3.5 rounded-sm shadow-sm object-cover bg-black/20" @error="handleImageError" />
+            <img :src="getFlag(league, games[0]?.countryCode)" class="w-4 h-3 rounded-[1px] shadow-sm object-cover bg-black/20" @error="handleImageError" />
             
-            <h3 class="text-white font-bold text-sm uppercase">{{ league }}</h3>
-            <span v-if="countBetsInLeague(games) > 0" class="bg-yellow-500 text-black text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full ml-1">{{ countBetsInLeague(games) }}</span>
+            <h3 class="text-white font-bold text-xs uppercase tracking-wide">{{ league }}</h3>
+            
+            <span v-if="countBetsInLeague(games) > 0" class="bg-yellow-500 text-black text-[10px] font-black w-4 h-4 flex items-center justify-center rounded-full ml-1 animate-pulse">{{ countBetsInLeague(games) }}</span>
+            <span v-else class="text-[9px] text-stake-text/60 font-bold bg-black/20 px-1.5 py-0.5 rounded-full">{{ games.length }}</span>
           </div>
-          <Play fill="currentColor" class="w-3.5 h-3.5 text-stake-text transition-transform duration-300" :class="{'rotate-90': openLeagues.has(String(league))}" />
+          <component :is="openLeagues.has(String(league)) ? ChevronDown : ChevronRight" class="w-4 h-4 text-stake-text" />
         </div>
 
-        <div v-show="openLeagues.has(String(league))" class="bg-stake-dark border-x border-b border-stake-card/30">
-          <div v-for="game in games" :key="getGameId(game)" class="p-4 border-b border-stake-card/30 flex flex-col md:flex-row items-center gap-4 transition-all hover:bg-[#B6FF00]/[0.05]">
-            <div class="flex flex-col items-center min-w-[70px]">
-              <div class="text-[10px] font-bold text-stake-blue mb-0.5">{{ formatDate(game.commenceTime || game.CommenceTime) }}</div>
-              <div class="flex items-center gap-1 text-white text-sm font-bold"><Clock class="w-3 h-3 text-stake-text" /> {{ formatTime(game.commenceTime || game.CommenceTime) }}</div>
+        <div v-show="openLeagues.has(String(league))" class="bg-stake-dark border-x border-b border-stake-card/20">
+          <div v-for="game in games" :key="getGameId(game)" class="py-2 px-2 border-b border-white/5 flex flex-col md:flex-row items-center gap-2 transition-all hover:bg-[#B6FF00]/[0.02]">
+            
+            <div class="flex flex-row md:flex-col items-center justify-start md:justify-center gap-2 md:gap-0.5 min-w-[60px] md:w-[60px] text-left md:text-center mr-2 md:mr-0 border-r md:border-r-0 md:border-b-0 border-white/10 pr-2 md:pr-0 h-full">
+              <div class="text-[9px] font-bold text-stake-blue leading-none">{{ formatDate(game.commenceTime || game.CommenceTime) }}</div>
+              <div class="text-white text-[10px] font-bold leading-none">{{ formatTime(game.commenceTime || game.CommenceTime) }}</div>
             </div>
-            <div class="flex-1 w-full text-white cursor-pointer hover:text-stake-blue transition-colors" @click="router.push({ name: 'event-details', params: { id: getGameId(game) } })">
-              <div class="flex items-center gap-2 mb-2"><TeamLogo :teamName="game.homeTeam || game.HomeTeam || ''" :remoteUrl="game.homeTeamLogo" size="w-5 h-5" /><span class="font-bold text-sm">{{ game.homeTeam || game.HomeTeam }}</span></div>
-              <div class="flex items-center gap-2"><TeamLogo :teamName="game.awayTeam || game.AwayTeam || ''" :remoteUrl="game.awayTeamLogo" size="w-5 h-5" /><span class="font-bold text-sm">{{ game.awayTeam || game.AwayTeam }}</span></div>
+
+            <div class="flex-1 w-full text-white cursor-pointer hover:text-stake-blue transition-colors md:border-l md:border-white/5 md:pl-3" @click="router.push({ name: 'event-details', params: { id: getGameId(game) } })">
+              <div class="flex flex-col gap-1.5 justify-center h-full">
+                  <div class="flex items-center gap-2">
+                      <TeamLogo :teamName="game.homeTeam || game.HomeTeam || ''" :remoteUrl="game.homeTeamLogo" size="w-4 h-4" />
+                      <span class="font-medium text-xs text-white/90 truncate">{{ game.homeTeam || game.HomeTeam }}</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                      <TeamLogo :teamName="game.awayTeam || game.AwayTeam || ''" :remoteUrl="game.awayTeamLogo" size="w-4 h-4" />
+                      <span class="font-medium text-xs text-white/90 truncate">{{ game.awayTeam || game.AwayTeam }}</span>
+                  </div>
+              </div>
             </div>
-            <div class="flex gap-2 w-full md:w-auto">
+
+            <div class="flex gap-1 w-full md:w-auto mt-2 md:mt-0">
               <button v-for="type in betTypesToShow" :key="type" @click.stop="handleSelection(game, type)" :disabled="parseFloat(getOdd(game, type)) <= 1.0"
-                :class="['flex-1 md:w-24 py-2 rounded flex flex-col items-center justify-center border transition-all active:scale-95 group', parseFloat(getOdd(game, type)) <= 1.0 ? 'opacity-50 cursor-not-allowed bg-stake-card border-transparent' : getSelectedType(getGameId(game)) === type ? 'bg-stake-blue border-stake-blue' : 'bg-stake-card border-transparent hover:border-stake-text/30']">
-                <span :class="['text-[10px] font-bold mb-0.5', getSelectedType(getGameId(game)) === type ? 'text-white' : 'text-stake-text']">{{ type === '1' ? 'Casa' : type === '2' ? 'Fora' : 'Empate' }}</span>
-                <span class="text-sm font-bold text-white">{{ getOdd(game, type) }}</span>
+                :class="['flex-1 md:w-[70px] h-auto py-1.5 rounded-sm flex flex-col items-center justify-center border border-transparent transition-all active:scale-95 group relative overflow-hidden', 
+                parseFloat(getOdd(game, type)) <= 1.0 ? 'opacity-50 cursor-not-allowed bg-stake-card border-transparent' : getSelectedType(getGameId(game)) === type ? 'bg-stake-blue shadow-[0_0_8px_rgba(0,146,255,0.4)]' : 'bg-stake-card hover:bg-stake-card/80']">
+                
+                <span :class="['text-[9px] font-bold uppercase mb-0.5 tracking-wide', getSelectedType(getGameId(game)) === type ? 'text-white' : 'text-stake-text/70']">
+                    {{ type === '1' ? 'Casa' : type === '2' ? 'Fora' : 'Empate' }}
+                </span>
+                
+                <span :class="['text-xs font-bold transition-colors leading-none', getSelectedType(getGameId(game)) === type ? 'text-white' : 'text-white group-hover:text-stake-blue']">
+                    {{ getOdd(game, type) }}
+                </span>
               </button>
             </div>
+
           </div>
         </div>
       </div>
 
-      <div ref="loadTrigger" class="h-20 flex items-center justify-center py-4">
-          <div v-if="loadingMore" class="flex items-center gap-2 text-stake-blue font-bold text-xs uppercase animate-pulse">
-              <div class="w-2 h-2 bg-stake-blue rounded-full animate-bounce"></div> Carregando mais jogos...
+      <div ref="loadTrigger" class="h-16 flex items-center justify-center py-4">
+          <div v-if="loadingMore" class="flex items-center gap-2 text-stake-blue font-bold text-[10px] uppercase animate-pulse">
+              <div class="w-1.5 h-1.5 bg-stake-blue rounded-full animate-bounce"></div> Carregando...
           </div>
       </div>
 
