@@ -106,7 +106,7 @@
                   
                   <div class="flex items-center flex-wrap gap-1.5 text-xs">
                     <span class="text-slate-500 font-bold uppercase text-[10px] tracking-wide bg-slate-800/50 px-1.5 py-0.5 rounded">
-                        {{ sel.marketName }}
+                        {{ formatMarketName(sel.marketName) }}
                     </span>
                     <span class="text-slate-600">👉</span>
                     <span class="font-bold text-blue-400 border-b border-blue-400/20 pb-0.5">
@@ -204,6 +204,17 @@ const formatDate = (dateString: string) => {
   if (!dateString || dateString.startsWith('0001')) return '--/--';
   const date = new Date(dateString);
   return date.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+};
+
+// --- CORREÇÃO: TRADUÇÃO DE NOME DE MERCADO ---
+const formatMarketName = (name: string) => {
+  if (!name) return '';
+  const clean = name.toLowerCase().trim();
+  // Se for "1x2" ou variações, retorna o padrão visual do Cupom
+  if (clean === '1x2' || clean === 'match winner' || clean === 'moneyline') {
+    return 'Resultado Final';
+  }
+  return name;
 };
 
 // --- LÓGICA DE STATUS ---

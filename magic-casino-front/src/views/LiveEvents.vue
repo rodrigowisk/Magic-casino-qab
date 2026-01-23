@@ -170,7 +170,6 @@ onMounted(async () => {
   });
 
   // 2. 🔥 NOVO: JOGO ENTROU NO AO VIVO (GameWentLive) 🔥
-  // Isso resolve o Warning "No client method with the name 'gamewentlive' found"
   connection.on('GameWentLive', (newGames: any[]) => {
       if (!newGames || !Array.isArray(newGames)) return;
       
@@ -192,7 +191,6 @@ onMounted(async () => {
       });
       
       if (addedCount > 0) {
-          // Opcional: Reordenar ou feedback visual
           console.log(`✅ Adicionados ${addedCount} jogos à lista.`);
       }
   });
@@ -310,76 +308,91 @@ const getOddRaw = (game: LiveGame, type: string) => { if (type === '1') return g
     <div class="space-y-4 pt-4">
 
         <div class="flex items-center gap-2 pb-2 border-b border-stake-dark/50">
-            <div class="bg-red-500/10 p-2 rounded-full animate-pulse">
-                <Radio class="w-6 h-6 text-red-500" />
+            <div class="bg-red-500/10 p-1.5 rounded-full animate-pulse">
+                <Radio class="w-5 h-5 text-red-500" />
             </div>
-            <h2 class="text-white text-2xl font-bold uppercase italic tracking-wide">
-                AO VIVO
+            <h2 class="text-white text-lg font-bold uppercase italic tracking-wide">
+                Jogos Ao Vivo
             </h2>
         </div>
 
-        <div v-if="loading" class="text-stake-text animate-pulse pl-2 mt-4">Carregando jogos ao vivo...</div>
+        <div v-if="loading" class="text-stake-text animate-pulse pl-2 mt-4 text-sm">Carregando jogos ao vivo...</div>
 
-        <div v-else class="space-y-4">
-            <div v-if="filteredEvents.length === 0" class="py-12 flex flex-col items-center justify-center text-stake-text opacity-50 border border-dashed border-stake-text/20 rounded-lg bg-stake-card/30">
-                <AlertCircle class="w-10 h-10 mb-2 opacity-50"/>
-                <span class="text-sm font-bold">Nenhum jogo ao vivo nesta categoria.</span>
+        <div v-else class="space-y-3">
+            <div v-if="filteredEvents.length === 0" class="py-8 flex flex-col items-center justify-center text-stake-text opacity-50 border border-dashed border-stake-text/20 rounded-lg bg-stake-card/30">
+                <AlertCircle class="w-8 h-8 mb-2 opacity-50"/>
+                <span class="text-xs font-bold">Nenhum jogo ao vivo nesta categoria.</span>
             </div>
             
             <div v-else v-for="(games, league) in groupedEvents" :key="league" class="rounded overflow-hidden">
-                <div @click="openLeagues.has(String(league)) ? openLeagues.delete(String(league)) : openLeagues.add(String(league))" class="bg-stake-card p-3 flex items-center justify-between border-l-4 border-stake-blue cursor-pointer hover:brightness-110 transition-all select-none">
-                    <div class="flex items-center gap-3">
-                        <img :src="getFlagUrl(games[0])" class="w-5 h-3.5 rounded-sm shadow-sm bg-black/20" @error="handleImageError" />
-                        <h3 class="text-white font-bold text-sm uppercase">{{ league }}</h3>
-                        <span class="text-xs text-stake-text/60 font-bold bg-black/20 px-2 py-0.5 rounded-full">{{ games.length }}</span>
+                <div @click="openLeagues.has(String(league)) ? openLeagues.delete(String(league)) : openLeagues.add(String(league))" class="bg-stake-card/60 backdrop-blur-sm p-2 flex items-center justify-between border-l-2 border-stake-blue cursor-pointer hover:bg-stake-card transition-all select-none">
+                    <div class="flex items-center gap-2">
+                        <img :src="getFlagUrl(games[0])" class="w-4 h-3 rounded-[1px] shadow-sm" @error="handleImageError" />
+                        <h3 class="text-white font-bold text-xs uppercase tracking-wide">{{ league }}</h3>
+                        <span class="text-[10px] text-stake-text/60 font-bold bg-black/20 px-1.5 py-0.5 rounded-full">{{ games.length }}</span>
                     </div>
-                    <component :is="openLeagues.has(String(league)) ? ChevronDown : ChevronRight" class="w-5 h-5 text-stake-text" />
+                    <component :is="openLeagues.has(String(league)) ? ChevronDown : ChevronRight" class="w-4 h-4 text-stake-text" />
                 </div>
 
-                <div v-show="openLeagues.has(String(league))" class="bg-stake-dark border-x border-b border-stake-card/30">
-                    <div v-for="game in games" :key="game.gameId" class="p-4 border-b border-stake-card/30 flex flex-col md:flex-row items-center gap-4 transition-all relative group hover:bg-[#B6FF00]/[0.05]">
+                <div v-show="openLeagues.has(String(league))" class="bg-stake-dark border-x border-b border-stake-card/20">
+                    <div v-for="game in games" :key="game.gameId" class="py-2 px-2 border-b border-white/5 flex flex-col md:flex-row items-center gap-2 transition-all relative group hover:bg-[#B6FF00]/[0.02]">
                         
-                        <div class="flex flex-col items-center justify-center min-w-[80px]">
-                            <div v-if="isNumericTime(game.currentMinute)" class="flex items-center gap-1 text-[#00E701] font-bold mb-1">
-                                <Timer class="w-4 h-4 animate-pulse" />
-                                <span class="text-sm">{{ game.currentMinute }}'</span>
+                        <div class="flex flex-row md:flex-col items-center justify-start md:justify-center gap-2 md:gap-0.5 min-w-[60px] md:w-[60px] text-left md:text-center mr-2 md:mr-0 border-r md:border-r-0 md:border-b-0 border-white/10 pr-2 md:pr-0 h-full">
+                            
+                            <div v-if="isNumericTime(game.currentMinute)" class="text-[#00E701] font-bold text-xs">
+                                {{ game.currentMinute }}'
                             </div>
-                            <div v-else class="flex items-center gap-1 text-red-500 font-bold mb-1">
-                                <Radio class="w-4 h-4 animate-pulse" />
-                                <span class="text-[10px] uppercase">AO VIVO</span>
+                            <div v-else class="text-[#00E701] font-bold text-[10px] uppercase">
+                                LIVE
                             </div>
-                            <div class="text-[9px] text-stake-text/70 uppercase font-bold tracking-wider">{{ game.period || 'JOGANDO' }}</div>
-                        </div>
 
-                        <div class="flex-1 w-full text-white cursor-pointer" @click="goToDetails(game.gameId)">
-                            <div class="flex items-center justify-between mb-2 group-hover:text-stake-blue transition-colors">
-                                <div class="flex items-center gap-2">
-                                    <TeamLogo :teamName="game.homeTeam" :remoteUrl="game.homeTeamLogo" size="w-5 h-5" />
-                                    <span class="font-bold text-sm">{{ game.homeTeam }}</span>
+                            <div class="flex items-center gap-1.5 justify-center">
+                                <span class="relative flex h-1.5 w-1.5">
+                                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+                                  <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500"></span>
+                                </span>
+                                <div class="text-[9px] text-stake-text/60 uppercase font-bold tracking-wider hidden md:block">
+                                    {{ game.period || 'VIVO' }}
                                 </div>
-                                <div class="flex items-center gap-2">
-                                    <span :class="['font-mono font-bold text-base px-2.5 py-0.5 rounded min-w-[2rem] text-center transition-colors bg-black/20', game.homeScore > 0 ? 'text-yellow-400' : 'text-stake-blue']">{{ game.homeScore }}</span>
-                                </div>
-                            </div>
-                            <div class="flex items-center justify-between group-hover:text-stake-blue transition-colors">
-                                <div class="flex items-center gap-2">
-                                    <TeamLogo :teamName="game.awayTeam" :remoteUrl="game.awayTeamLogo" size="w-5 h-5" />
-                                    <span class="font-bold text-sm">{{ game.awayTeam }}</span>
-                                </div>
-                                <span :class="['font-mono font-bold text-base px-2.5 py-0.5 rounded min-w-[2rem] text-center transition-colors bg-black/20', game.awayScore > 0 ? 'text-yellow-400' : 'text-stake-blue']">{{ game.awayScore }}</span>
                             </div>
                         </div>
 
-                        <div class="flex gap-2 w-full md:w-auto">
+                        <div class="flex-1 w-full text-white cursor-pointer md:border-l md:border-white/5 md:pl-3" @click="goToDetails(game.gameId)">
+                            <div class="flex flex-col gap-1.5 justify-center h-full">
+                                <div class="flex items-center gap-2">
+                                    <span :class="['font-mono font-bold text-xs w-5 text-center', game.homeScore > 0 ? 'text-white' : 'text-white/40']">{{ game.homeScore }}</span>
+                                    <TeamLogo :teamName="game.homeTeam" :remoteUrl="game.homeTeamLogo" size="w-4 h-4" />
+                                    <span class="font-medium text-xs text-white/90 truncate">{{ game.homeTeam }}</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span :class="['font-mono font-bold text-xs w-5 text-center', game.awayScore > 0 ? 'text-white' : 'text-white/40']">{{ game.awayScore }}</span>
+                                    <TeamLogo :teamName="game.awayTeam" :remoteUrl="game.awayTeamLogo" size="w-4 h-4" />
+                                    <span class="font-medium text-xs text-white/90 truncate">{{ game.awayTeam }}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex gap-1 w-full md:w-auto mt-2 md:mt-0">
                             <button v-for="type in getBetTypes(game)" :key="type" @click.stop="handleSelection(game, type as BetType)" :disabled="isMarketSuspended(getOddRaw(game, type))"
-                                :class="['flex-1 md:w-24 py-2 rounded flex flex-col items-center justify-center border transition-all active:scale-95 group relative overflow-hidden', isMarketSuspended(getOddRaw(game, type)) ? 'bg-stake-card/50 border-transparent opacity-60 cursor-not-allowed' : isSelected(game, type as BetType) ? 'bg-stake-blue border-stake-blue shadow-[0_0_10px_rgba(0,231,1,0.4)]' : 'bg-stake-card border-transparent hover:border-stake-text/30', getOddFlash(game, type) ? 'animate-flash' : '']">
-                                <span :class="['text-[10px] font-bold mb-0.5 uppercase tracking-wide', isSelected(game, type as BetType) ? 'text-white' : 'text-stake-text']">{{ type === '1' ? 'Casa' : type === '2' ? 'Fora' : 'Empate' }}</span>
-                                <div class="flex items-center gap-1 justify-center min-h-[20px]">
-                                    <Lock v-if="isMarketSuspended(getOddRaw(game, type))" class="w-4 h-4 text-stake-text/50" />
+                                :class="['flex-1 md:w-[70px] h-auto py-1.5 rounded-sm flex flex-col items-center justify-center border border-transparent transition-all active:scale-95 group relative overflow-hidden', 
+                                isMarketSuspended(getOddRaw(game, type)) ? 'bg-stake-card/30 opacity-50 cursor-not-allowed' : isSelected(game, type as BetType) ? 'bg-stake-blue shadow-[0_0_8px_rgba(0,146,255,0.4)]' : 'bg-stake-card hover:bg-stake-card/80', 
+                                getOddFlash(game, type) ? 'animate-flash' : '']">
+                                
+                                <span :class="['text-[9px] font-bold uppercase mb-0.5 tracking-wide', isSelected(game, type as BetType) ? 'text-white' : 'text-stake-text/70']">
+                                    {{ type === '1' ? 'Casa' : type === '2' ? 'Fora' : 'Empate' }}
+                                </span>
+
+                                <div class="flex items-center gap-1 justify-center w-full">
+                                    <Lock v-if="isMarketSuspended(getOddRaw(game, type))" class="w-3 h-3 text-stake-text/50" />
                                     <template v-else>
-                                        <ArrowUp v-if="getOddDirection(game, type) === 'up'" class="w-3 h-3 text-[#00E701]" />
-                                        <ArrowDown v-if="getOddDirection(game, type) === 'down'" class="w-3 h-3 text-red-500" />
-                                        <span :class="['text-sm font-black transition-colors', isSelected(game, type as BetType) ? 'text-white' : 'text-white group-hover:scale-110', getOddDirection(game, type) === 'up' ? 'text-[#00E701]' : '', getOddDirection(game, type) === 'down' ? 'text-red-500' : '']">{{ getOddValue(game, type) }}</span>
+                                         <ArrowUp v-if="getOddDirection(game, type) === 'up'" class="w-2.5 h-2.5 text-[#00E701]" />
+                                         <ArrowDown v-if="getOddDirection(game, type) === 'down'" class="w-2.5 h-2.5 text-red-500" />
+                                         <span :class="['text-xs font-bold transition-colors leading-none', 
+                                            isSelected(game, type as BetType) ? 'text-white' : 'text-white group-hover:text-stake-blue', 
+                                            getOddDirection(game, type) === 'up' ? 'text-[#00E701]' : '', 
+                                            getOddDirection(game, type) === 'down' ? 'text-red-500' : '']">
+                                            {{ getOddValue(game, type) }}
+                                         </span>
                                     </template>
                                 </div>
                             </button>
@@ -395,8 +408,8 @@ const getOddRaw = (game: LiveGame, type: string) => { if (type === '1') return g
 
 <style scoped>
 @keyframes flash-white {
-    0% { background-color: rgba(255, 255, 255, 0.8); border-color: white; }
-    100% { background-color: inherit; border-color: inherit; }
+    0% { background-color: rgba(255, 255, 255, 0.3); }
+    100% { background-color: inherit; }
 }
-.animate-flash { animation: flash-white 0.8s ease-out; }
+.animate-flash { animation: flash-white 0.5s ease-out; }
 </style>
