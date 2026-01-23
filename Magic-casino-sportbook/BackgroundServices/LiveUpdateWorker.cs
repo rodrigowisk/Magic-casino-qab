@@ -12,7 +12,7 @@ namespace Magic_casino_sportbook.BackgroundServices
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<LiveUpdateWorker> _logger;
 
-        // Intervalos ajustados para economia e performance
+        // Intervalos ajustados
         private const int DELAY_LIVE_MS = 10000; // 10s (Atualiza placar\odd)
         private const int DELAY_HOT_MS = 60000;  // 60s (Verifica novos jogos)
 
@@ -24,10 +24,13 @@ namespace Magic_casino_sportbook.BackgroundServices
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("🔥 [LIVE WORKER] Iniciado v4.0 (Multiesporte - API Check).");
+            _logger.LogInformation("🔥 [LIVE WORKER] Iniciado v4.1 (Correção Contexto + Transição Suave).");
             await Task.WhenAll(ProcessLiveZone(stoppingToken), ProcessHotZone(stoppingToken));
         }
 
+        // ==============================================================================
+        // 🔄 ZONA 1: JOGOS QUE JÁ ESTÃO AO VIVO (Atualiza Odds/Placar)
+        // ==============================================================================
         private async Task ProcessLiveZone(CancellationToken ct)
         {
             while (!ct.IsCancellationRequested)
@@ -40,39 +43,38 @@ namespace Magic_casino_sportbook.BackgroundServices
                         var liveService = scope.ServiceProvider.GetRequiredService<LiveSportService>();
                         var hub = scope.ServiceProvider.GetRequiredService<IHubContext<GameHub>>();
 
-                        // 🔍 ALTERAÇÃO 1: Removido filtro de "Soccer". Agora pega TUDO.
-                        // O "LiveSportService" já sabe lidar com cada esporte.
+                        // Busca jogos que já estão rolando
                         var liveGames = await context.SportsEvents
                             .Where(g => g.Status == "Live")
-                            .OrderBy(g => g.LastUpdate) // Garante rotação
-                            .Take(15) // Aumentei levemente o lote para garantir cobertura
+                            .OrderBy(g => g.LastUpdate)
+                            .Take(20) // Lote seguro
                             .ToListAsync(ct);
 
                         if (liveGames.Any())
                         {
-                            // 1. Vai na API, atualiza placar e identifica quem ACABOU
-                            // O método retorna a lista de IDs que viraram "Ended"
-                            // Nota: Se você atualizou o UpdateLiveGamesAsync para pedir IServiceProvider, altere aqui.
-                            // Mantive 'context' conforme seu código original para compatibilidade, 
-                            // mas o ideal é usar o ServiceProvider para criar escopos isolados no serviço.
+                            // 1. Atualiza dados na API (Odds, Placar, Tempo)
+                            // Retorna IDs dos jogos que acabaram de encerrar
                             var endedGameIds = await liveService.UpdateLiveGamesAsync(liveGames, context);
 
-                            // 2. Salva as alterações (Placar novo ou Status Ended) no banco
+                            // 2. Persiste alterações (Importante para salvar placar final ou status Ended)
                             await context.SaveChangesAsync(ct);
 
-                            // 3. Envia atualização de Odds/Placar para quem está na página
-                            await hub.Clients.All.SendAsync("LiveOddsUpdate", liveGames.Select(g => new
+                            // 3. Envia o pacote leve de atualização para o Front (Só o que mudou)
+                            if (liveGames.Any(g => g.Status == "Live"))
                             {
-                                id = g.ExternalId,
-                                score = g.Score,
-                                time = !string.IsNullOrEmpty(g.GameTime) ? g.GameTime : "Live",
-                                status = g.Status,
-                                homeOdd = g.RawOddsHome,
-                                drawOdd = g.RawOddsDraw,
-                                awayOdd = g.RawOddsAway
-                            }), ct);
+                                await hub.Clients.All.SendAsync("LiveOddsUpdate", liveGames.Where(g => g.Status == "Live").Select(g => new
+                                {
+                                    id = g.ExternalId,
+                                    score = g.Score,
+                                    time = !string.IsNullOrEmpty(g.GameTime) ? g.GameTime : "Live",
+                                    status = g.Status,
+                                    homeOdd = g.RawOddsHome,
+                                    drawOdd = g.RawOddsDraw,
+                                    awayOdd = g.RawOddsAway
+                                }), ct);
+                            }
 
-                            // 4. 🔥 O GRANDE FINAL: Remove da tela os jogos encerrados
+                            // 4. Remove da tela os jogos que REALMENTE acabaram (Status virou Ended ou Cancelled)
                             if (endedGameIds != null && endedGameIds.Any())
                             {
                                 Console.WriteLine($"🏁 [SIGNALR] Removendo {endedGameIds.Count} jogos encerrados da tela.");
@@ -90,6 +92,9 @@ namespace Magic_casino_sportbook.BackgroundServices
             }
         }
 
+        // ==============================================================================
+        // 🚦 ZONA 2: JOGOS PRESTES A COMEÇAR (Transição Pré -> Live)
+        // ==============================================================================
         private async Task ProcessHotZone(CancellationToken ct)
         {
             while (!ct.IsCancellationRequested)
@@ -102,30 +107,44 @@ namespace Magic_casino_sportbook.BackgroundServices
                         var liveService = scope.ServiceProvider.GetRequiredService<LiveSportService>();
                         var hub = scope.ServiceProvider.GetRequiredService<IHubContext<GameHub>>();
 
-                        // 🔍 ALTERAÇÃO 2: Busca candidatos a Live
-                        // Adicionei .AddMinutes(5) para pegar jogos prestes a começar, permitindo
-                        // que a API valide se o jogo começou na hora ou um pouco antes.
+                        // 🔍 CORREÇÃO CRÍTICA 1: .AsNoTracking()
+                        // Necessário porque o LiveSportService abre um NOVO escopo/contexto internamente.
+                        // Sem isso, o EF trava dizendo que o objeto já está sendo rastreado.
                         var gamesToKickoff = await context.SportsEvents
+                            .AsNoTracking() // ✅ O PULO DO GATO
                             .Where(g => g.Status == "Prematch" &&
-                                    g.CommenceTime <= DateTime.UtcNow.AddMinutes(5) &&
-                                    g.CommenceTime > DateTime.UtcNow.AddHours(-3)) // Janela de segurança
+                                    g.CommenceTime <= DateTime.UtcNow.AddMinutes(5) && // Checa jogos de agora
+                                    g.CommenceTime > DateTime.UtcNow.AddHours(-3))     // Janela de segurança
                             .OrderBy(g => g.CommenceTime)
                             .Take(50)
                             .ToListAsync(ct);
 
                         if (gamesToKickoff.Any())
                         {
-                            // AQUI ESTÁ A CORREÇÃO SOLICITADA:
-                            // Não muda mais o status cegamente (CheckForKickoffAsync).
-                            // Consulta a API (VerifyKickoffWithApiAsync) para ver se está InPlay (1).
-                            // Passamos o scope.ServiceProvider para o serviço criar seu próprio cliente isolado.
-
+                            // Verifica na API 365 se o jogo realmente começou (Status InPlay = 1)
+                            // Retorna a lista de IDs que viraram "Live"
                             var newLiveIds = await liveService.VerifyKickoffWithApiAsync(gamesToKickoff, scope.ServiceProvider);
 
                             if (newLiveIds.Any())
                             {
-                                _logger.LogInformation($"🔥 [HOTZONE] {newLiveIds.Count} jogos confirmados LIVE pela API.");
-                                // Remove da lista "Pré-Jogo" do front (para o usuário dar F5 ou navegar pro Live)
+                                _logger.LogInformation($"🔥 [HOTZONE] {newLiveIds.Count} jogos confirmados LIVE.");
+
+                                // 🔍 CORREÇÃO CRÍTICA 2: Transição Suave
+                                // Antes de mandar remover, vamos buscar os dados atualizados e mandar "GameWentLive"
+                                // Assim o Front pode desenhar o card na aba "Ao Vivo" sem F5.
+
+                                var freshLiveGames = await context.SportsEvents
+                                    .AsNoTracking()
+                                    .Where(g => newLiveIds.Contains(g.ExternalId))
+                                    .ToListAsync(ct);
+
+                                if (freshLiveGames.Any())
+                                {
+                                    // 1. Envia o objeto completo para o Front ADICIONAR na lista de Ao Vivo
+                                    await hub.Clients.All.SendAsync("GameWentLive", freshLiveGames, ct);
+                                }
+
+                                // 2. Envia comando para REMOVER da lista de Pré-Jogo
                                 await hub.Clients.All.SendAsync("RemoveGames", newLiveIds, ct);
                             }
                         }

@@ -3,7 +3,6 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { Menu, Search, Wallet, LogOut, Trophy, ChevronLeft, Gem } from 'lucide-vue-next';
 
-// ✅ CORREÇÃO: Usando caminhos relativos (../) para garantir que o Vite encontre os arquivos
 import Sidebar from '../components/Sidebar.vue'; 
 import TopSportsMenu from '../components/TopSportsMenu.vue'; 
 import AuthModal from '../components/AuthModal.vue'; 
@@ -23,7 +22,7 @@ const isSidebarOpen = ref(true);
 const showAuthModal = ref(false);
 const isBetSlipOpen = ref(betStore.count > 0);
 
-// Lógica para esconder o TopSportsMenu em páginas específicas (como histórico)
+// Detecta se é a página de histórico
 const isHistoryPage = computed(() => route.path === '/minhas-apostas'); 
 
 const handleLogout = () => {
@@ -40,7 +39,6 @@ const toggleBetSlip = () => {
     isBetSlipOpen.value = !isBetSlipOpen.value;
 };
 
-// Abre o cupom automaticamente se adicionar aposta
 watch(
   () => betStore.count,
   (newCount, oldCount) => {
@@ -50,7 +48,6 @@ watch(
   }
 );
 
-// Responsividade: Fecha sidebar no mobile ao iniciar
 const checkScreenSize = () => {
     if (window.innerWidth < 768) {
         isSidebarOpen.value = false;
@@ -75,7 +72,6 @@ onUnmounted(() => {
     <AuthModal v-if="showAuthModal" @close="showAuthModal = false" @login-success="handleLoginSuccess" />
 
     <header class="h-16 bg-stake-card flex items-center justify-between px-4 shadow-lg sticky top-0 z-50 flex-shrink-0 border-b border-white/5">
-      
       <div class="flex items-center">
         <button @click="isSidebarOpen = !isSidebarOpen" class="hover:text-white transition-colors mr-2">
             <Menu class="w-6 h-6" />
@@ -87,19 +83,13 @@ onUnmounted(() => {
             style="font-family: 'Montserrat', sans-serif;"
         >
             <img v-if="configStore.siteLogo" :src="configStore.siteLogo" alt="Logo" class="h-12 md:h-14 object-contain" />
-            
             <div v-else class="flex items-center gap-2">
                 <div class="bg-gradient-to-br from-yellow-400 to-yellow-600 p-1.5 rounded-lg shadow-lg shadow-yellow-500/20 group-hover:shadow-yellow-500/40 transition-shadow">
                     <Gem class="w-5 h-5 text-gray-900 fill-current" />
                 </div>
-
                 <div class="flex flex-col justify-center">
-                    <span class="text-gray-300 font-bold text-[10px] uppercase tracking-[0.2em] leading-none mb-0.5">
-                        QUEBRANDO
-                    </span>
-                    <span class="text-xl md:text-2xl font-black italic text-transparent bg-clip-text bg-gradient-to-r from-yellow-200 via-yellow-400 to-yellow-600 drop-shadow-sm leading-none tracking-tight">
-                        A BANCA
-                    </span>
+                    <span class="text-gray-300 font-bold text-[10px] uppercase tracking-[0.2em] leading-none mb-0.5">QUEBRANDO</span>
+                    <span class="text-xl md:text-2xl font-black italic text-transparent bg-clip-text bg-gradient-to-r from-yellow-200 via-yellow-400 to-yellow-600 drop-shadow-sm leading-none tracking-tight">A BANCA</span>
                 </div>
             </div>
         </div>
@@ -128,9 +118,7 @@ onUnmounted(() => {
         </div>
         <div v-else class="flex items-center gap-3">
             <button @click="showAuthModal = true" class="font-bold text-gray-300 text-sm hover:text-white transition-colors px-2">Entrar</button>
-            <button @click="showAuthModal = true" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-md font-bold text-sm shadow-lg shadow-blue-900/50 transition-all transform hover:-translate-y-0.5">
-                Cadastre-se
-            </button>
+            <button @click="showAuthModal = true" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-md font-bold text-sm shadow-lg shadow-blue-900/50 transition-all transform hover:-translate-y-0.5">Cadastre-se</button>
         </div>
       </div>
     </header>
@@ -139,12 +127,15 @@ onUnmounted(() => {
       
       <Sidebar v-show="isSidebarOpen" class="w-64 flex-shrink-0 transition-all duration-300 border-r border-white/5" />
 
-      <main class="flex-1 overflow-y-auto bg-stake-dark custom-scrollbar p-4 md:p-6 relative transition-all duration-300">
+      <main 
+        class="flex-1 overflow-y-auto bg-stake-dark custom-scrollbar relative transition-all duration-300"
+        :class="isHistoryPage ? '!p-0' : 'p-4 md:p-6'"
+      >
         <div v-if="!isHistoryPage" class="w-full mb-6">
             <TopSportsMenu />
         </div>
         
-        <div class="w-full">
+        <div class="w-full h-full">
             <router-view />
         </div>
       </main>
@@ -173,10 +164,8 @@ onUnmounted(() => {
 </template>
 
 <style>
-/* Importação correta da fonte */
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;900&display=swap');
 
-/* Personalização da Barra de Rolagem */
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
   height: 6px;
