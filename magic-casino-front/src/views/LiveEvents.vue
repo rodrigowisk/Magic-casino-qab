@@ -67,37 +67,42 @@ const getSportCategory = (gameOrKey: LiveGame | string): string => {
     return cleanRaw || 'other'; 
 };
 
+// --- 🔥 NOVA FUNÇÃO: NORMALIZAR DADOS (REUTILIZÁVEL) ---
+const normalizeGame = (e: any): LiveGame => {
+    // Parse seguro do placar
+    let hScore = 0, aScore = 0;
+    if (e.score && e.score.includes('-')) {
+        const parts = e.score.split('-');
+        hScore = parseInt(parts[0]) || 0;
+        aScore = parseInt(parts[1]) || 0;
+    } else {
+        hScore = e.homeScore || 0;
+        aScore = e.awayScore || 0;
+    }
+
+    return {
+        ...e,
+        gameId: e.externalId || e.gameId, // Garante que pegamos o ID certo
+        sportKey: e.sportKey || 'soccer',
+        league: e.league || 'Ao Vivo',
+        currentMinute: e.gameTime || e.currentMinute || '0',
+        homeScore: hScore,
+        awayScore: aScore,
+        homeOdd: e.rawOddsHome ?? e.homeOdd ?? 0,
+        drawOdd: e.rawOddsDraw ?? e.drawOdd ?? 0,
+        awayOdd: e.rawOddsAway ?? e.awayOdd ?? 0,
+        period: e.status || e.period || 'Live'
+    };
+};
+
 // --- DATA FETCHING ---
 const fetchInitialData = async () => {
   try {
     const response = await axios.get('/sportbook/api/LiveEvents');
     
     if (response.data && Array.isArray(response.data)) {
-        events.value = response.data.map((e: any) => {
-            // Parse inicial seguro do placar
-            let hScore = 0, aScore = 0;
-            if (e.score && e.score.includes('-')) {
-                const parts = e.score.split('-');
-                hScore = parseInt(parts[0]) || 0;
-                aScore = parseInt(parts[1]) || 0;
-            } else {
-                hScore = e.homeScore || 0;
-                aScore = e.awayScore || 0;
-            }
-
-            return {
-                ...e,
-                gameId: e.externalId || e.gameId, 
-                sportKey: e.sportKey || 'soccer',
-                league: e.league || 'Ao Vivo',
-                currentMinute: e.gameTime || e.currentMinute || '0',
-                homeScore: hScore,
-                awayScore: aScore,
-                homeOdd: e.rawOddsHome ?? e.homeOdd ?? 0,
-                drawOdd: e.rawOddsDraw ?? e.drawOdd ?? 0,
-                awayOdd: e.rawOddsAway ?? e.awayOdd ?? 0
-            };
-        });
+        // Usa a função normalizadora
+        events.value = response.data.map(normalizeGame);
     } else {
         events.value = [];
     }
@@ -164,7 +169,35 @@ onMounted(async () => {
     });
   });
 
-  // 2. REMOÇÃO (RemoveGames)
+  // 2. 🔥 NOVO: JOGO ENTROU NO AO VIVO (GameWentLive) 🔥
+  // Isso resolve o Warning "No client method with the name 'gamewentlive' found"
+  connection.on('GameWentLive', (newGames: any[]) => {
+      if (!newGames || !Array.isArray(newGames)) return;
+      
+      console.log(`🔥 [SIGNALR] Recebido ${newGames.length} novos jogos ao vivo!`);
+      
+      let addedCount = 0;
+      newGames.forEach(rawGame => {
+          // Normaliza os dados (igual ao load inicial)
+          const newGame = normalizeGame(rawGame);
+          
+          // Verifica duplicidade
+          const exists = events.value.some(g => g.gameId === newGame.gameId);
+          if (!exists) {
+              events.value.push(newGame);
+              // Garante que a liga esteja aberta para o usuário ver o jogo
+              if (newGame.league) openLeagues.value.add(newGame.league);
+              addedCount++;
+          }
+      });
+      
+      if (addedCount > 0) {
+          // Opcional: Reordenar ou feedback visual
+          console.log(`✅ Adicionados ${addedCount} jogos à lista.`);
+      }
+  });
+
+  // 3. REMOÇÃO (RemoveGames)
   connection.on('RemoveGames', (endedIds: string[]) => {
       if (events.value.length > 0) {
           const initialCount = events.value.length;
@@ -238,14 +271,11 @@ const handleImageError = (event: Event) => { (event.target as HTMLImageElement).
 const isSelected = (game: LiveGame, type: BetType) => betStore.selections.find(s => s.id === game.gameId)?.type === type;
 const getOddValue = (game: LiveGame, type: string) => (type === '1' ? game.homeOdd : type === 'X' ? game.drawOdd : game.awayOdd).toFixed(2);
 
-// 🔥 CORREÇÃO APLICADA AQUI:
 const getBetTypes = (game: LiveGame) => {
     const sport = getSportCategory(game);
-    // Se for futebol, tem empate (3 opções)
     if (sport === 'soccer') {
         return ['1', 'X', '2'];
     }
-    // Qualquer outro esporte (basquete, tenis, etc), NÃO tem empate (2 opções)
     return ['1', '2'];
 };
 
