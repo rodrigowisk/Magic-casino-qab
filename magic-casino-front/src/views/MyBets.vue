@@ -91,27 +91,43 @@
                   </div>
 
                   <div class="text-[13px] text-slate-200 font-medium mb-2 flex items-center flex-wrap leading-snug">
-                    
                     <span class="mr-2">{{ sel.matchName }}</span>
-
                     <div v-if="sel.finalScore" class="flex items-center gap-2">
                         <span class="text-slate-600">|</span>
                         <span class="font-mono text-white font-bold bg-slate-700/50 px-1.5 rounded text-xs">
                         {{ sel.finalScore }}
                         </span>
                     </div>
-                    
                     <span v-if="sel.gameStatus === 'Live'" class="ml-2 text-[9px] font-bold text-red-500 animate-pulse bg-red-500/10 px-1.5 py-0.5 rounded border border-red-500/20">LIVE</span>
                   </div>
                   
                   <div class="flex items-center flex-wrap gap-1.5 text-xs">
+                    
+                    <div class="flex items-center justify-center w-4 h-4 mr-0.5">
+                        <svg v-if="sel.status === 'Won'" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-green-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        <svg v-if="sel.status === 'Lost'" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                        </div>
+
                     <span class="text-slate-500 font-bold uppercase text-[10px] tracking-wide bg-slate-800/50 px-1.5 py-0.5 rounded">
                         {{ formatMarketName(sel.marketName) }}
                     </span>
+                    
                     <span class="text-slate-600">👉</span>
-                    <span class="font-bold text-blue-400 border-b border-blue-400/20 pb-0.5">
+                    
+                    <span class="font-bold border-b border-transparent pb-0.5"
+                          :class="{
+                            'text-green-400': sel.status === 'Won',
+                            'text-red-400 line-through decoration-red-500/50': sel.status === 'Lost',
+                            'text-blue-400 border-blue-400/20': sel.status === 'pending'
+                          }">
                         {{ sel.selectionName }}
                     </span>
+
                   </div>
 
                 </div>
@@ -120,8 +136,9 @@
                   <span class="text-sm font-bold text-white bg-slate-700/50 px-2.5 py-1 rounded border border-slate-600/50 shadow-sm">
                     {{ sel.odd.toFixed(2) }}
                   </span>
-                  <span v-if="sel.status === 'Won'" class="text-[9px] text-green-500 mt-1.5 font-bold tracking-wider flex items-center gap-1"><span class="w-1 h-1 bg-green-500 rounded-full"></span> VENCEU</span>
-                  <span v-if="sel.status === 'Lost'" class="text-[9px] text-red-500 mt-1.5 font-bold tracking-wider flex items-center gap-1"><span class="w-1 h-1 bg-red-500 rounded-full"></span> PERDEU</span>
+                  
+                  <span v-if="sel.status === 'Won'" class="text-[9px] text-green-500 mt-1.5 font-bold tracking-wider flex items-center gap-1">VENCEU</span>
+                  <span v-if="sel.status === 'Lost'" class="text-[9px] text-red-500 mt-1.5 font-bold tracking-wider flex items-center gap-1">PERDEU</span>
                 </div>
               </div>
             </div>
@@ -206,11 +223,9 @@ const formatDate = (dateString: string) => {
   return date.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 };
 
-// --- CORREÇÃO: TRADUÇÃO DE NOME DE MERCADO ---
 const formatMarketName = (name: string) => {
   if (!name) return '';
   const clean = name.toLowerCase().trim();
-  // Se for "1x2" ou variações, retorna o padrão visual do Cupom
   if (clean === '1x2' || clean === 'match winner' || clean === 'moneyline') {
     return 'Resultado Final';
   }

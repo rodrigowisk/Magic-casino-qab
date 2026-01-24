@@ -368,6 +368,7 @@ namespace Magic_casino_sportbook.Services
             {
                 // Console.WriteLine($"📡 Enviando {updatesToSend.Count} updates via SignalR...");
                 await _hubContext.Clients.All.SendAsync("LiveOddsUpdate", updatesToSend);
+                await Task.Delay(100);
             }
         }
 

@@ -105,16 +105,39 @@ builder.Services.AddControllers();
 // Pega a conexão da variável de ambiente ou usa o padrão do Docker Compose
 var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION") ?? "redis:6379";
 
-// 4.1. Injeta o Cliente Redis (Para gravar Odds/Dados)
-// Isso permite usar IConnectionMultiplexer nos Services e Controllers
+// 4.1. Injeta o Cliente Redis (Para gravar Odds/Dados no Cache)
+// Configuração robusta para não morrer se o Redis reiniciar
 builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
-    ConnectionMultiplexer.Connect(ConfigurationOptions.Parse(redisConnectionString + ",abortConnect=false")));
-
-// 4.2. Configura o SignalR Backplane (Para Websockets Escalar)
-builder.Services.AddSignalR().AddStackExchangeRedis(o =>
 {
-    o.Configuration = ConfigurationOptions.Parse(redisConnectionString + ",abortConnect=false");
+    var config = ConfigurationOptions.Parse(redisConnectionString);
+    config.AbortOnConnectFail = false; // Não trava o boot se o Redis demorar
+    config.ConnectRetry = 10;
+    config.KeepAlive = 180;
+    return ConnectionMultiplexer.Connect(config);
 });
+
+// 4.2. Configura o SignalR Backplane (Para Websockets Escalar e Estável)
+// 🔥 CONFIGURAÇÃO CORRIGIDA PARA EVITAR "SOCKET CLOSED"
+builder.Services.AddSignalR()
+    .AddStackExchangeRedis(redisConnectionString, options => {
+        // Define um prefixo para não misturar canais
+        options.Configuration.ChannelPrefix = "SportbookUpdate";
+
+        // 🚨 O SEGREDO: Não deixa o app travar se o Redis piscar
+        options.Configuration.AbortOnConnectFail = false;
+
+        // Tenta reconectar até 20 vezes se cair
+        options.Configuration.ConnectRetry = 20;
+
+        // Mantém o "ping" entre o servidor e o Redis a cada 3 minutos (Evita timeout ocioso)
+        options.Configuration.KeepAlive = 180;
+
+        // Aumenta o tempo limite para pacotes grandes (Odds) não darem timeout
+        options.Configuration.SyncTimeout = 10000; // 10 segundos
+        options.Configuration.ConnectTimeout = 10000;
+
+        // Buffer de saída maior para aguentar o tranco das odds
+    });
 
 // =============================================================
 // 5. SWAGGER
