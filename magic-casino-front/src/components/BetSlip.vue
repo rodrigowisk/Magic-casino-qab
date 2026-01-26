@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue';
+import { ref, computed, watch, nextTick, onUnmounted } from 'vue';
 import { useBetStore } from '../stores/useBetStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import apiSports from '../services/apiSports'; 
-import { X, Trash2, Trophy, Loader2, ChevronRight, AlertCircle, ArrowRight } from 'lucide-vue-next'; // Adicionei ArrowRight
+import { X, Trash2, Trophy, Loader2, ChevronRight, AlertCircle, ArrowRight, Hourglass, StopCircle } from 'lucide-vue-next';
 import Swal from 'sweetalert2';
 
 defineProps<{ isOpen?: boolean }>();
@@ -12,8 +12,14 @@ const emit = defineEmits(['toggle']);
 const store = useBetStore();
 const authStore = useAuthStore();
 const stake = ref<number | null>(null);
-const isLoading = ref(false);
+const isLoading = ref(false); // Loading da requisição HTTP
 const stakeError = ref(false);
+
+// --- ESTADOS DO TIMER AO VIVO ---
+const isProcessingLive = ref(false); // Controla a tela de espera
+const countdown = ref(12); // Segundos iniciais
+const countdownTotal = 12;
+let timerInterval: any = null;
 
 // --- ESTADO PARA CONFLITO DE ODDS ---
 const oddConflict = ref<{
@@ -24,6 +30,11 @@ const oddConflict = ref<{
 } | null>(null);
 
 const selectionsContainer = ref<HTMLElement | null>(null);
+
+// Limpa timer se o componente desmontar
+onUnmounted(() => {
+    if (timerInterval) clearInterval(timerInterval);
+});
 
 watch(() => store.selections.length, async (newVal, oldVal) => {
   if (newVal > (oldVal || 0)) {
@@ -39,8 +50,6 @@ watch(() => store.selections.length, async (newVal, oldVal) => {
 
 watch(stake, () => {
     if (stakeError.value) stakeError.value = false;
-    // Se mexer no valor, limpa o erro de odd para não ficar travado visualmente
-    // (opcional, mas boa prática de UX)
 });
 
 const Toast = Swal.mixin({
@@ -64,6 +73,23 @@ const potentialReturn = computed(() => {
 });
 
 const isUserLoggedIn = computed(() => !!(authStore?.token && authStore?.user));
+
+// Verifica se existe algum jogo AO VIVO no cupom
+const hasLiveSelection = computed(() => {
+    const now = new Date();
+    return store.selections.some(s => {
+        // Se a data de início for menor que agora, é considerado ao vivo
+        // Adicionamos uma margem de segurança de 1 minuto para pré-jogo muito próximo
+        const start = new Date(s.commenceTime || s.commence_time);
+        return start < now; 
+    });
+});
+
+// Círculo de progresso SVG
+const progressDashoffset = computed(() => {
+    const circumference = 2 * Math.PI * 24; // r=24
+    return circumference - (countdown.value / countdownTotal) * circumference;
+});
 
 const truncateName = (name: string, limit: number = 20) => {
   if (!name) return '';
@@ -89,32 +115,27 @@ const updateSelectionOdd = (selectionId: string, newOdd: number) => {
     }
 };
 
-// --- NOVAS FUNÇÕES PARA O ALERTA DISCRETO ---
-
 const confirmOddChange = () => {
     if (!oddConflict.value) return;
-    
-    // 1. Atualiza a odd
     updateSelectionOdd(oddConflict.value.selectionId, oddConflict.value.newOdd);
-    
-    // 2. Limpa o alerta
     oddConflict.value = null;
-    
-    // 3. Tenta apostar novamente
-    handlePlaceBet();
+    handlePlaceBet(true); // true = forceSubmit (pula o timer pois já esperou)
 };
 
 const cancelOddChange = () => {
     if (!oddConflict.value) return;
-    
-    // 1. Remove do cupom
     store.removeSelection(oddConflict.value.selectionId);
-    
-    // 2. Limpa alerta
     oddConflict.value = null;
 };
 
-const handlePlaceBet = async () => {
+const cancelLiveProcessing = () => {
+    if (timerInterval) clearInterval(timerInterval);
+    isProcessingLive.value = false;
+    countdown.value = countdownTotal;
+};
+
+// Função principal de aposta
+const handlePlaceBet = async (forceSubmit = false) => {
   if (!isUserLoggedIn.value) {
     Toast.fire({ icon: 'info', title: 'Faça login para apostar' });
     return;
@@ -127,11 +148,32 @@ const handlePlaceBet = async () => {
     return;
   }
 
-  // Limpa conflitos anteriores se houver
   oddConflict.value = null;
 
+  // --- LÓGICA DO TIMER AO VIVO ---
+  // Se tem jogo ao vivo E não é uma re-submissão forçada (após aceitar odd)
+  if (hasLiveSelection.value && !forceSubmit) {
+      isProcessingLive.value = true;
+      countdown.value = countdownTotal;
+      
+      timerInterval = setInterval(() => {
+          countdown.value--;
+          if (countdown.value <= 0) {
+              clearInterval(timerInterval);
+              submitBetToApi(); // Envia a aposta após o timer
+          }
+      }, 1000);
+      return; // Para aqui e espera o timer
+  }
+
+  // Se for pré-jogo ou forceSubmit, envia direto
+  await submitBetToApi();
+};
+
+// Função separada que faz o envio real
+const submitBetToApi = async () => {
   const valorApostado = Number(stake.value);
-  isLoading.value = true;
+  isLoading.value = true; // Mostra loading tradicional (spinner no botão) ou mantém overlay
 
   try {
     const payload = {
@@ -154,6 +196,9 @@ const handlePlaceBet = async () => {
     const response = await apiSports.post('/bets/place', payload, {
         headers: { Authorization: `Bearer ${tokenLimpo}` }
     });
+
+    // Se passou, remove overlay de timer se ainda estiver lá
+    isProcessingLive.value = false;
 
     if (authStore.user) {
         if (response.data?.newBalance !== undefined && response.data?.newBalance !== -1) {
@@ -181,22 +226,19 @@ const handlePlaceBet = async () => {
 
   } catch (error: any) {
     console.error("Erro ao apostar:", error);
+    isProcessingLive.value = false; // Tira o overlay em caso de erro
 
-    // 🔥 DETECÇÃO DE CONFLITO DE ODDS - MODO DISCRETO 🔥
     if (error.response?.status === 409 || error.response?.data?.code === 'ODDS_CHANGED') {
         const data = error.response.data;
-        // Preenche o estado local para exibir o alerta acima do input
         oddConflict.value = {
             matchName: truncateName(data.matchName || 'Jogo', 25),
             oldOdd: parseFloat(data.oldOdd),
             newOdd: parseFloat(data.newOdd),
             selectionId: data.selectionId || data.matchId
         };
-        // Retorna silenciosamente para manter o usuário no cupom
         return; 
     }
 
-    // Erro Genérico (continua usando SweetAlert pois é erro de sistema/crítico)
     const msg = error?.response?.data?.error || "Erro ao processar aposta.";
     Swal.fire({ title: 'Ops!', text: msg, icon: 'error', background: '#162032', color: '#ffffff', confirmButtonColor: '#ef4444' });
   } finally {
@@ -206,8 +248,33 @@ const handlePlaceBet = async () => {
 </script>
 
 <template>
-  <div class="flex flex-col h-full bg-[#0f172a] text-slate-300 font-sans border-l border-slate-800/50 shadow-2xl">
+  <div class="flex flex-col h-full bg-[#0f172a] text-slate-300 font-sans border-l border-slate-800/50 shadow-2xl relative overflow-hidden">
     
+    <div v-if="isProcessingLive" class="absolute inset-0 z-50 bg-[#0f172a]/95 backdrop-blur-sm flex flex-col items-center justify-center p-6 animate-in fade-in duration-300">
+        <div class="relative w-20 h-20 mb-4 flex items-center justify-center">
+            <svg class="w-full h-full -rotate-90 transform">
+                <circle cx="40" cy="40" r="24" stroke="currentColor" stroke-width="4" fill="transparent" class="text-slate-700" />
+                <circle cx="40" cy="40" r="24" stroke="currentColor" stroke-width="4" fill="transparent" 
+                    :stroke-dasharray="2 * Math.PI * 24" 
+                    :stroke-dashoffset="progressDashoffset" 
+                    class="text-green-500 transition-all duration-1000 ease-linear" />
+            </svg>
+            <Hourglass class="w-8 h-8 text-green-400 absolute animate-pulse" />
+        </div>
+
+        <h3 class="text-white font-bold text-lg mb-1">Processando...</h3>
+        <p class="text-slate-400 text-xs text-center mb-6 max-w-[200px]">
+            Aguardando confirmação da aposta ao vivo.
+        </p>
+
+        <div class="text-4xl font-mono font-bold text-white mb-8">
+            {{ countdown }}<span class="text-sm text-slate-500 ml-1">s</span>
+        </div>
+
+        <button @click="cancelLiveProcessing" class="flex items-center gap-2 px-6 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/50 rounded-full font-bold text-xs uppercase tracking-wide transition-all active:scale-95">
+            <StopCircle class="w-4 h-4" /> Cancelar
+        </button>
+    </div>
     <div 
         @click="emit('toggle')"
         class="h-12 px-3 border-b border-slate-800 bg-[#1e293b] flex items-center justify-between cursor-pointer hover:bg-[#253248] transition-colors"
@@ -274,7 +341,7 @@ const handlePlaceBet = async () => {
                         </div>
 
                         <div class="flex items-center gap-2">
-                             <div class="bg-[#0f172a] text-yellow-400 font-mono font-bold text-xs px-2 py-1 rounded border border-slate-700 shadow-inner">
+                            <div class="bg-[#0f172a] text-yellow-400 font-mono font-bold text-xs px-2 py-1 rounded border border-slate-700 shadow-inner">
                                 {{ (item.odds || 0).toFixed(2) }}
                             </div>
                         </div>
@@ -323,6 +390,7 @@ const handlePlaceBet = async () => {
                 </button>
             </div>
         </div>
+
         <div class="relative mb-3 group">
             <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <span class="text-slate-500 font-bold text-xs">R$</span>
@@ -332,7 +400,7 @@ const handlePlaceBet = async () => {
                 v-model="stake" 
                 type="number" 
                 placeholder="Valor da Aposta" 
-                :disabled="!isUserLoggedIn || !!oddConflict" 
+                :disabled="!isUserLoggedIn || !!oddConflict || isProcessingLive" 
                 class="w-full bg-[#0b1120] text-white text-sm font-bold border border-slate-700 rounded pl-9 pr-3 py-2.5 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all placeholder:text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed"
                 :class="stakeError ? 'border-red-500 animate-shake' : ''"
             />
@@ -343,8 +411,8 @@ const handlePlaceBet = async () => {
         </div>
 
         <button 
-            @click="handlePlaceBet" 
-            :disabled="isLoading || store.count === 0 || !!oddConflict" 
+            @click="() => handlePlaceBet(false)" 
+            :disabled="isLoading || store.count === 0 || !!oddConflict || isProcessingLive" 
             class="w-full py-2.5 rounded bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-400 text-white font-bold text-xs uppercase tracking-widest shadow-lg shadow-green-900/20 transition-all transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2 border border-green-400/20"
         >
             <Loader2 v-if="isLoading" class="w-4 h-4 animate-spin" />
@@ -356,27 +424,15 @@ const handlePlaceBet = async () => {
 </template>
 
 <style scoped>
-/* Scrollbar fina para o cupom */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: #0f172a; 
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #334155; 
-  border-radius: 4px;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #475569; 
-}
+.custom-scrollbar::-webkit-scrollbar { width: 4px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: #0f172a; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }
 
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
   25% { transform: translateX(-4px); }
   75% { transform: translateX(4px); }
 }
-.animate-shake {
-  animation: shake 0.3s ease-in-out;
-}
+.animate-shake { animation: shake 0.3s ease-in-out; }
 </style>

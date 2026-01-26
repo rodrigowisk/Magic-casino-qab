@@ -12,8 +12,8 @@ namespace Magic_casino_sportbook.BackgroundServices
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<GameStatusWorker> _logger;
 
-        // Mantemos 15s para ser rápido
-        private const int DELAY_HOT_MS = 15000;
+        // Diminuí levemente o delay para ele ser mais ágil na virada do minuto
+        private const int DELAY_HOT_MS = 10000;
 
         public GameStatusWorker(IServiceProvider serviceProvider, ILogger<GameStatusWorker> logger)
         {
@@ -23,7 +23,7 @@ namespace Magic_casino_sportbook.BackgroundServices
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("🚦 [GAME STATUS WORKER] Iniciado v5.0 (Lógica WaitingLive).");
+            _logger.LogInformation("🚦 [GAME STATUS WORKER] Iniciado v6.0 (Tolerância 1min).");
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -42,27 +42,42 @@ namespace Magic_casino_sportbook.BackgroundServices
                     var liveService = scope.ServiceProvider.GetRequiredService<LiveSportService>();
                     var hub = scope.ServiceProvider.GetRequiredService<IHubContext<GameHub>>();
 
-                    // 🔥 ALTERAÇÃO 1: Busca jogos Prematch (para iniciar) OU WaitingLive (que estão no limbo de 5min)
+                    // ====================================================================================
+                    // 🔥 LÓGICA CORRIGIDA - TOLERÂNCIA DE 1 MINUTO
+                    // ====================================================================================
+                    // 1. Prematch: Só pegamos se JÁ PASSOU 1 minuto do início (UtcNow.AddMinutes(-1)).
+                    //    Isso evita marcar como "Delayed" jogos que começaram agora (ex: 18:00:05).
+                    //    Damos 60 segundos para o LiveOddsWorker detectar o "In Play" primeiro.
+                    //
+                    // 2. WaitingLive: Pegamos sempre para continuar monitorando se virou Live ou encerrou.
+                    // ====================================================================================
+
+                    var toleranceThreshold = DateTime.UtcNow.AddMinutes(-1); // 1 minuto ATRÁS
+                    var lookbackLimit = DateTime.UtcNow.AddHours(-4); // Não olhar jogos muito velhos
+
                     var gamesToCheck = await context.SportsEvents
                         .AsNoTracking()
-                        .Where(g => (g.Status == "Prematch" || g.Status == "WaitingLive") &&
-                                    g.CommenceTime <= DateTime.UtcNow.AddMinutes(5) && // Próximos 5 min
-                                    g.CommenceTime > DateTime.UtcNow.AddHours(-3))     // Janela de segurança
+                        .Where(g =>
+                            // CASO A: Jogos que já estão no limbo "WaitingLive" (verificar sempre)
+                            (g.Status == "WaitingLive" && g.CommenceTime > lookbackLimit)
+                            ||
+                            // CASO B: Jogos Prematch que DEVERIAM ter começado há mais de 1 minuto
+                            (g.Status == "Prematch" && g.CommenceTime <= toleranceThreshold && g.CommenceTime > lookbackLimit)
+                        )
                         .OrderBy(g => g.CommenceTime)
-                        .Take(60) // Aumentei um pouco o lote
+                        .Take(60)
                         .ToListAsync(ct);
 
                     if (gamesToCheck.Any())
                     {
-                        // O método agora retorna uma lista de IDs para REMOVER DA TELA DE PRÉ-JOGO
-                        // (Seja porque virou Live, ou porque virou WaitingLive)
+                        // Verifica na API. Se não estiver Live, o serviço deve marcar como WaitingLive/Delayed.
                         var idsToRemoveFromPreMatch = await liveService.VerifyKickoffWithApiAsync(gamesToCheck, scope.ServiceProvider);
 
                         if (idsToRemoveFromPreMatch.Any())
                         {
-                            _logger.LogInformation($"🔥 [HOTZONE] Processado: {idsToRemoveFromPreMatch.Count} jogos saíram do Pré-Jogo.");
+                            _logger.LogInformation($"🔥 [HOTZONE] Atualizado: {idsToRemoveFromPreMatch.Count} jogos processados (Live ou Delay).");
 
-                            // 1. Notifica quem virou REALMENTE LIVE para aparecer na aba "Ao Vivo"
+                            // 1. Busca quem virou REALMENTE LIVE para avisar o Frontend (Aparecer na aba Ao Vivo)
                             var reallyLiveGames = await context.SportsEvents
                                 .AsNoTracking()
                                 .Where(g => idsToRemoveFromPreMatch.Contains(g.ExternalId) && g.Status == "Live")
@@ -73,7 +88,7 @@ namespace Magic_casino_sportbook.BackgroundServices
                                 await hub.Clients.All.SendAsync("GameWentLive", reallyLiveGames, ct);
                             }
 
-                            // 2. Remove TODOS da lista de Pré-Jogo (Live, WaitingLive, Delayed, Ended)
+                            // 2. Remove TODOS da lista de Pré-Jogo (Seja porque virou Live ou Delayed)
                             await hub.Clients.All.SendAsync("RemoveGames", idsToRemoveFromPreMatch, ct);
                         }
                     }

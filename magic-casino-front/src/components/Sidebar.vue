@@ -1,146 +1,226 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, onMounted, watch, computed } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
+// ❌ Removido 'Radio'
 import { 
-  Gamepad2, Clock, Star, Trophy, ChevronDown, ChevronRight 
+  History, CalendarClock, 
+  ChevronDown, ChevronRight, MapPin 
 } from 'lucide-vue-next';
 import SportsService from '../services/SportsService';
-
-// ✅ IMPORTAÇÃO DA FUNÇÃO INTELIGENTE DE BANDEIRAS
 import { getFlag } from '../utils/flags'; 
 
 const router = useRouter();
-const sportsList = ref<any[]>([]);
-const expandedSports = ref<Set<string>>(new Set());
-const leaguesCache = ref<Record<string, string[]>>({});
-const loadingLeagues = ref<Record<string, boolean>>({});
+const route = useRoute();
 
-const goToSport = (key: string) => { router.push({ name: 'sport-events', params: { id: key } }); };
-const goToLeague = (sportKey: string, leagueName: string) => { 
-  router.push({ name: 'sport-events', params: { id: sportKey }, query: { league: leagueName } }); 
+// --- ESTADOS ---
+const loading = ref(false);
+const countriesList = ref<any[]>([]); 
+const expandedCountries = ref<Set<string>>(new Set());
+
+// --- LISTA DE PAÍSES ---
+const knownCountries = [
+    'Brazil', 'Brasil', 'England', 'Spain', 'Italy', 'Germany', 'France', 
+    'Portugal', 'Argentina', 'USA', 'Russia', 'Netherlands', 'Turkey', 
+    'Mexico', 'Colombia', 'Chile', 'Uruguay', 'Paraguay', 'Peru', 'Bolivia', 
+    'Ecuador', 'Venezuela', 'China', 'Japan', 'South Korea', 'Australia'
+];
+
+const translateCountry = (name: string) => {
+    if (name === 'Brazil') return 'Brasil';
+    if (name === 'England') return 'Inglaterra';
+    if (name === 'Spain') return 'Espanha';
+    if (name === 'Italy') return 'Itália';
+    if (name === 'Germany') return 'Alemanha';
+    if (name === 'France') return 'França';
+    if (name === 'USA') return 'EUA';
+    return name;
 };
 
-// Mapeamento visual dos esportes
-const mapVisuals = (key: string) => {
-    const k = key.toLowerCase();
-    if (k.includes('soccer')) return { name: 'Futebol', icon: '⚽' };
-    if (k.includes('basket')) return { name: 'Basquete', icon: '🏀' };
-    if (k.includes('tennis')) return { name: 'Tênis', icon: '🎾' };
-    if (k.includes('boxing')) return { name: 'Boxe', icon: '🥊' };
-    if (k.includes('mma') || k.includes('ufc')) return { name: 'MMA', icon: '🥋' };
-    if (k.includes('american')) return { name: 'Futebol Americano', icon: '🏈' };
-    if (k.includes('hockey')) return { name: 'Hóquei', icon: '🏒' };
-    if (k.includes('esports')) return { name: 'E-Sports', icon: '🎮' };
-    if (k.includes('cricket')) return { name: 'Críquete', icon: '🏏' };
-    if (k.includes('baseball')) return { name: 'Beisebol', icon: '⚾' };
-    if (k.includes('volleyball') || k.includes('volei')) return { name: 'Vôlei', icon: '🏐' };
-    if (k.includes('darts')) return { name: 'Dardos', icon: '🎯' };
-    
-    return { name: key, icon: '🏆' };
-};
-
-const toggleSportAccordion = async (sportKey: string) => {
-    if (expandedSports.value.has(sportKey)) { expandedSports.value.delete(sportKey); return; }
-    expandedSports.value.add(sportKey);
-    if (leaguesCache.value[sportKey]) return;
-    try {
-        loadingLeagues.value[sportKey] = true;
-        const events = await SportsService.getEventsBySport(sportKey);
-        // Filtra ligas únicas
-        const uniqueLeagues = [...new Set(events.map((e: any) => e.league))] as string[];
-        leaguesCache.value[sportKey] = uniqueLeagues.sort(); 
-    } catch (e) { console.error(e); } finally { loadingLeagues.value[sportKey] = false; }
-};
-
-onMounted(async () => {
-    try {
-        const data = await SportsService.getActiveSports();
-        
-        // Agrupa os esportes da API
-        const grouped = data.reduce((acc: any, item: any) => {
-            // Ignora esports se quiser limpar a lista
-            if (item.key.includes('esport')) return acc; 
-
-            const visual = mapVisuals(item.key);
-            const sportName = visual.name;
-
-            if (!acc[sportName]) {
-                acc[sportName] = { 
-                    realKey: item.key, 
-                    name: sportName, 
-                    icon: visual.icon, 
-                    count: 0 
-                };
-            }
-            acc[sportName].count += item.count;
-            return acc;
-        }, {});
-
-        // Ordena por contagem (opcional) ou nome
-        sportsList.value = Object.values(grouped).sort((a: any, b: any) => b.count - a.count);
-    } catch (e) { console.error(e); }
+// --- COMPUTED ---
+const currentSport = computed(() => {
+    const id = route.params.id;
+    return (Array.isArray(id) ? id[0] : id) || 'soccer';
 });
+
+const sportNameTranslated = computed(() => {
+    const s = currentSport.value.toLowerCase();
+    if (s.includes('soccer')) return 'Futebol';
+    if (s.includes('basket')) return 'Basquete';
+    if (s.includes('tennis')) return 'Tênis';
+    return currentSport.value.toUpperCase();
+});
+
+// --- NAVEGAÇÃO ---
+const goToLive = () => router.push('/live');
+const goToPreMatch = () => router.push({ name: 'sport-events', params: { id: currentSport.value } });
+const goToMyBets = () => router.push('/minhas-apostas');
+
+const goToLeague = (leagueName: string) => { 
+  router.push({ 
+      name: 'sport-events', 
+      params: { id: currentSport.value }, 
+      query: { league: leagueName } 
+  }); 
+};
+
+const toggleCountry = (countryName: string) => {
+    if (expandedCountries.value.has(countryName)) {
+        expandedCountries.value.delete(countryName);
+    } else {
+        expandedCountries.value.add(countryName);
+    }
+};
+
+// --- LÓGICA DE DADOS ---
+const fetchAndGroupLeagues = async () => {
+    loading.value = true;
+    countriesList.value = [];
+    expandedCountries.value.clear();
+
+    try {
+        const events = await SportsService.getEventsBySport(currentSport.value);
+        const groups: Record<string, Set<string>> = {};
+        const leagueOriginalNames: Record<string, string> = {};
+
+        events.forEach((event: any) => {
+            let rawLeague = event.league || event.League || 'Outros';
+            let rawCountry = event.country || event.Country;
+
+            if (!rawCountry || rawCountry === 'Internacional') {
+                const parts = rawLeague.split(' ');
+                const potentialCountry = parts[0]; 
+                if (knownCountries.includes(potentialCountry)) {
+                    rawCountry = potentialCountry;
+                    rawLeague = parts.slice(1).join(' ').trim();
+                    if (!rawLeague) rawLeague = 'Principal'; 
+                } else {
+                    rawCountry = 'Internacional';
+                }
+            }
+
+            const displayCountry = translateCountry(rawCountry);
+
+            if (!groups[displayCountry]) {
+                groups[displayCountry] = new Set();
+            }
+            
+            groups[displayCountry].add(rawLeague);
+            leagueOriginalNames[rawLeague] = event.league || event.League;
+        });
+
+        const sortedCountries = Object.keys(groups).sort();
+        
+        if (sortedCountries.includes('Brasil')) {
+             const idx = sortedCountries.findIndex(c => c === 'Brasil');
+             sortedCountries.unshift(sortedCountries.splice(idx, 1)[0]);
+             expandedCountries.value.add('Brasil');
+        }
+
+        countriesList.value = sortedCountries.map(country => ({
+            name: country,
+            leagues: Array.from(groups[country]).sort().map(lgName => ({
+                displayName: lgName,
+                queryName: leagueOriginalNames[lgName] || lgName
+            }))
+        }));
+
+    } catch (e) {
+        console.error("Erro ao carregar menu lateral:", e);
+    } finally {
+        loading.value = false;
+    }
+};
+
+watch(currentSport, () => {
+    fetchAndGroupLeagues();
+}, { immediate: true });
+
 </script>
 
 <template>
-  <aside class="bg-stake-card flex-shrink-0 transition-all duration-300 overflow-y-auto border-r border-stake-dark/50 custom-scrollbar h-full">
+  <aside class="bg-stake-card flex-shrink-0 transition-all duration-300 overflow-y-auto border-r border-stake-dark/50 custom-scrollbar h-full w-full md:w-64">
     <div class="p-4 space-y-6">
         
         <div class="bg-stake-dark p-1 rounded-full flex text-xs font-bold">
-            <button class="flex-1 py-2 rounded-full text-center text-stake-text hover:bg-stake-hover">Cassino</button>
+            <button class="flex-1 py-2 rounded-full text-center text-stake-text hover:bg-stake-hover transition-colors">Cassino</button>
             <button class="flex-1 py-2 rounded-full text-center bg-stake-hover text-white shadow">Esportes</button>
         </div>
 
         <nav class="space-y-1">
+            
             <a href="#" 
-               @click.prevent="router.push('/live')" 
-               class="flex items-center gap-3 px-3 py-2 rounded transition-colors group cursor-pointer"
-               :class="router.currentRoute.value.path === '/live' ? 'bg-stake-hover text-white' : 'hover:bg-stake-hover text-stake-text'"
+               @click.prevent="goToLive" 
+               class="flex items-center gap-3 px-3 py-2.5 rounded transition-all group cursor-pointer border border-transparent"
+               :class="router.currentRoute.value.path === '/live' ? 'bg-stake-hover border-stake-text/10 shadow-sm' : 'hover:bg-stake-hover'"
             >
-                <Gamepad2 class="w-4 h-4" :class="router.currentRoute.value.path === '/live' ? 'text-white' : 'text-stake-text group-hover:text-white'" />
-                <span class="text-sm font-semibold" :class="router.currentRoute.value.path === '/live' ? 'text-white' : 'text-stake-text group-hover:text-white'">Ao Vivo</span>
-                <span class="ml-auto bg-green-500 text-stake-dark text-[10px] font-bold px-1.5 rounded animate-pulse">LIVE</span>
+                <div class="relative flex h-3 w-3 items-center justify-center">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2 bg-red-600"></span>
+                </div>
+                
+                <span class="text-sm font-bold" :class="router.currentRoute.value.path === '/live' ? 'text-white' : 'text-stake-text group-hover:text-white'">Ao Vivo</span>
             </a>
 
-            <a href="#" @click.prevent="router.push('/minhas-apostas')" class="flex items-center gap-3 px-3 py-2 rounded hover:bg-stake-hover group text-white">
-                <Clock class="w-4 h-4 text-stake-text group-hover:text-white" />
-                <span class="text-sm font-semibold">Meu Histórico</span>
+            <a href="#" 
+               @click.prevent="goToPreMatch" 
+               class="flex items-center gap-3 px-3 py-2.5 rounded transition-all group cursor-pointer"
+               :class="router.currentRoute.value.name === 'sport-events' && !router.currentRoute.value.query.league ? 'bg-stake-hover text-white' : 'hover:bg-stake-hover text-stake-text'"
+            >
+                <CalendarClock class="w-4 h-4 text-stake-text group-hover:text-white" />
+                <span class="text-sm font-semibold group-hover:text-white">Pré Jogo</span>
             </a>
-            <a href="#" class="flex items-center gap-3 px-3 py-2 rounded hover:bg-stake-hover group text-white">
-                <Star class="w-4 h-4 text-stake-text group-hover:text-white" />
-                <span class="text-sm font-semibold">Favoritos</span>
+
+            <a href="#" 
+               @click.prevent="goToMyBets" 
+               class="flex items-center gap-3 px-3 py-2.5 rounded hover:bg-stake-hover group cursor-pointer text-stake-text transition-all"
+               :class="router.currentRoute.value.path === '/minhas-apostas' ? 'bg-stake-hover text-white' : ''"
+            >
+                <History class="w-4 h-4 text-stake-text group-hover:text-white" />
+                <span class="text-sm font-semibold group-hover:text-white">Minhas Apostas</span>
             </a>
         </nav>
 
+        <div class="h-px bg-stake-dark/50 w-full"></div>
+
         <div>
-            <h3 class="text-xs font-bold uppercase tracking-wider mb-3 text-stake-text/60 pl-2 flex items-center gap-2">
-                <Trophy class="w-3 h-3"/> Esportes
+            <h3 class="text-[11px] font-black uppercase tracking-widest mb-4 text-stake-text/50 pl-2 flex items-center gap-2">
+                <MapPin class="w-3 h-3"/> Países • {{ sportNameTranslated }}
             </h3>
             
-            <div v-if="sportsList.length === 0" class="pl-4 text-xs text-stake-text animate-pulse">Carregando...</div>
+            <div v-if="loading" class="pl-4 space-y-3">
+                <div v-for="i in 5" :key="i" class="h-4 bg-stake-hover/50 rounded animate-pulse w-3/4"></div>
+            </div>
+            
+            <div v-else-if="countriesList.length === 0" class="pl-4 text-xs text-stake-text italic">
+                Nenhuma liga encontrada.
+            </div>
             
             <div v-else class="space-y-1">
-                <div v-for="sport in sportsList" :key="sport.realKey" class="rounded overflow-hidden">
+                <div v-for="country in countriesList" :key="country.name" class="rounded overflow-hidden">
                     
-                    <div class="flex items-center gap-3 px-3 py-2 rounded hover:bg-stake-hover cursor-pointer group" @click="goToSport(sport.realKey)">
-                        <span class="text-lg w-5 text-center">{{ sport.icon }}</span> 
-                        <span class="text-sm font-medium text-white group-hover:text-white/90 flex-1">{{ sport.name }}</span>
-                        <span class="text-xs text-stake-text/50 bg-stake-dark px-1.5 rounded mr-2">{{ sport.count }}</span>
-                        <div @click.stop="toggleSportAccordion(sport.realKey)" class="p-1 rounded hover:bg-white/10">
-                            <ChevronDown v-if="expandedSports.has(sport.realKey)" class="w-4 h-4" />
-                            <ChevronRight v-else class="w-4 h-4" />
+                    <div class="flex items-center gap-3 px-3 py-2.5 rounded hover:bg-stake-hover cursor-pointer group transition-colors select-none" 
+                        @click="toggleCountry(country.name)">
+                        
+                        <img :src="getFlag(country.name === 'Brasil' ? 'Brazil' : country.name)" 
+                            class="w-5 h-3.5 object-cover rounded-[2px] shadow-sm opacity-90 group-hover:opacity-100 transition-opacity" />
+                        
+                        <span class="text-xs font-bold text-stake-text group-hover:text-white flex-1 truncate">
+                            {{ country.name }}
+                        </span>
+                        
+                        <div class="text-stake-text/50 group-hover:text-white transition-transform duration-200" 
+                             :class="expandedCountries.has(country.name) ? 'rotate-180' : ''">
+                            <ChevronDown class="w-3.5 h-3.5" />
                         </div>
                     </div>
 
-                    <div v-if="expandedSports.has(sport.realKey)" class="bg-black/20 pb-2">
-                        <div v-if="loadingLeagues[sport.realKey]" class="px-9 py-2 text-xs text-stake-text animate-pulse">Buscando ligas...</div>
-                        <div v-else class="flex flex-col">
-                            <a v-for="league in leaguesCache[sport.realKey]" :key="league" @click.prevent="goToLeague(sport.realKey, league)" 
-                               class="pl-12 pr-2 py-2 text-xs text-stake-text hover:text-white hover:bg-white/5 flex items-center gap-3 cursor-pointer group">
-                                
-                                <img :src="getFlag(league)" class="w-4 h-2.5 object-cover rounded-sm opacity-80 group-hover:opacity-100 shadow-sm flex-shrink-0" />
-                                
-                                <span class="truncate capitalize flex-1 text-left">{{ league }}</span>
+                    <div v-show="expandedCountries.has(country.name)" class="bg-[#0f212e]/30 border-l-2 border-stake-dark ml-3 my-1">
+                        <div class="flex flex-col">
+                            <a v-for="leagueObj in country.leagues" :key="leagueObj.displayName" 
+                               @click.prevent="goToLeague(leagueObj.queryName)" 
+                               class="pl-4 pr-2 py-2 text-[11px] font-medium text-stake-text hover:text-white hover:bg-white/5 flex items-center gap-2 cursor-pointer transition-colors relative"
+                               :class="route.query.league === leagueObj.queryName ? 'text-white bg-white/5 border-l-2 border-green-500 -ml-[2px]' : ''">
+                                <span class="truncate">{{ leagueObj.displayName }}</span>
                             </a>
                         </div>
                     </div>
@@ -151,3 +231,10 @@ onMounted(async () => {
     </div>
   </aside>
 </template>
+
+<style scoped>
+.custom-scrollbar::-webkit-scrollbar { width: 4px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: #0f212e; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #2f4553; border-radius: 4px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #557086; }
+</style>
