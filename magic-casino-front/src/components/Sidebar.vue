@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-// ❌ Removido 'Radio'
 import { 
   History, CalendarClock, 
   ChevronDown, ChevronRight, MapPin 
@@ -141,11 +140,6 @@ watch(currentSport, () => {
   <aside class="bg-stake-card flex-shrink-0 transition-all duration-300 overflow-y-auto border-r border-stake-dark/50 custom-scrollbar h-full w-full md:w-64">
     <div class="p-4 space-y-6">
         
-        <div class="bg-stake-dark p-1 rounded-full flex text-xs font-bold">
-            <button class="flex-1 py-2 rounded-full text-center text-stake-text hover:bg-stake-hover transition-colors">Cassino</button>
-            <button class="flex-1 py-2 rounded-full text-center bg-stake-hover text-white shadow">Esportes</button>
-        </div>
-
         <nav class="space-y-1">
             
             <a href="#" 

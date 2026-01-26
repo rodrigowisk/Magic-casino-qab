@@ -250,11 +250,12 @@ namespace Magic_casino_sportbook.Services
                     var ev = packetList.FirstOrDefault(p => p.Type == "EV");
                     if (ev == null) continue;
 
-                    var gameDb = games.FirstOrDefault(g => g.ExternalId == ev.Fi);
+                    var gameDb = games.FirstOrDefault(g => g.ExternalId.Trim() == ev.Fi.Trim());
                     if (gameDb == null) continue;
 
                     // --- ANÁLISE DE STATUS B365 ---
                     string ts = ev.TimeStatus ?? "0";
+                    string tt = ev.Tt ?? "0"; // Timer Status (1 = Rodando)
 
                     bool tempoExagerado = false;
                     if (int.TryParse(ev.Tm, out int minutos))
@@ -263,7 +264,10 @@ namespace Magic_casino_sportbook.Services
                     }
 
                     // CASO 1: JOGO FICOU LIVE
-                    bool isLive = (ts == "1") || (!string.IsNullOrEmpty(ev.Tm) && ev.Tm != "0" && ev.Tm != "00");
+                    // 🔥 MELHORIA: Considera Live se TS=1 OU se o Cronômetro (TT) estiver rodando (1)
+                    bool isLive = (ts == "1") ||
+                                  (tt == "1") ||
+                                  (!string.IsNullOrEmpty(ev.Tm) && ev.Tm != "0" && ev.Tm != "00");
 
                     // 🔥 CASO 2: JOGO ACABOU / FOI CANCELADO / ADIADO
                     bool isDead = ts == "3" || ts == "4" || ts == "5" || ts == "7" || ts == "8" || ts == "9";
@@ -271,6 +275,7 @@ namespace Magic_casino_sportbook.Services
                     if (isLive && !tempoExagerado)
                     {
                         // VIROU LIVE AGORA
+                        Console.WriteLine($"✅ GO LIVE: {gameDb.HomeTeam} (ID: {gameDb.ExternalId}) | TS: {ts} | TM: {ev.Tm}");
                         gameDb.Status = "Live";
                         if (string.IsNullOrEmpty(gameDb.Score)) gameDb.Score = "0-0";
                         if (string.IsNullOrEmpty(gameDb.GameTime)) gameDb.GameTime = "0'";
@@ -299,26 +304,33 @@ namespace Magic_casino_sportbook.Services
                     {
                         // 🔥 LÓGICA WAITING-LIVE RESTAURADA (Para limpar jogos da tela na hora certa)
                         // Se TS=0 (Não iniciado na API) mas horário já passou
-                        if (DateTime.UtcNow >= gameDb.CommenceTime)
+
+                        // Garante UTC para comparação justa
+                        var startTimeUtc = gameDb.CommenceTime.Kind == DateTimeKind.Utc
+                            ? gameDb.CommenceTime
+                            : DateTime.SpecifyKind(gameDb.CommenceTime, DateTimeKind.Utc);
+
+                        if (DateTime.UtcNow >= startTimeUtc)
                         {
                             if (gameDb.Status == "Prematch")
                             {
                                 // Remove da tela IMEDIATAMENTE e coloca em espera
-                                Console.WriteLine($"⏳ AGUARDANDO: {gameDb.HomeTeam} (Status: WaitingLive)");
+                                Console.WriteLine($"⏳ AGUARDANDO: {gameDb.HomeTeam} (Status: WaitingLive) - API diz TS={ts}");
                                 gameDb.Status = "WaitingLive";
                                 context.Entry(gameDb).State = EntityState.Modified;
                                 idsToRemoveFromPreMatch.Add(gameDb.ExternalId);
                             }
                             else if (gameDb.Status == "WaitingLive")
                             {
-                                // Já estamos esperando. Verificamos se passou do limite (5 min)
-                                // CORREÇÃO AQUI: CommenceTime é DateTime (não nullable), removemos o .Value
-                                var tolerancia = gameDb.CommenceTime.AddMinutes(5);
+                                // Já estamos esperando. Verificamos se passou do limite (20 min)
+                                var tolerancia = startTimeUtc.AddMinutes(20);
 
                                 if (DateTime.UtcNow > tolerancia)
                                 {
                                     // Desiste, marca Delayed
-                                    Console.WriteLine($"⛔ TIMEOUT: {gameDb.HomeTeam} não iniciou em 5min -> Delayed.");
+                                    // LOG DE DIAGNÓSTICO: Ajuda a entender por que caiu aqui
+                                    Console.WriteLine($"⛔ TIMEOUT (20m): {gameDb.HomeTeam} ID:{gameDb.ExternalId} | TS:{ts} | TT:{tt} | TM:{ev.Tm} -> Delayed.");
+
                                     gameDb.Status = "Delayed";
                                     context.Entry(gameDb).State = EntityState.Modified;
                                     // Não precisa adicionar em idsToRemoveFromPreMatch pq já foi removido antes
@@ -367,19 +379,14 @@ namespace Magic_casino_sportbook.Services
 
                     if (apiStatusFinal || tempoFinalStatusZero || tempoExagerado)
                     {
-                        bool temDados = (!string.IsNullOrEmpty(gameDb.Score) && gameDb.Score != "0-0") ||
-                                        (!string.IsNullOrEmpty(gameDb.GameTime) && gameDb.GameTime != "0'");
-
-                        if (gameDb.Status != "Ended" && temDados)
+                        if (gameDb.Status != "Ended")
                         {
-                            Console.WriteLine($"🏁 [FIM] {gameDb.HomeTeam} (ID: {gameDb.ExternalId}) -> Ended.");
+                            Console.WriteLine($"🏁 [FIM DETECTADO] {gameDb.HomeTeam} (ID: {gameDb.ExternalId}) -> Ended.");
                             gameDb.Status = "Ended";
                             gameDb.GameTime = "FT";
                             if (!string.IsNullOrEmpty(ev.Ss)) gameDb.Score = ev.Ss;
 
                             endedGameIds.Add(gameDb.ExternalId);
-
-                            // Grava no SQL para garantir o pagamento de apostas
                             context.Entry(gameDb).State = EntityState.Modified;
                         }
                     }

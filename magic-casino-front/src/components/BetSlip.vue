@@ -78,16 +78,15 @@ const isUserLoggedIn = computed(() => !!(authStore?.token && authStore?.user));
 const hasLiveSelection = computed(() => {
     const now = new Date();
     return store.selections.some(s => {
-        // Se a data de início for menor que agora, é considerado ao vivo
-        // Adicionamos uma margem de segurança de 1 minuto para pré-jogo muito próximo
         const start = new Date(s.commenceTime || s.commence_time);
         return start < now; 
     });
 });
 
-// Círculo de progresso SVG
+// Círculo de progresso SVG (Ajustado para raio 20 - Mais compacto)
 const progressDashoffset = computed(() => {
-    const circumference = 2 * Math.PI * 24; // r=24
+    const radius = 20;
+    const circumference = 2 * Math.PI * radius; 
     return circumference - (countdown.value / countdownTotal) * circumference;
 });
 
@@ -119,7 +118,7 @@ const confirmOddChange = () => {
     if (!oddConflict.value) return;
     updateSelectionOdd(oddConflict.value.selectionId, oddConflict.value.newOdd);
     oddConflict.value = null;
-    handlePlaceBet(true); // true = forceSubmit (pula o timer pois já esperou)
+    handlePlaceBet(true); // true = forceSubmit
 };
 
 const cancelOddChange = () => {
@@ -151,7 +150,6 @@ const handlePlaceBet = async (forceSubmit = false) => {
   oddConflict.value = null;
 
   // --- LÓGICA DO TIMER AO VIVO ---
-  // Se tem jogo ao vivo E não é uma re-submissão forçada (após aceitar odd)
   if (hasLiveSelection.value && !forceSubmit) {
       isProcessingLive.value = true;
       countdown.value = countdownTotal;
@@ -160,20 +158,18 @@ const handlePlaceBet = async (forceSubmit = false) => {
           countdown.value--;
           if (countdown.value <= 0) {
               clearInterval(timerInterval);
-              submitBetToApi(); // Envia a aposta após o timer
+              submitBetToApi(); 
           }
       }, 1000);
-      return; // Para aqui e espera o timer
+      return; 
   }
 
-  // Se for pré-jogo ou forceSubmit, envia direto
   await submitBetToApi();
 };
 
-// Função separada que faz o envio real
 const submitBetToApi = async () => {
   const valorApostado = Number(stake.value);
-  isLoading.value = true; // Mostra loading tradicional (spinner no botão) ou mantém overlay
+  isLoading.value = true; 
 
   try {
     const payload = {
@@ -197,7 +193,6 @@ const submitBetToApi = async () => {
         headers: { Authorization: `Bearer ${tokenLimpo}` }
     });
 
-    // Se passou, remove overlay de timer se ainda estiver lá
     isProcessingLive.value = false;
 
     if (authStore.user) {
@@ -226,7 +221,7 @@ const submitBetToApi = async () => {
 
   } catch (error: any) {
     console.error("Erro ao apostar:", error);
-    isProcessingLive.value = false; // Tira o overlay em caso de erro
+    isProcessingLive.value = false; 
 
     if (error.response?.status === 409 || error.response?.data?.code === 'ODDS_CHANGED') {
         const data = error.response.data;
@@ -250,30 +245,36 @@ const submitBetToApi = async () => {
 <template>
   <div class="flex flex-col h-full bg-[#0f172a] text-slate-300 font-sans border-l border-slate-800/50 shadow-2xl relative overflow-hidden">
     
-    <div v-if="isProcessingLive" class="absolute inset-0 z-50 bg-[#0f172a]/95 backdrop-blur-sm flex flex-col items-center justify-center p-6 animate-in fade-in duration-300">
-        <div class="relative w-20 h-20 mb-4 flex items-center justify-center">
-            <svg class="w-full h-full -rotate-90 transform">
-                <circle cx="40" cy="40" r="24" stroke="currentColor" stroke-width="4" fill="transparent" class="text-slate-700" />
-                <circle cx="40" cy="40" r="24" stroke="currentColor" stroke-width="4" fill="transparent" 
-                    :stroke-dasharray="2 * Math.PI * 24" 
-                    :stroke-dashoffset="progressDashoffset" 
-                    class="text-green-500 transition-all duration-1000 ease-linear" />
-            </svg>
-            <Hourglass class="w-8 h-8 text-green-400 absolute animate-pulse" />
+    <div v-if="isProcessingLive" class="absolute inset-0 z-50 bg-black/60 backdrop-blur-[2px] flex items-center justify-center p-4 animate-in fade-in duration-200">
+        
+        <div class="bg-[#1e293b] border border-white/10 shadow-2xl rounded-xl p-5 flex flex-col items-center w-full max-w-[240px] relative overflow-hidden">
+            
+            <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-green-500 to-transparent opacity-50"></div>
+
+            <div class="relative w-12 h-12 mb-3 flex items-center justify-center">
+                <svg class="w-full h-full -rotate-90 transform">
+                    <circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="3" fill="transparent" class="text-slate-700" />
+                    <circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="3" fill="transparent" 
+                        :stroke-dasharray="2 * Math.PI * 20" 
+                        :stroke-dashoffset="progressDashoffset" 
+                        class="text-green-500 transition-all duration-1000 ease-linear" />
+                </svg>
+                <Hourglass class="w-5 h-5 text-green-400 absolute animate-pulse" />
+            </div>
+
+            <div class="flex flex-col items-center gap-0.5 mb-4 text-center">
+                <h3 class="text-white font-bold text-sm">Processando...</h3>
+                <span class="text-slate-400 text-[10px] leading-tight">Aguarde o delay de segurança</span>
+            </div>
+
+            <div class="text-3xl font-mono font-black text-white mb-4 tracking-tighter">
+                {{ countdown }}<span class="text-xs text-slate-500 font-bold ml-0.5">s</span>
+            </div>
+
+            <button @click="cancelLiveProcessing" class="w-full flex items-center justify-center gap-2 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 rounded-lg font-bold text-[10px] uppercase tracking-wide transition-all active:scale-95">
+                <StopCircle class="w-3.5 h-3.5" /> Cancelar
+            </button>
         </div>
-
-        <h3 class="text-white font-bold text-lg mb-1">Processando...</h3>
-        <p class="text-slate-400 text-xs text-center mb-6 max-w-[200px]">
-            Aguardando confirmação da aposta ao vivo.
-        </p>
-
-        <div class="text-4xl font-mono font-bold text-white mb-8">
-            {{ countdown }}<span class="text-sm text-slate-500 ml-1">s</span>
-        </div>
-
-        <button @click="cancelLiveProcessing" class="flex items-center gap-2 px-6 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/50 rounded-full font-bold text-xs uppercase tracking-wide transition-all active:scale-95">
-            <StopCircle class="w-4 h-4" /> Cancelar
-        </button>
     </div>
     <div 
         @click="emit('toggle')"

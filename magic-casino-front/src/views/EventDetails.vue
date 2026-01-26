@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ArrowLeft, Clock, ChevronDown, ChevronRight, Trophy } from 'lucide-vue-next';
+import { ArrowLeft, Clock, ChevronDown, ChevronRight, Trophy, BarChart3 } from 'lucide-vue-next';
 import SportsService from '../services/SportsService';
 import TeamLogo from '../components/TeamLogo.vue';
 import { useBetStore, type BetType } from '../stores/useBetStore';
 
+// --- HELPERS E INTERFACES ---
 const asString = (v: string | number | null | undefined | string[]): string => {
     if (Array.isArray(v)) return v[0] || '';
     return String(v ?? '').trim();
@@ -35,6 +36,7 @@ const event = ref<SportEvent | null>(null);
 const loading = ref(true);
 const expandedMarkets = ref<Set<string>>(new Set());
 
+// --- LÓGICA DE MERCADOS (Mantida e Organizada) ---
 const toggleMarket = (marketName: string) => {
     if (expandedMarkets.value.has(marketName)) {
         expandedMarkets.value.delete(marketName);
@@ -45,50 +47,28 @@ const toggleMarket = (marketName: string) => {
 
 const translateMarket = (key: string) => {
     const k = asString(key).toLowerCase().trim();
-
-    if (['1x2', 'full time result', 'match winner', 'money line', 'resultado final'].includes(k))
-        return 'Resultado Final';
-
-    if (k.includes('double chance')) {
-        if (k.includes('1st') || k.includes('half')) return 'Dupla Hipótese - 1º Tempo';
-        return 'Dupla Hipótese';
-    }
-
-    if (k.includes('goals over under') || k.includes('total goals')) {
-        if (k.includes('1st') || k.includes('half')) return 'Gols Mais/Menos - 1º Tempo';
-        return 'Gols Mais/Menos';
-    }
-
-    if (k.includes('handicap result') || k.includes('3-way handicap')) return 'Handicap - Resultado';
-    if (k.includes('handicap')) return 'Handicap Asiático';
-    if (k.includes('draw no bet')) return 'Empate Anula Aposta';
+    if (['1x2', 'full time result', 'match winner', 'money line', 'resultado final'].includes(k)) return 'Resultado Final';
+    if (k.includes('double chance')) return 'Dupla Hipótese';
+    if (k.includes('goals over under') || k.includes('total goals')) return 'Gols Mais/Menos';
+    if (k.includes('handicap')) return 'Handicap';
     if (k.includes('both teams to score') || k === 'btts') return 'Ambos Marcam';
-    if (k.includes('result/both teams to score')) return 'Resultado/Ambos Marcam';
     if (k.includes('correct score')) return 'Placar Correto';
-    if (k.includes('half time/full time') || k.includes('ht/ft')) return 'Intervalo/Final de Jogo';
     if (k.includes('half time')) return 'Intervalo';
-    if (k.includes('to qualify')) return 'Para se Classificar';
-    if (k.includes('method of victory') || k.includes('winning method')) return 'Método de Vitória';
-
     return key;
 };
 
 const isMarket1x2 = (marketName: string) => {
     const k = translateMarket(marketName).toLowerCase();
     if (k === 'resultado final') return true;
-    if (k.includes('handicap') || k.includes('double') || k.includes('dupla')) return false;
-    return k.includes('winner') || k.includes('result') || k.includes('1x2') || k.includes('money line');
+    return k.includes('winner') || k.includes('result') || k.includes('1x2');
 };
 
 const fetchDetails = async () => {
     try {
         const eventId = asString(route.params.id);
         if (!eventId) return;
-
         const data = await SportsService.getEventDetails(eventId);
-        if (data) {
-            event.value = data as SportEvent;
-        }
+        if (data) event.value = data as SportEvent;
     } catch (err) {
         console.error('Erro ao carregar detalhes', err);
     } finally {
@@ -96,24 +76,7 @@ const fetchDetails = async () => {
     }
 };
 
-const getBetTypeForSlip = (odd: any, marketName: string): string => {
-    if (isMarket1x2(marketName) && event.value) {
-        const outcome = asString(odd.outcomeName).toLowerCase();
-        const home = asString(event.value.homeTeam).toLowerCase();
-        const away = asString(event.value.awayTeam).toLowerCase();
-
-        if (['draw', 'x', 'empate'].includes(outcome)) return 'X';
-        if (outcome === '1') return '1';
-        if (outcome === '2') return '2';
-        if (outcome === home || outcome.includes(home) || home.includes(outcome)) return '1';
-        if (outcome === away || outcome.includes(away) || away.includes(outcome)) return '2';
-
-        return 'X';
-    }
-
-    return translateMarket(marketName);
-};
-
+// --- COMPUTED: AGRUPAMENTO INTELIGENTE ---
 const groupedMarkets = computed<Record<string, any[]>>(() => {
     const evt = event.value; 
     if (!evt || !evt.odds) return {};
@@ -122,152 +85,65 @@ const groupedMarkets = computed<Record<string, any[]>>(() => {
 
     evt.odds.forEach((odd) => {
         const name = translateMarket(odd.marketName);
-
-        if (name === 'Dupla Hipótese') {
-            const outName = asString(odd.outcomeName).toLowerCase();
-            if (['yes', 'no', 'sim', 'não'].includes(outName)) return;
-        }
-
         if (!groups[name]) groups[name] = [];
         groups[name].push(odd);
     });
 
-    Object.keys(groups).forEach(key => {
-        if (isMarket1x2(key)) {
-            groups[key]?.sort((a, b) => {
-                const typeA = getBetTypeForSlip(a, key);
-                const typeB = getBetTypeForSlip(b, key);
-
-                const getWeight = (t: string) => {
-                    if (t === '1') return 1;
-                    if (t === 'X' || t === 'Empate') return 2;
-                    if (t === '2') return 3;
-                    return 4;
-                };
-                return getWeight(typeA) - getWeight(typeB);
-            });
-        }
-
-        if (key === 'Dupla Hipótese') {
-            groups[key]?.sort((a, b) => {
-                const nameA = asString(a.outcomeName).toLowerCase();
-                const nameB = asString(b.outcomeName).toLowerCase();
-                if (nameA.includes('12') || (nameA.includes('casa') && nameA.includes('fora'))) return 0;
-                return nameA.localeCompare(nameB);
-            });
-        }
-    });
-
-    const sortedKeys = Object.keys(groups).sort((a, b) => {
-        if (a === 'Resultado Final') return -1;
-        if (b === 'Resultado Final') return 1;
-        return 0;
-    });
-
+    // Ordenação Específica de Chaves
+    const priority = ['Resultado Final', 'Gols Mais/Menos', 'Ambos Marcam', 'Dupla Hipótese'];
     const sortedGroups: Record<string, any[]> = {};
-    sortedKeys.forEach(key => {
-        const g = groups[key];
-        if (g) { 
-            sortedGroups[key] = g;
-        }
+    
+    // Adiciona prioridades primeiro
+    priority.forEach(p => {
+        if (groups[p]) sortedGroups[p] = groups[p];
+    });
+    
+    // Adiciona o resto
+    Object.keys(groups).sort().forEach(k => {
+        if (!priority.includes(k)) sortedGroups[k] = groups[k];
     });
 
     return sortedGroups;
 });
 
+// Auto-expandir os principais
 watch(groupedMarkets, (newVal) => {
-    Object.keys(newVal).forEach((k) => expandedMarkets.value.add(k));
+    const important = ['Resultado Final', 'Gols Mais/Menos', 'Ambos Marcam'];
+    Object.keys(newVal).forEach(k => {
+        if (important.includes(k) || expandedMarkets.value.size < 3) expandedMarkets.value.add(k);
+    });
 });
 
-const getMethodTable = (odds: any[]) => {
-    const table: any = {};
-    const methodsOrder = ['Tempo Regulamentar', 'Prorrogação', 'Pênaltis'];
-
-    if (!event.value) return {};
-
-    odds.forEach(odd => {
-        let name = asString(odd.outcomeName);
-        let method = "Vencer";
-        let teamType = "";
-
-        if (name.includes(event.value!.homeTeam)) {
-            method = name.replace(event.value!.homeTeam, "").replace(" - ", "").trim();
-            teamType = 'home';
-        } else if (name.includes(event.value!.awayTeam)) {
-            method = name.replace(event.value!.awayTeam, "").replace(" - ", "").trim();
-            teamType = 'away';
-        }
-
-        if (!method || method.length < 3) method = name;
-        if (!table[method]) table[method] = { method };
-        table[method][teamType] = odd;
-    });
-
-    const sorted: any = {};
-    methodsOrder.forEach(m => { if (table[m]) sorted[m] = table[m]; });
-    Object.keys(table).forEach(k => { if (!sorted[k]) sorted[k] = table[k]; });
-
-    return sorted;
-};
-
-const formatOutcomeName = (val: string | number) => {
-    let str = asString(val);
-    const lower = str.toLowerCase();
-
-    if (['draw', 'x'].includes(lower)) return 'Empate';
-    if (lower === 'yes') return 'Sim';
-    if (lower === 'no') return 'Não';
-
-    str = str.replace(/ or /gi, ' ou ')
-        .replace(/Draw/gi, 'Empate')
-        .replace(/Home/gi, 'Casa')
-        .replace(/Away/gi, 'Fora');
-
-    return str;
-};
-
-const getDisplayLabel = (odd: any, marketName: string) => {
-    if (isMarket1x2(marketName)) {
-        const type = getBetTypeForSlip(odd, marketName);
-        if (type === '1') return 'Casa';
-        if (type === '2') return 'Fora';
-        if (type === 'X') return 'Empate';
+// --- HELPERS DE SELEÇÃO E FORMATAÇÃO ---
+const getBetTypeForSlip = (odd: any, marketName: string): string => {
+    if (isMarket1x2(marketName) && event.value) {
+        const outcome = asString(odd.outcomeName).toLowerCase();
+        const home = asString(event.value.homeTeam).toLowerCase();
+        const away = asString(event.value.awayTeam).toLowerCase();
+        if (['draw', 'x', 'empate'].includes(outcome)) return 'X';
+        if (outcome === '1' || outcome.includes(home)) return '1';
+        if (outcome === '2' || outcome.includes(away)) return '2';
+        return 'X';
     }
-    return formatOutcomeName(odd.outcomeName);
+    return translateMarket(marketName);
 };
 
 const getSelectionId = (gameId: string, odd: any): string => {
-    const canonicalId = gameId;
     const type = getBetTypeForSlip(odd, odd.marketName);
-
-    if (['1', '2', 'X'].includes(type)) return canonicalId;
-
-    return `${canonicalId}_${asString(odd.marketName)}_${asString(odd.outcomeName)}`;
+    if (['1', '2', 'X'].includes(type)) return gameId;
+    return `${gameId}_${asString(odd.marketName)}_${asString(odd.outcomeName)}`;
 };
 
 const isSelected = (odd: any): boolean => {
     if (!event.value) return false;
-    const gameId = asString(route.params.id);
-    const uniqueId = getSelectionId(gameId, odd);
-    const found = betStore.selections.find((s) => s.id === uniqueId);
-    if (!found) return false;
-    const myType = getBetTypeForSlip(odd, odd.marketName);
-    if (['1', '2', 'X'].includes(myType)) return found.type === myType;
-    return true;
-};
-
-const countSelectedInMarket = (odds: any[]) => {
-    let count = 0;
-    odds.forEach(odd => { if (isSelected(odd)) count++; });
-    return count;
+    const uniqueId = getSelectionId(asString(route.params.id), odd);
+    return betStore.selections.some(s => s.id === uniqueId);
 };
 
 const handleSelection = (odd: any) => {
     if (!event.value) return;
-
     const gameId = asString(route.params.id);
     const betTypeString = getBetTypeForSlip(odd, odd.marketName);
-    const betType = betTypeString as BetType;
     const uniqueId = getSelectionId(gameId, odd);
 
     if (isSelected(odd)) {
@@ -275,20 +151,9 @@ const handleSelection = (odd: any) => {
         return;
     }
 
+    // Lógica de substituição inteligente
     if (['1', '2', 'X'].includes(betTypeString)) {
-        betStore.selections
-            .filter((s) => s.id === gameId)
-            .forEach((s) => betStore.removeSelection(s.id));
-    }
-    else {
-        betStore.selections.forEach((s) => {
-            if (String(s.id).startsWith(String(gameId))) {
-                const selId = String(s.id);
-                if (selId.includes(`_${asString(odd.marketName)}_`)) {
-                    betStore.removeSelection(s.id);
-                }
-            }
-        });
+        betStore.selections.filter(s => s.id === gameId).forEach(s => betStore.removeSelection(s.id));
     }
 
     let selectionName = asString(odd.outcomeName);
@@ -302,141 +167,165 @@ const handleSelection = (odd: any) => {
         event.value.awayTeam,
         selectionName,
         Number(odd.price),
-        betType,
+        betTypeString as BetType,
         event.value.commenceTime
     );
 };
 
 const formatDate = (d: string) => {
-    if (!d) return '---';
+    if (!d) return '--/--';
     const date = new Date(d);
-    return `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}`;
+    return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 };
 
-const formatTime = (d: string) =>
-    d ? new Date(d).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--';
+const formatTime = (d: string) => d ? new Date(d).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--';
+
+const formatOutcomeName = (val: string | number) => {
+    let str = asString(val).replace(/ or /gi, ' / ').replace(/Draw/gi, 'Empate').replace(/Home/gi, 'Casa').replace(/Away/gi, 'Fora');
+    if (str.toLowerCase() === 'yes') return 'Sim';
+    if (str.toLowerCase() === 'no') return 'Não';
+    return str;
+};
 
 onMounted(fetchDetails);
 </script>
 
 <template>
-    <div class="space-y-3 pb-20 pt-2 px-2 md:px-0">
+    <div class="space-y-6 pb-24 pt-4 px-3 md:px-0 max-w-5xl mx-auto">
         
-        <div class="flex items-center gap-2 pb-2 border-b border-stake-dark/50">
+        <div class="flex items-center gap-3 pb-3 border-b border-white/5">
             <button @click="router.back()"
-                class="bg-stake-card p-1.5 rounded hover:bg-white/10 text-white transition-colors border border-transparent">
-                <ArrowLeft class="w-4 h-4" />
+                class="bg-white/5 hover:bg-white/10 p-2 rounded-full text-white transition-all active:scale-95 group">
+                <ArrowLeft class="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
             </button>
-
-            <h2 class="text-white text-sm font-bold uppercase italic whitespace-nowrap tracking-wide">
-                <span class="text-stake-blue">#</span> {{ event?.league || 'Detalhes' }}
-            </h2>
-        </div>
-
-        <div v-if="loading" class="text-stake-text animate-pulse pl-2 font-bold uppercase tracking-widest text-xs">
-            Carregando mercados...
-        </div>
-
-        <div v-else-if="event" class="space-y-3">
-
-            <div class="bg-[#1e293b] rounded border border-white/5 p-3 flex items-center justify-between shadow-lg relative overflow-hidden">
-                <div class="absolute inset-0 bg-gradient-to-r from-blue-500/5 to-transparent pointer-events-none"></div>
-
-                <div class="flex-1 flex flex-col items-center justify-center gap-1 z-10">
-                    <TeamLogo :teamName="event.homeTeam" size="w-8 h-8" />
-                    <h1 class="text-white font-bold text-xs text-center leading-tight truncate w-full px-1">
-                        {{ event.homeTeam }}
-                    </h1>
-                </div>
-
-                <div class="flex flex-col items-center justify-center min-w-[80px] z-10 border-x border-white/5 px-2 mx-1">
-                    <div class="text-lg font-black text-stake-blue italic leading-none">VS</div>
-                    <div class="mt-1 flex flex-col items-center">
-                        <span class="text-stake-text font-bold text-[10px] uppercase leading-none">
-                            {{ formatDate(event.commenceTime) }}
-                        </span>
-                        <div class="flex items-center gap-1 text-white font-bold text-xs mt-0.5">
-                            <Clock class="w-3 h-3 text-stake-blue" />
-                            {{ formatTime(event.commenceTime) }}
-                        </div>
-                    </div>
-                </div>
-
-                <div class="flex-1 flex flex-col items-center justify-center gap-1 z-10">
-                    <TeamLogo :teamName="event.awayTeam" size="w-8 h-8" />
-                    <h1 class="text-white font-bold text-xs text-center leading-tight truncate w-full px-1">
-                        {{ event.awayTeam }}
-                    </h1>
-                </div>
+            <div class="flex flex-col">
+                <span class="text-[10px] text-stake-text font-bold uppercase tracking-widest">Evento</span>
+                <h2 class="text-white text-sm font-bold uppercase tracking-wide truncate max-w-[200px] md:max-w-none">
+                    {{ event?.league || 'Carregando...' }}
+                </h2>
             </div>
+        </div>
 
-            <div v-for="(odds, marketName) in groupedMarkets" :key="marketName" class="rounded overflow-hidden">
+        <div v-if="loading" class="space-y-4 animate-pulse">
+            <div class="h-32 bg-white/5 rounded-xl"></div>
+            <div class="h-12 bg-white/5 rounded-lg w-1/3"></div>
+            <div class="grid grid-cols-3 gap-3"><div class="h-10 bg-white/5 rounded"></div><div class="h-10 bg-white/5 rounded"></div><div class="h-10 bg-white/5 rounded"></div></div>
+        </div>
 
-                <div @click="toggleMarket(marketName)"
-                    class="bg-[#1e293b] p-2 flex items-center justify-between border-l-2 border-stake-blue cursor-pointer hover:bg-[#253248] transition-all select-none group">
-                    <div class="flex items-center gap-2">
-                        <Trophy class="w-3.5 h-3.5 text-stake-blue opacity-80" />
-                        <h3 class="text-white font-bold text-xs uppercase tracking-wide">
-                            {{ marketName }}
-                        </h3>
+        <div v-else-if="event" class="space-y-6">
 
-                        <span v-if="countSelectedInMarket(odds) > 0"
-                            class="ml-1 bg-yellow-500 text-black text-[9px] font-black w-4 h-4 flex items-center justify-center rounded-full shadow-[0_0_8px_rgba(234,179,8,0.5)] animate-in zoom-in">
-                            {{ countSelectedInMarket(odds) }}
-                        </span>
-                    </div>
-
-                    <component :is="expandedMarkets.has(marketName) ? ChevronDown : ChevronRight"
-                        class="w-4 h-4 text-stake-text" />
+            <div class="relative rounded-xl p-6 border border-white/5 shadow-2xl overflow-hidden group min-h-[160px] flex items-center">
+                
+                <div class="absolute inset-0 z-0">
+                    <img src="/images/backgrouns-sport/backgrounds1.png" 
+                         alt="Stadium Background" 
+                         class="w-full h-full object-cover transition-transform duration-[10s] group-hover:scale-110" />
                 </div>
 
-                <div v-show="expandedMarkets.has(marketName)"
-                    class="bg-[#0f172a] p-2 border-x border-b border-stake-card/20">
+                <div class="absolute inset-0 z-0 bg-gradient-to-t from-[#0f212e] via-[#0f212e]/80 to-[#1a2c38]/70 backdrop-blur-[1px]"></div>
 
-                    <div v-if="marketName === 'Método de Vitória'" class="flex flex-col gap-1">
-                        <div v-for="(row, method) in getMethodTable(odds)" :key="method"
-                            class="grid grid-cols-3 items-center gap-1 border-b border-white/5 pb-1 last:border-0">
-                            <div class="text-[10px] text-white font-bold capitalize truncate pr-1">{{ method }}</div>
+                <div class="relative z-10 flex items-center justify-between gap-4 w-full">
+                    
+                    <div class="flex-1 flex flex-col items-center gap-3 text-center">
+                        <div class="relative">
+                            <TeamLogo :teamName="event.homeTeam" size="w-16 h-16 md:w-20 md:h-20" class="drop-shadow-[0_4px_6px_rgba(0,0,0,0.5)] transition-transform group-hover:scale-105 duration-500" />
+                        </div>
+                        <h1 class="text-white font-black text-sm md:text-lg leading-tight line-clamp-2 drop-shadow-md">
+                            {{ event.homeTeam }}
+                        </h1>
+                    </div>
 
-                            <button v-if="row.home" @click="handleSelection(row.home)"
-                                :class="['py-1.5 rounded text-center transition-all', isSelected(row.home) ? 'bg-stake-blue text-white' : 'bg-[#1e293b] hover:bg-white/5 text-stake-blue']">
-                                <span class="font-bold text-xs">{{ Number(row.home.price).toFixed(2) }}</span>
-                            </button>
-                            <div v-else class="text-center text-white/10 text-xs">-</div>
-
-                            <button v-if="row.away" @click="handleSelection(row.away)"
-                                :class="['py-1.5 rounded text-center transition-all', isSelected(row.away) ? 'bg-stake-blue text-white' : 'bg-[#1e293b] hover:bg-white/5 text-stake-blue']">
-                                <span class="font-bold text-xs">{{ Number(row.away.price).toFixed(2) }}</span>
-                            </button>
-                            <div v-else class="text-center text-white/10 text-xs">-</div>
+                    <div class="flex flex-col items-center justify-center min-w-[100px]">
+                        <div class="bg-black/40 backdrop-blur-md px-4 py-1.5 rounded-full border border-white/10 mb-3 shadow-lg">
+                            <span class="text-stake-blue font-black text-xs tracking-wider">VS</span>
+                        </div>
+                        <div class="flex flex-col items-center gap-1">
+                            <div class="flex items-center gap-1.5 text-white/90 font-bold text-xs bg-black/30 px-2 py-1 rounded shadow-sm border border-white/5">
+                                <Clock class="w-3 h-3 text-stake-blue" />
+                                <span>{{ formatTime(event.commenceTime) }}</span>
+                            </div>
+                            <span class="text-xs text-gray-300 font-bold uppercase tracking-wide drop-shadow-sm">
+                                {{ formatDate(event.commenceTime) }}
+                            </span>
                         </div>
                     </div>
 
-                    <div v-else class="grid grid-cols-3 md:grid-cols-4 gap-2">
-                        <button v-for="odd in odds" :key="odd.id || odd.outcomeName" @click="handleSelection(odd)"
-                            :class="[
-                                'h-[42px] px-1 rounded-sm flex flex-col items-center justify-center border border-transparent transition-all relative overflow-hidden group/btn active:scale-95',
-                                isSelected(odd)
-                                    ? 'bg-stake-blue shadow-[0_0_8px_rgba(0,146,255,0.4)]'
-                                    : 'bg-[#1e293b] hover:bg-[#253248]'
-                            ]">
-                            
-                            <div :class="[
-                                    'text-[9px] font-bold uppercase truncate w-full text-center leading-none mb-1',
-                                    isSelected(odd) ? 'text-white' : 'text-stake-text/70 group-hover/btn:text-white'
-                                ]">
-                                {{ getDisplayLabel(odd, marketName) }}
-                                <span v-if="odd.point" class="ml-0.5 text-stake-blue/90 font-black">{{ odd.point > 0 ? '+' : '' }}{{ odd.point }}</span>
-                            </div>
+                    <div class="flex-1 flex flex-col items-center gap-3 text-center">
+                        <div class="relative">
+                            <TeamLogo :teamName="event.awayTeam" size="w-16 h-16 md:w-20 md:h-20" class="drop-shadow-[0_4px_6px_rgba(0,0,0,0.5)] transition-transform group-hover:scale-105 duration-500" />
+                        </div>
+                        <h1 class="text-white font-black text-sm md:text-lg leading-tight line-clamp-2 drop-shadow-md">
+                            {{ event.awayTeam }}
+                        </h1>
+                    </div>
+                </div>
+            </div>
 
-                            <div class="text-xs font-black text-white leading-none">
-                                {{ Number(odd.price).toFixed(2) }}
+            <div class="space-y-3">
+                <div v-for="(odds, marketName) in groupedMarkets" :key="marketName" 
+                    class="bg-[#1a2c38] rounded-lg border border-white/5 overflow-hidden transition-all duration-300 hover:border-white/10"
+                    :class="expandedMarkets.has(marketName) ? 'shadow-lg' : 'shadow-sm'">
+
+                    <div @click="toggleMarket(marketName)"
+                        class="flex items-center justify-between p-3.5 cursor-pointer bg-white/[0.02] hover:bg-white/[0.05] transition-colors select-none">
+                        <div class="flex items-center gap-2.5">
+                            <div class="bg-stake-blue/10 p-1.5 rounded text-stake-blue">
+                                <BarChart3 v-if="marketName.includes('Gols')" class="w-4 h-4" />
+                                <Trophy v-else class="w-4 h-4" />
                             </div>
-                        </button>
+                            <h3 class="text-white font-bold text-xs uppercase tracking-wide">{{ marketName }}</h3>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span v-if="!expandedMarkets.has(marketName)" class="text-[10px] text-stake-text font-medium bg-black/20 px-2 py-0.5 rounded-full">
+                                {{ odds.length }} opções
+                            </span>
+                            <component :is="expandedMarkets.has(marketName) ? ChevronDown : ChevronRight" 
+                                class="w-4 h-4 text-stake-text transition-transform duration-300" />
+                        </div>
+                    </div>
+
+                    <div v-show="expandedMarkets.has(marketName)" class="p-3 border-t border-white/5 bg-[#0f212e]/50">
+                        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                            <button v-for="odd in odds" :key="odd.id || odd.outcomeName" 
+                                @click="handleSelection(odd)"
+                                class="relative group flex flex-col justify-between p-2.5 rounded border transition-all duration-200 h-[52px]"
+                                :class="isSelected(odd) 
+                                    ? 'bg-stake-blue/10 border-stake-blue shadow-[0_0_10px_rgba(0,146,255,0.2)]' 
+                                    : 'bg-[#1a2c38] border-transparent hover:bg-white/5 hover:border-white/10'">
+                                
+                                <span class="text-[10px] font-bold uppercase truncate w-full text-left transition-colors mb-0.5"
+                                    :class="isSelected(odd) ? 'text-stake-blue' : 'text-stake-text group-hover:text-white'">
+                                    {{ formatOutcomeName(odd.outcomeName) }}
+                                    <span v-if="odd.point" class="text-white ml-1">{{ odd.point > 0 ? '+' : '' }}{{ odd.point }}</span>
+                                </span>
+
+                                <span class="text-sm font-black text-right w-full leading-none transition-transform group-hover:-translate-y-0.5"
+                                    :class="isSelected(odd) ? 'text-white' : 'text-white'">
+                                    {{ Number(odd.price).toFixed(2) }}
+                                </span>
+
+                                <div v-if="isSelected(odd)" class="absolute top-0 right-0 w-2 h-2">
+                                    <span class="absolute inline-flex h-full w-full rounded-bl-md bg-stake-blue opacity-100"></span>
+                                </div>
+                            </button>
+                        </div>
                     </div>
 
                 </div>
             </div>
+
         </div>
     </div>
 </template>
+
+<style scoped>
+/* Animação suave para o acordeão */
+.v-enter-active,
+.v-leave-active {
+  transition: opacity 0.2s ease;
+}
+.v-enter-from,
+.v-leave-to {
+  opacity: 0;
+}
+</style>
