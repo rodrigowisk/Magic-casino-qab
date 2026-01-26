@@ -28,7 +28,6 @@ services:
       dockerfile: Magic-casino/Dockerfile
     image: magic-casino-core:prod
     container_name: core
-    # Mudei para formato de MAPA (sem tracinhos) para evitar erros
     environment:
       ConnectionStrings__Redis: "redis:6379"
       ConnectionStrings__DefaultConnection: "${DB_CONN_CORE}"
@@ -41,16 +40,20 @@ services:
     depends_on:
       - redis
 
-  # ✅ SPORTBOOK (Onde estava o erro)
+  # ✅ SPORTBOOK (CORRIGIDO AQUI)
   sportbook:
     build:
       context: .
       dockerfile: Magic-casino-sportbook/Dockerfile
     image: magic-casino-sportbook:prod
     container_name: sportbook
-    # AQUI ESTAVA O ERRO. Agora está corrigido (Mapa chave: valor):
     environment:
-      ASPNETCORE_ENVIRONMENT: "Development"  # <--- Habilita o Swagger
+      ASPNETCORE_ENVIRONMENT: "Development"
+      
+      # 🔥 CORREÇÃO: Variável exata que o Program.cs procura
+      REDIS_CONNECTION_STRING: "redis:6379,abortConnect=false"
+      
+      # Mantemos a antiga por segurança
       ConnectionStrings__Redis: "redis:6379"
       ConnectionStrings__DefaultConnection: "${DB_CONN_SPORTBOOK}"
       OddsApiKey: "${ODDS_API_KEY}"
@@ -72,7 +75,6 @@ services:
       dockerfile: Magic-casino-slot/Dockerfile
     image: magic-casino-slot:prod
     container_name: slot
-    # Padronizado para Mapa também
     environment:
       ConnectionStrings__Redis: "redis:6379"
       ConnectionStrings__DefaultConnection: "${DB_CONN_SLOT}"

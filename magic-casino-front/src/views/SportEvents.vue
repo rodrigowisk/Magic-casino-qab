@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-// 🔥 CORREÇÃO: Adicionado AlertCircle e removidos Play/Clock
 import { ArrowLeft, ChevronDown, ChevronRight, Calendar, AlertCircle } from 'lucide-vue-next';
 import SportsService from '../services/SportsService';
 import TeamLogo from '../components/TeamLogo.vue';
@@ -9,12 +8,12 @@ import { useBetStore, type BetType } from '../stores/useBetStore';
 import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signalr';
 
 // ✅ IMPORTAÇÃO DA NOVA FUNÇÃO DE BANDEIRAS
-import { getFlag } from '../utils/flags'; 
+import { getFlag } from '../utils/flags';
 
 // Interface flexível para lidar com PascalCase (C#) e camelCase (JS)
 interface SportEvent {
   externalId?: string;
-  ExternalId?: string; // Adicionado para compatibilidade com C#
+  ExternalId?: string; // Compatibilidade C#
   id?: string;
   Id?: string;
   homeTeam: string;
@@ -28,7 +27,7 @@ interface SportEvent {
   countryCode?: string;
   homeTeamLogo?: string;
   awayTeamLogo?: string;
-  
+
   rawOddsHome?: number;
   rawOddsDraw?: number;
   rawOddsAway?: number;
@@ -47,7 +46,7 @@ const loadingMore = ref(false);
 const events = ref<SportEvent[]>([]);
 const currentPage = ref(1);
 const hasMore = ref(true);
-const pageSize = 1000; 
+const pageSize = 1000;
 
 // --- STATE SIGNALR ---
 const connection = ref<HubConnection | null>(null);
@@ -71,20 +70,20 @@ let observer: IntersectionObserver | null = null;
 
 // --- UTILS ---
 const getLocalDateString = (dateObj: Date) => {
-    const year = dateObj.getFullYear();
-    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-    const day = String(dateObj.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+  const year = dateObj.getFullYear();
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 
-// 🔥 FUNÇÃO CRÍTICA CORRIGIDA: Prioriza o ID Externo da Bet365
+// 🔥 FUNÇÃO CRÍTICA: Prioriza o ID Externo e LIMPA ESPAÇOS
 const getGameId = (game: SportEvent): string => {
-  // Tenta pegar ExternalId (PascalCase do C#) ou externalId (camelCase)
-  const id = game.externalId || game.ExternalId || game.id || game.Id;
-  
-  if (id) return String(id); // Garante que retorna STRING para comparação
-  
-  // Fallback único (evita erros)
+  // Tenta pegar ExternalId (PascalCase do C#) ou externalId (camelCase) ou Id interno
+  const id = game.ExternalId || game.externalId || game.id || game.Id;
+
+  if (id) return String(id).trim(); // 🔥 .trim() é essencial para bater com o SignalR
+
+  // Fallback único (evita erros se vier sem ID)
   const home = game.homeTeam || game.HomeTeam || 'Home';
   const away = game.awayTeam || game.AwayTeam || 'Away';
   return `${home}_${away}`;
@@ -143,7 +142,7 @@ const handleSelection = (game: SportEvent, type: BetType) => {
 // --- FETCHING ---
 const fetchEvents = async (reset = false) => {
   if (!sportKey.value) return;
-  
+
   if (reset) {
     loading.value = true;
     currentPage.value = 1;
@@ -162,24 +161,25 @@ const fetchEvents = async (reset = false) => {
     if (newEvents.length < pageSize) hasMore.value = false;
 
     if (reset) {
-        events.value = newEvents;
+      events.value = newEvents;
     } else {
-        const existingIds = new Set(events.value.map(e => getGameId(e)));
-        const uniqueNewEvents = newEvents.filter(e => !existingIds.has(getGameId(e)));
-        events.value.push(...uniqueNewEvents);
+      const existingIds = new Set(events.value.map(e => getGameId(e)));
+      const uniqueNewEvents = newEvents.filter(e => !existingIds.has(getGameId(e)));
+      events.value.push(...uniqueNewEvents);
     }
-    
+
+    // Abre as ligas automaticamente na primeira carga
     if (currentPage.value === 1) {
-        newEvents.forEach(e => { 
-            const lg = e.league || e.League;
-            if (lg) openLeagues.value.add(lg); 
-        });
+      newEvents.forEach(e => {
+        const lg = e.league || e.League;
+        if (lg) openLeagues.value.add(lg);
+      });
     }
-    
+
     currentPage.value++;
   } catch (e) {
     console.error(e);
-    hasMore.value = false; 
+    hasMore.value = false;
   } finally {
     loading.value = false;
     loadingMore.value = false;
@@ -196,12 +196,13 @@ onMounted(async () => {
       fetchEvents(false);
     }
   }, { rootMargin: '200px' });
+  
   if (loadTrigger.value) observer.observe(loadTrigger.value);
 
-  // 2. Conexão SignalR - CORRIGIDA E ROBUSTA
+  // 2. Conexão SignalR - CORRIGIDA E COM DEBUG
   try {
-    const signalRUrl = "/gameHub"; // Usa o Proxy do Nginx
-    
+    const signalRUrl = "/gameHub";
+
     console.log(`🔌 [PRÉ-JOGO] Conectando SignalR em: ${signalRUrl}`);
 
     connection.value = new HubConnectionBuilder()
@@ -210,30 +211,61 @@ onMounted(async () => {
       .withAutomaticReconnect()
       .build();
 
-    // 🔥 OUVINTE 1: Remove o jogo da lista de pré-jogo assim que começa (CORRIGIDO)
-    connection.value.on("RemoveGames", (idsToRemove: string[]) => {
-      // Converte para Set de Strings para busca O(1) rápida e segura
-      const idsSet = new Set(idsToRemove.map(String));
-      
-      console.log(`🔥 [SIGNALR] Recebido pedido para remover ${idsSet.size} jogos.`);
+    // 🔥 OUVINTE 1: REMOÇÃO COM TRATAMENTO DE STRING E DEBUG
+    connection.value.on("RemoveGames", (idsToRemove: any[]) => {
+      if (!idsToRemove || idsToRemove.length === 0) return;
+
+      // 1. Normaliza os IDs que chegaram (String + Trim)
+      const idsSet = new Set(idsToRemove.map(id => String(id).trim()));
+
+      console.group("🔥 [SIGNALR DEBUG] RemoveGames");
+      console.log(`📥 IDs recebidos para remover (${idsSet.size}):`, [...idsSet]);
 
       if (events.value.length > 0) {
+        // CORREÇÃO TYPESCRIPT: Verifica se o jogo existe antes de acessar
+        const primeiroJogoExemplo = events.value[0];
+        
+        if (primeiroJogoExemplo) {
+            const idExemplo = getGameId(primeiroJogoExemplo);
+            console.log(`🔍 Exemplo de ID no Frontend (Jogo: ${primeiroJogoExemplo.homeTeam}):`, `'${idExemplo}'`);
+        }
+
         const initialCount = events.value.length;
-        
+
+        // 2. Filtragem: Mantém apenas os jogos cujo ID NÃO está no set de remoção
         events.value = events.value.filter(game => {
-            const gameId = getGameId(game);
-            // Se o ID do jogo estiver na lista de remoção, retorna FALSE (filtra fora)
-            return !idsSet.has(gameId);
+          // Normaliza o ID do jogo atual também
+          const gameId = getGameId(game).trim();
+
+          // Se o set TIVER o ID, deveRemover é true
+          const deveRemover = idsSet.has(gameId);
+
+          if (deveRemover) {
+            console.log(`❌ Removendo jogo da tela: ${game.homeTeam} vs ${game.awayTeam} (ID: ${gameId})`);
+          }
+
+          // Retorna true para MANTER o jogo, false para remover
+          return !deveRemover;
         });
-        
+
         const removedCount = initialCount - events.value.length;
+
         if (removedCount > 0) {
-            console.log(`✅ Sucesso! ${removedCount} jogos foram removidos da lista.`);
+          console.log(`✅ Sucesso! ${removedCount} jogos foram removidos da memória.`);
+        } else {
+          console.warn("⚠️ Nenhum jogo foi removido. Verifique se os IDs batem (veja logs acima).");
         }
       }
+      console.groupEnd();
     });
 
-    // 🔇 OUVINTE 2: Silenciador de Warning (Odds ao vivo não interessam aqui)
+    // 🔇 OUVINTE 2: GameWentLive
+    // CORREÇÃO TYPESCRIPT: Removemos o argumento 'games' não utilizado
+    connection.value.on("GameWentLive", () => {
+       // Lógica opcional: remover jogos que foram para ao vivo se esta tela for SÓ pré-jogo
+    });
+
+    // 🔇 OUVINTE 3: LiveOddsUpdate (Silencia updates de odds pois aqui é pré-jogo)
     connection.value.on("LiveOddsUpdate", () => {});
 
     await connection.value.start();
@@ -250,6 +282,8 @@ onUnmounted(() => {
     connection.value.stop();
   }
 });
+
+// --- COMPUTEDS AUXILIARES ---
 
 const datasFiltro = computed(() => {
   const opcoes = [{ label: 'TODAS', valor: 'all' }];
@@ -274,13 +308,15 @@ const groupedEvents = computed(() => {
   const groups: Record<string, SportEvent[]> = {};
   events.value.forEach(event => {
     const lg = event.league || event.League;
+    // Filtro por Liga (Query Param)
     if (leagueFilter.value && lg !== leagueFilter.value) return;
-    
+
+    // Filtro por Data
     const time = event.commenceTime || event.CommenceTime;
     if (dataSelecionada.value !== 'all' && time) {
-        const dateObj = new Date(time);
-        const eventDateLocal = getLocalDateString(dateObj);
-        if (eventDateLocal !== dataSelecionada.value) return;
+      const dateObj = new Date(time);
+      const eventDateLocal = getLocalDateString(dateObj);
+      if (eventDateLocal !== dataSelecionada.value) return;
     }
 
     const leagueName = lg || 'Outros';
@@ -308,22 +344,23 @@ const traduzirEsporte = (key: string) => {
 };
 
 const handleImageError = (event: Event) => {
-    const target = event.target as HTMLImageElement;
-    if (target) target.style.display = 'none';
+  const target = event.target as HTMLImageElement;
+  if (target) target.style.display = 'none';
 };
 </script>
 
 <template>
   <div class="space-y-2 pt-2 pb-20">
-    
+
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-2 pb-1.5 border-b border-stake-dark/50">
-      
+
       <div class="flex items-center gap-2">
-        <button v-if="leagueFilter" @click="router.push({ name: 'sport-events', params: { id: sportKey } })" class="bg-stake-card p-1.5 rounded hover:bg-white/10 text-white transition">
+        <button v-if="leagueFilter" @click="router.push({ name: 'sport-events', params: { id: sportKey } })"
+          class="bg-stake-card p-1.5 rounded hover:bg-white/10 text-white transition">
           <ArrowLeft class="w-4 h-4" />
         </button>
         <div class="bg-blue-500/10 p-1 rounded-full animate-pulse">
-            <Calendar class="w-4 h-4 text-blue-500" />
+          <Calendar class="w-4 h-4 text-blue-500" />
         </div>
         <h2 class="text-white text-sm font-bold uppercase italic whitespace-nowrap tracking-wide">
           {{ leagueFilter || traduzirEsporte(sportKey) }}
@@ -339,67 +376,85 @@ const handleImageError = (event: Event) => {
     </div>
 
     <div v-if="loading" class="space-y-3 pt-2">
-        <div v-for="i in 5" :key="i" class="bg-stake-card h-20 rounded animate-pulse border border-white/5"></div>
+      <div v-for="i in 5" :key="i" class="bg-stake-card h-20 rounded animate-pulse border border-white/5"></div>
     </div>
 
     <div v-else class="space-y-3 pt-2">
-      
-      <div v-if="Object.keys(groupedEvents).length === 0" class="py-10 text-center text-stake-text opacity-50 border border-dashed border-stake-text/20 rounded">
-        <AlertCircle class="w-8 h-8 mb-2 opacity-50 mx-auto"/>
+
+      <div v-if="Object.keys(groupedEvents).length === 0"
+        class="py-10 text-center text-stake-text opacity-50 border border-dashed border-stake-text/20 rounded">
+        <AlertCircle class="w-8 h-8 mb-2 opacity-50 mx-auto" />
         <p class="text-xs">Nenhum jogo encontrado para este filtro.</p>
-        <button @click="fetchEvents(false)" class="mt-2 text-stake-blue font-bold text-[10px] hover:underline cursor-pointer uppercase">
-            Atualizar Lista
+        <button @click="fetchEvents(false)"
+          class="mt-2 text-stake-blue font-bold text-[10px] hover:underline cursor-pointer uppercase">
+          Atualizar Lista
         </button>
       </div>
 
       <div v-else v-for="(games, league) in groupedEvents" :key="league" class="rounded overflow-hidden">
-        
-        <div @click="openLeagues.has(String(league)) ? openLeagues.delete(String(league)) : openLeagues.add(String(league))"
+
+        <div
+          @click="openLeagues.has(String(league)) ? openLeagues.delete(String(league)) : openLeagues.add(String(league))"
           class="bg-stake-card/60 backdrop-blur-sm p-2 flex items-center justify-between border-l-2 border-stake-blue cursor-pointer hover:bg-stake-card transition-all select-none">
           <div class="flex items-center gap-2">
-            
-            <img :src="getFlag(league, games[0]?.countryCode)" class="w-4 h-3 rounded-[1px] shadow-sm object-cover bg-black/20" @error="handleImageError" />
-            
+
+            <img :src="getFlag(league, games[0]?.countryCode)"
+              class="w-4 h-3 rounded-[1px] shadow-sm object-cover bg-black/20" @error="handleImageError" />
+
             <h3 class="text-white font-bold text-xs uppercase tracking-wide">{{ league }}</h3>
-            
-            <span v-if="countBetsInLeague(games) > 0" class="bg-yellow-500 text-black text-[10px] font-black w-4 h-4 flex items-center justify-center rounded-full ml-1 animate-pulse">{{ countBetsInLeague(games) }}</span>
-            <span v-else class="text-[9px] text-stake-text/60 font-bold bg-black/20 px-1.5 py-0.5 rounded-full">{{ games.length }}</span>
+
+            <span v-if="countBetsInLeague(games) > 0"
+              class="bg-yellow-500 text-black text-[10px] font-black w-4 h-4 flex items-center justify-center rounded-full ml-1 animate-pulse">{{
+              countBetsInLeague(games) }}</span>
+            <span v-else class="text-[9px] text-stake-text/60 font-bold bg-black/20 px-1.5 py-0.5 rounded-full">{{
+              games.length }}</span>
           </div>
-          <component :is="openLeagues.has(String(league)) ? ChevronDown : ChevronRight" class="w-4 h-4 text-stake-text" />
+          <component :is="openLeagues.has(String(league)) ? ChevronDown : ChevronRight"
+            class="w-4 h-4 text-stake-text" />
         </div>
 
         <div v-show="openLeagues.has(String(league))" class="bg-stake-dark border-x border-b border-stake-card/20">
-          <div v-for="game in games" :key="getGameId(game)" class="py-2 px-2 border-b border-white/5 flex flex-col md:flex-row items-center gap-2 transition-all hover:bg-[#B6FF00]/[0.02]">
-            
-            <div class="flex flex-row md:flex-col items-center justify-start md:justify-center gap-2 md:gap-0.5 min-w-[60px] md:w-[60px] text-left md:text-center mr-2 md:mr-0 border-r md:border-r-0 md:border-b-0 border-white/10 pr-2 md:pr-0 h-full">
-              <div class="text-[9px] font-bold text-stake-blue leading-none">{{ formatDate(game.commenceTime || game.CommenceTime) }}</div>
-              <div class="text-white text-[10px] font-bold leading-none">{{ formatTime(game.commenceTime || game.CommenceTime) }}</div>
+          <div v-for="game in games" :key="getGameId(game)"
+            class="py-2 px-2 border-b border-white/5 flex flex-col md:flex-row items-center gap-2 transition-all hover:bg-[#B6FF00]/[0.02]">
+
+            <div
+              class="flex flex-row md:flex-col items-center justify-start md:justify-center gap-2 md:gap-0.5 min-w-[60px] md:w-[60px] text-left md:text-center mr-2 md:mr-0 border-r md:border-r-0 md:border-b-0 border-white/10 pr-2 md:pr-0 h-full">
+              <div class="text-[9px] font-bold text-stake-blue leading-none">{{ formatDate(game.commenceTime ||
+                game.CommenceTime) }}</div>
+              <div class="text-white text-[10px] font-bold leading-none">{{ formatTime(game.commenceTime ||
+                game.CommenceTime) }}</div>
             </div>
 
-            <div class="flex-1 w-full text-white cursor-pointer hover:text-stake-blue transition-colors md:border-l md:border-white/5 md:pl-3" @click="router.push({ name: 'event-details', params: { id: getGameId(game) } })">
+            <div
+              class="flex-1 w-full text-white cursor-pointer hover:text-stake-blue transition-colors md:border-l md:border-white/5 md:pl-3"
+              @click="router.push({ name: 'event-details', params: { id: getGameId(game) } })">
               <div class="flex flex-col gap-1.5 justify-center h-full">
-                  <div class="flex items-center gap-2">
-                      <TeamLogo :teamName="game.homeTeam || game.HomeTeam || ''" :remoteUrl="game.homeTeamLogo" size="w-4 h-4" />
-                      <span class="font-medium text-xs text-white/90 truncate">{{ game.homeTeam || game.HomeTeam }}</span>
-                  </div>
-                  <div class="flex items-center gap-2">
-                      <TeamLogo :teamName="game.awayTeam || game.AwayTeam || ''" :remoteUrl="game.awayTeamLogo" size="w-4 h-4" />
-                      <span class="font-medium text-xs text-white/90 truncate">{{ game.awayTeam || game.AwayTeam }}</span>
-                  </div>
+                <div class="flex items-center gap-2">
+                  <TeamLogo :teamName="game.homeTeam || game.HomeTeam || ''" :remoteUrl="game.homeTeamLogo"
+                    size="w-4 h-4" />
+                  <span class="font-medium text-xs text-white/90 truncate">{{ game.homeTeam || game.HomeTeam }}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <TeamLogo :teamName="game.awayTeam || game.AwayTeam || ''" :remoteUrl="game.awayTeamLogo"
+                    size="w-4 h-4" />
+                  <span class="font-medium text-xs text-white/90 truncate">{{ game.awayTeam || game.AwayTeam }}</span>
+                </div>
               </div>
             </div>
 
             <div class="flex gap-1 w-full md:w-auto mt-2 md:mt-0">
-              <button v-for="type in betTypesToShow" :key="type" @click.stop="handleSelection(game, type)" :disabled="parseFloat(getOdd(game, type)) <= 1.0"
-                :class="['flex-1 md:w-[70px] h-auto py-1.5 rounded-sm flex flex-col items-center justify-center border border-transparent transition-all active:scale-95 group relative overflow-hidden', 
-                parseFloat(getOdd(game, type)) <= 1.0 ? 'opacity-50 cursor-not-allowed bg-stake-card border-transparent' : getSelectedType(getGameId(game)) === type ? 'bg-stake-blue shadow-[0_0_8px_rgba(0,146,255,0.4)]' : 'bg-stake-card hover:bg-stake-card/80']">
-                
-                <span :class="['text-[9px] font-bold uppercase mb-0.5 tracking-wide', getSelectedType(getGameId(game)) === type ? 'text-white' : 'text-stake-text/70']">
-                    {{ type === '1' ? 'Casa' : type === '2' ? 'Fora' : 'Empate' }}
+              <button v-for="type in betTypesToShow" :key="type" @click.stop="handleSelection(game, type)"
+                :disabled="parseFloat(getOdd(game, type)) <= 1.0" :class="['flex-1 md:w-[70px] h-auto py-1.5 rounded-sm flex flex-col items-center justify-center border border-transparent transition-all active:scale-95 group relative overflow-hidden',
+                  parseFloat(getOdd(game, type)) <= 1.0 ? 'opacity-50 cursor-not-allowed bg-stake-card border-transparent' : getSelectedType(getGameId(game)) === type ? 'bg-stake-blue shadow-[0_0_8px_rgba(0,146,255,0.4)]' : 'bg-stake-card hover:bg-stake-card/80']">
+
+                <span
+                  :class="['text-[9px] font-bold uppercase mb-0.5 tracking-wide', getSelectedType(getGameId(game)) === type ? 'text-white' : 'text-stake-text/70']">
+                  {{ type === '1' ? 'Casa' : type === '2' ? 'Fora' : 'Empate' }}
                 </span>
-                
-                <span :class="['text-xs font-bold transition-colors leading-none', getSelectedType(getGameId(game)) === type ? 'text-white' : 'text-white group-hover:text-stake-blue']">
-                    {{ getOdd(game, type) }}
+
+                <span
+                  :class="['text-xs font-bold transition-colors leading-none', getSelectedType(getGameId(game)) === type ? 'text-white' : 'text-white group-hover:text-stake-blue']">
+                  {{ getOdd(game, type) }}
                 </span>
               </button>
             </div>
@@ -409,9 +464,9 @@ const handleImageError = (event: Event) => {
       </div>
 
       <div ref="loadTrigger" class="h-16 flex items-center justify-center py-4">
-          <div v-if="loadingMore" class="flex items-center gap-2 text-stake-blue font-bold text-[10px] uppercase animate-pulse">
-              <div class="w-1.5 h-1.5 bg-stake-blue rounded-full animate-bounce"></div> Carregando...
-          </div>
+        <div v-if="loadingMore" class="flex items-center gap-2 text-stake-blue font-bold text-[10px] uppercase animate-pulse">
+          <div class="w-1.5 h-1.5 bg-stake-blue rounded-full animate-bounce"></div> Carregando...
+        </div>
       </div>
 
     </div>

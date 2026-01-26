@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { Menu, Search, Wallet, LogOut, Trophy, ChevronLeft, Gem } from 'lucide-vue-next';
 
 import Sidebar from '../components/Sidebar.vue'; 
-import TopSportsMenu from '../components/TopSportsMenu.vue'; 
+import TopSportsMenu from '../components/TopSportsMenu.vue'; // ✅ MANTIDO: O menu fica aqui
 import AuthModal from '../components/AuthModal.vue'; 
 import BetSlip from '../components/BetSlip.vue'; 
 
@@ -22,8 +22,10 @@ const isSidebarOpen = ref(true);
 const showAuthModal = ref(false);
 const isBetSlipOpen = ref(betStore.count > 0);
 
-// Detecta se é a página de histórico
+// Detecta páginas onde o menu global NÃO deve aparecer
 const isHistoryPage = computed(() => route.path === '/minhas-apostas'); 
+// 🔥 NOVA REGRA: Detecta se é a página Live
+const isLivePage = computed(() => route.path === '/live');
 
 const handleLogout = () => {
     authStore.logout();
@@ -71,7 +73,7 @@ onUnmounted(() => {
     
     <AuthModal v-if="showAuthModal" @close="showAuthModal = false" @login-success="handleLoginSuccess" />
 
-    <header class="h-16 bg-stake-card flex items-center justify-between px-4 shadow-lg sticky top-0 z-50 flex-shrink-0 border-b border-white/5">
+    <header class="h-16 bg-stake-card flex items-center justify-between px-4 shadow-lg flex-shrink-0 border-b border-white/5 z-50">
       <div class="flex items-center">
         <button @click="isSidebarOpen = !isSidebarOpen" class="hover:text-white transition-colors mr-2">
             <Menu class="w-6 h-6" />
@@ -127,37 +129,39 @@ onUnmounted(() => {
       
       <Sidebar v-show="isSidebarOpen" class="w-64 flex-shrink-0 transition-all duration-300 border-r border-white/5" />
 
-      <main 
-        class="flex-1 overflow-y-auto bg-stake-dark custom-scrollbar relative transition-all duration-300"
-        :class="isHistoryPage ? '!p-0' : 'p-4 md:p-6'"
-      >
-        <div v-if="!isHistoryPage" class="w-full mb-6">
+      <div class="flex-1 flex flex-col min-w-0 bg-stake-dark relative">
+        
+        <div v-if="!isHistoryPage && !isLivePage" class="w-full z-40 relative bg-stake-dark shadow-md">
             <TopSportsMenu />
         </div>
         
-        <div class="w-full h-full">
+        <main 
+            class="flex-1 overflow-y-auto custom-scrollbar relative"
+            :class="isHistoryPage ? 'p-0' : 'p-4 md:p-6'"
+        >
             <router-view />
-        </div>
-      </main>
+        </main>
+
+        <button 
+            v-if="!isBetSlipOpen"
+            @click="toggleBetSlip"
+            class="absolute bottom-6 right-6 z-50 bg-[#1e293b]/90 hover:bg-[#1e293b] text-white border border-yellow-500/30 shadow-2xl shadow-black/50 rounded-md px-6 py-3 flex items-center gap-3 transition-all hover:scale-105 group"
+        >
+            <div class="relative">
+                <Trophy class="w-5 h-5 text-yellow-500 group-hover:rotate-12 transition-transform" />
+                <span v-if="betStore.count > 0" class="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full font-bold border-2 border-[#1e293b]">
+                    {{ betStore.count }}
+                </span>
+            </div>
+            <span class="font-bold text-sm uppercase tracking-wide">Cupom de Apostas</span>
+            <ChevronLeft class="w-4 h-4 text-gray-400 group-hover:text-white" />
+        </button>
+
+      </div>
       
       <div v-show="isBetSlipOpen" class="w-[320px] bg-[#1e293b] border-l border-gray-700 flex flex-col flex-shrink-0 transition-all duration-300 shadow-2xl z-40">
           <BetSlip @toggle="toggleBetSlip" :is-open="true" />
       </div>
-
-      <button 
-        v-if="!isBetSlipOpen"
-        @click="toggleBetSlip"
-        class="absolute bottom-6 right-6 z-50 bg-[#1e293b]/60  hover:bg-[#1e293b] text-white border border-yellow-500/30 shadow-2xl shadow-black/50 rounded-md px-6 py-3 flex items-center gap-3 transition-all hover:scale-105 group"
-      >
-        <div class="relative">
-            <Trophy class="w-5 h-5 text-yellow-500 group-hover:rotate-12 transition-transform" />
-            <span v-if="betStore.count > 0" class="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full font-bold border-2 border-[#1e293b]">
-                {{ betStore.count }}
-            </span>
-        </div>
-        <span class="font-bold text-sm uppercase tracking-wide">Cupom de Apostas</span>
-        <ChevronLeft class="w-4 h-4 text-gray-400 group-hover:text-white" />
-      </button>
 
     </div>
   </div>

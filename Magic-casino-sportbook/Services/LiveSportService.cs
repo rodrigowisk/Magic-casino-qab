@@ -1,7 +1,7 @@
 ﻿using Magic_casino_sportbook.Data;
-using Magic_casino_sportbook.Hubs; // ✅ NECESSÁRIO PARA O SIGNALR
+using Magic_casino_sportbook.Hubs;
 using Magic_casino_sportbook.Models;
-using Microsoft.AspNetCore.SignalR; // ✅ NECESSÁRIO PARA O SIGNALR
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
 using System.Text.Json;
@@ -17,26 +17,25 @@ namespace Magic_casino_sportbook.Services
         private const string BASE_URL = "https://api.b365api.com";
         private readonly JsonSerializerOptions _jsonOptions;
 
-        // ✅ DEPENDÊNCIA: REDIS
+        // Redis para cache rápido
         private readonly IDatabase _redisDb;
 
-        // ✅ NOVA DEPENDÊNCIA: SIGNALR (O Mensageiro)
+        // SignalR para enviar updates ao frontend
         private readonly IHubContext<GameHub> _hubContext;
 
-        // 🔒 O PORTEIRO GLOBAL (SEMAPHORE):
+        // Semáforo para controlar requisições na API (Rate Limit)
         private static readonly SemaphoreSlim _apiGate = new SemaphoreSlim(1, 1);
 
-        // ✅ CONSTRUTOR ATUALIZADO (Recebe Redis + SignalR)
         public LiveSportService(
             IHttpClientFactory httpClientFactory,
             IConnectionMultiplexer redis,
             IHubContext<GameHub> hubContext)
         {
             _httpClientFactory = httpClientFactory;
-            _hubContext = hubContext; // Injeta o SignalR
+            _hubContext = hubContext;
             _apiToken = Environment.GetEnvironmentVariable("BETSAPI_TOKEN") ?? "";
 
-            // Pega o banco de dados do Redis
+            // Conexão Redis
             _redisDb = redis.GetDatabase();
 
             _jsonOptions = new JsonSerializerOptions
@@ -50,7 +49,7 @@ namespace Magic_casino_sportbook.Services
         }
 
         // ==========================================================================================
-        // 🚀 ATUALIZAR LIVE (Híbrido: Redis + SQL + SignalR)
+        // 🚀 ATUALIZAR LIVE (Jogos que já estão rolando - Atualiza Placar/Odds)
         // ==========================================================================================
         public async Task<List<string>> UpdateLiveGamesAsync(List<SportsEvent> liveGames, AppDbContext context)
         {
@@ -64,18 +63,20 @@ namespace Magic_casino_sportbook.Services
 
             foreach (var batch in batches)
             {
-                // Heartbeat SQL (Mantido apenas para rotação da fila do Worker)
-                // Isso gera um UPDATE leve, mas não grava as odds no disco toda hora.
+                // Atualiza LastUpdate para manter o "Heartbeat" do worker
                 foreach (var game in batch)
                 {
                     game.LastUpdate = DateTime.UtcNow;
-                    context.Entry(game).Property(x => x.LastUpdate).IsModified = true;
+                    // Garante que o EF saiba que mudou, se estiver rastreado
+                    if (context.Entry(game).State != EntityState.Detached)
+                    {
+                        context.Entry(game).Property(x => x.LastUpdate).IsModified = true;
+                    }
                 }
 
                 var gameIds = string.Join(",", batch.Select(g => g.ExternalId.Trim()));
                 var url = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={gameIds}";
 
-                // 🔒 ENTRA NA FILA
                 await _apiGate.WaitAsync();
                 try
                 {
@@ -94,7 +95,7 @@ namespace Magic_casino_sportbook.Services
                             var data = JsonSerializer.Deserialize<B365LiveResponse>(jsonString, _jsonOptions);
                             if (data != null && data.Results != null && data.Success == 1)
                             {
-                                // 🔥 AGORA É ASYNC (Grava no Redis + Envia SignalR)
+                                // Processa dados, salva no Redis e dispara SignalR
                                 await DispatchUpdates(data.Results, batch.ToList(), context, endedGameIds);
                             }
                         }
@@ -114,8 +115,7 @@ namespace Magic_casino_sportbook.Services
                     _apiGate.Release();
                 }
 
-                // ✅ CORREÇÃO CRÍTICA: SALVAR NO BANCO SE HOUVER MUDANÇAS (Ex: Jogo acabou)
-                // Sem isso, o status 'Ended' nunca era persistido.
+                // Salva no banco APENAS se houver mudanças críticas (ex: Status mudou para Ended)
                 if (context.ChangeTracker.HasChanges())
                 {
                     await context.SaveChangesAsync();
@@ -127,7 +127,7 @@ namespace Magic_casino_sportbook.Services
         }
 
         // ==========================================================================================
-        // 🚑 MÉTODO DE RESGATE
+        // 🚑 MÉTODO DE RESGATE (Fallback individual quando o lote falha)
         // ==========================================================================================
         private async Task ProcessIndividualFallbackAsync(HttpClient client, SportsEvent[] batch, AppDbContext context, List<string> endedGameIds)
         {
@@ -142,8 +142,11 @@ namespace Magic_casino_sportbook.Services
                     if (jsonString.Contains("PARAM_INVALID"))
                     {
                         Console.WriteLine($"🗑️ [LIMPEZA] Jogo inválido removido: {game.ExternalId}");
-                        game.Status = "Ended";
-                        context.Entry(game).State = EntityState.Modified; // Grava no SQL para limpar
+
+                        // 🔥 SEGURANÇA: Marca como 'Delayed' em vez de 'Ended' para não processar bilhetes erroneamente
+                        game.Status = "Delayed";
+
+                        context.Entry(game).State = EntityState.Modified;
                         endedGameIds.Add(game.ExternalId);
                     }
                     else
@@ -161,15 +164,18 @@ namespace Magic_casino_sportbook.Services
         }
 
         // ==========================================================================================
-        // 🕵️ HOTZONE (Redis + SQL Check)
+        // 🕵️ HOTZONE (Verifica Kickoff e Remove do Pré-Jogo)
         // ==========================================================================================
         public async Task<List<string>> VerifyKickoffWithApiAsync(List<SportsEvent> candidates, IServiceProvider sp)
         {
-            var newLiveIds = new List<string>();
-            if (!candidates.Any()) return newLiveIds;
+            var idsToRemoveFromPreMatch = new List<string>();
+            if (!candidates.Any()) return idsToRemoveFromPreMatch;
 
+            // ✅ CORREÇÃO CRÍTICA: Criamos um escopo NOVO e usamos AttachRange
             using var scope = sp.CreateScope();
             var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            // Anexa os objetos ao contexto deste método para permitir salvamento
             context.AttachRange(candidates);
 
             var client = _httpClientFactory.CreateClient();
@@ -199,19 +205,22 @@ namespace Magic_casino_sportbook.Services
 
                             if (!indJson.Contains("PARAM_INVALID"))
                             {
-                                await ProcessHotZonePacket(indJson, new List<SportsEvent> { g }, context, newLiveIds);
+                                await ProcessHotZonePacket(indJson, new List<SportsEvent> { g }, context, idsToRemoveFromPreMatch);
                             }
                             else
                             {
-                                g.Status = "Cancelled";
+                                // 🔥 CORREÇÃO: Avisar para remover da tela se o ID for inválido
+                                Console.WriteLine($"🗑️ Removendo Jogo Inválido (Delayed): {g.ExternalId}");
+                                g.Status = "Delayed";
                                 context.Entry(g).State = EntityState.Modified;
+                                idsToRemoveFromPreMatch.Add(g.ExternalId);
                             }
                             await Task.Delay(1500);
                         }
                     }
                     else if (!string.IsNullOrWhiteSpace(jsonString))
                     {
-                        await ProcessHotZonePacket(jsonString, batch.ToList(), context, newLiveIds);
+                        await ProcessHotZonePacket(jsonString, batch.ToList(), context, idsToRemoveFromPreMatch);
                     }
                 }
                 catch (Exception ex)
@@ -227,10 +236,11 @@ namespace Magic_casino_sportbook.Services
                 await Task.Delay(1100);
             }
 
-            return newLiveIds;
+            return idsToRemoveFromPreMatch;
         }
 
-        private async Task ProcessHotZonePacket(string jsonString, List<SportsEvent> games, AppDbContext context, List<string> newLiveIds)
+        // Processa o JSON da HotZone
+        private async Task ProcessHotZonePacket(string jsonString, List<SportsEvent> games, AppDbContext context, List<string> idsToRemoveFromPreMatch)
         {
             var data = JsonSerializer.Deserialize<B365LiveResponse>(jsonString, _jsonOptions);
             if (data != null && data.Results != null)
@@ -243,38 +253,88 @@ namespace Magic_casino_sportbook.Services
                     var gameDb = games.FirstOrDefault(g => g.ExternalId == ev.Fi);
                     if (gameDb == null) continue;
 
+                    // --- ANÁLISE DE STATUS B365 ---
+                    string ts = ev.TimeStatus ?? "0";
+
                     bool tempoExagerado = false;
                     if (int.TryParse(ev.Tm, out int minutos))
                     {
                         if (minutos > 100 && ev.Tt == "0") tempoExagerado = true;
                     }
 
-                    bool isLive = (ev.TimeStatus == "1") || (!string.IsNullOrEmpty(ev.Tm) && ev.Tm != "0");
+                    // CASO 1: JOGO FICOU LIVE
+                    bool isLive = (ts == "1") || (!string.IsNullOrEmpty(ev.Tm) && ev.Tm != "0" && ev.Tm != "00");
+
+                    // 🔥 CASO 2: JOGO ACABOU / FOI CANCELADO / ADIADO
+                    bool isDead = ts == "3" || ts == "4" || ts == "5" || ts == "7" || ts == "8" || ts == "9";
 
                     if (isLive && !tempoExagerado)
                     {
+                        // VIROU LIVE AGORA
                         gameDb.Status = "Live";
                         if (string.IsNullOrEmpty(gameDb.Score)) gameDb.Score = "0-0";
                         if (string.IsNullOrEmpty(gameDb.GameTime)) gameDb.GameTime = "0'";
                         gameDb.LastUpdate = DateTime.UtcNow.AddMinutes(-10);
 
-                        context.Entry(gameDb).State = EntityState.Modified; // SQL: Mudança de Status é crítica
-                        newLiveIds.Add(gameDb.ExternalId);
+                        context.Entry(gameDb).State = EntityState.Modified;
 
-                        // 🔥 Grava o estado inicial no Redis também
+                        // Adiciona para remover do Pré-Jogo e ir para o Ao Vivo
+                        idsToRemoveFromPreMatch.Add(gameDb.ExternalId);
+
                         var cacheKey = $"live_game:{gameDb.ExternalId}";
                         await _redisDb.StringSetAsync(cacheKey, JsonSerializer.Serialize(gameDb, _jsonOptions), TimeSpan.FromHours(24));
+                    }
+                    else if (isDead)
+                    {
+                        // JOGO ACABOU ANTES DA HORA
+                        Console.WriteLine($"🗑️ AUTO-CLEAN: {gameDb.HomeTeam} (Status API: {ts}) -> Removido (Delayed/Ended).");
+
+                        gameDb.Status = "Delayed";
+                        if (ts == "3") gameDb.Status = "Ended";
+
+                        context.Entry(gameDb).State = EntityState.Modified;
+                        idsToRemoveFromPreMatch.Add(gameDb.ExternalId);
+                    }
+                    else
+                    {
+                        // 🔥 LÓGICA WAITING-LIVE RESTAURADA (Para limpar jogos da tela na hora certa)
+                        // Se TS=0 (Não iniciado na API) mas horário já passou
+                        if (DateTime.UtcNow >= gameDb.CommenceTime)
+                        {
+                            if (gameDb.Status == "Prematch")
+                            {
+                                // Remove da tela IMEDIATAMENTE e coloca em espera
+                                Console.WriteLine($"⏳ AGUARDANDO: {gameDb.HomeTeam} (Status: WaitingLive)");
+                                gameDb.Status = "WaitingLive";
+                                context.Entry(gameDb).State = EntityState.Modified;
+                                idsToRemoveFromPreMatch.Add(gameDb.ExternalId);
+                            }
+                            else if (gameDb.Status == "WaitingLive")
+                            {
+                                // Já estamos esperando. Verificamos se passou do limite (5 min)
+                                // CORREÇÃO AQUI: CommenceTime é DateTime (não nullable), removemos o .Value
+                                var tolerancia = gameDb.CommenceTime.AddMinutes(5);
+
+                                if (DateTime.UtcNow > tolerancia)
+                                {
+                                    // Desiste, marca Delayed
+                                    Console.WriteLine($"⛔ TIMEOUT: {gameDb.HomeTeam} não iniciou em 5min -> Delayed.");
+                                    gameDb.Status = "Delayed";
+                                    context.Entry(gameDb).State = EntityState.Modified;
+                                    // Não precisa adicionar em idsToRemoveFromPreMatch pq já foi removido antes
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
 
         // ==========================================================================================
-        // 🚦 DISPATCHER HÍBRIDO (O Coração da Mudança - COM SIGNALR)
+        // 🚦 DISPATCHER HÍBRIDO (Redis + SQL + SignalR)
         // ==========================================================================================
         private async Task DispatchUpdates(List<List<B365Packet>> results, List<SportsEvent> batchGames, AppDbContext context, List<string> endedGameIds)
         {
-            // 📦 Lista para acumular atualizações e enviar ao Front de uma vez
             var updatesToSend = new List<object>();
 
             foreach (var packets in results)
@@ -294,18 +354,14 @@ namespace Magic_casino_sportbook.Services
 
                 if (ev != null)
                 {
-                    bool mudou = false; // "mudou" agora controla apenas lógica de parsing
                     string sportKey = (gameDb.SportKey ?? "").ToLower();
 
-                    // --- BLINDAGEM 106' ---
                     bool tempoExagerado = false;
                     if (int.TryParse(ev.Tm, out int minutos))
                     {
                         if (minutos > 100 && ev.Tt == "0") tempoExagerado = true;
                     }
 
-                    // --- 🔥 CORREÇÃO: VERIFICA SE O JOGO ACABOU (CRÍTICO -> VAI PRO SQL) ---
-                    // Adicionado lógica para detectar fim mesmo quando Status/TS é "0" mas TM é "90"
                     bool apiStatusFinal = ev.TimeStatus == "3" || ev.Status == "3";
                     bool tempoFinalStatusZero = (ev.TimeStatus == "0" || ev.Status == "0") && ev.Tm == "90";
 
@@ -316,64 +372,54 @@ namespace Magic_casino_sportbook.Services
 
                         if (gameDb.Status != "Ended" && temDados)
                         {
-                            Console.WriteLine($"🏁 [FIM] {gameDb.HomeTeam} (ID: {gameDb.ExternalId}) -> Ended no SQL.");
+                            Console.WriteLine($"🏁 [FIM] {gameDb.HomeTeam} (ID: {gameDb.ExternalId}) -> Ended.");
                             gameDb.Status = "Ended";
                             gameDb.GameTime = "FT";
                             if (!string.IsNullOrEmpty(ev.Ss)) gameDb.Score = ev.Ss;
 
                             endedGameIds.Add(gameDb.ExternalId);
 
-                            // ⚠️ IMPORTANTE: Se acabou, GRAVA NO SQL para pagar as apostas
+                            // Grava no SQL para garantir o pagamento de apostas
                             context.Entry(gameDb).State = EntityState.Modified;
                         }
                     }
                     else
                     {
-                        // --- JOGO ROLANDO (ALTA FREQUÊNCIA -> VAI PRO REDIS) ---
+                        if (sportKey.Contains("soccer") || sportKey.Contains("futebol")) UpdateSoccer(gameDb, ev, logs);
+                        else if (sportKey.Contains("basket")) UpdateBasketball(gameDb, ev);
+                        else if (sportKey.Contains("tennis")) UpdateTennis(gameDb, ev);
+                        else if (sportKey.Contains("volley")) UpdateVolleyball(gameDb, ev);
+                        else UpdateGenericSport(gameDb, ev);
 
-                        // Atualiza o objeto em Memória (gameDb)
-                        if (sportKey.Contains("soccer") || sportKey.Contains("futebol")) mudou = UpdateSoccer(gameDb, ev, logs);
-                        else if (sportKey.Contains("basket")) mudou = UpdateBasketball(gameDb, ev);
-                        else if (sportKey.Contains("tennis")) mudou = UpdateTennis(gameDb, ev);
-                        else if (sportKey.Contains("volley")) mudou = UpdateVolleyball(gameDb, ev);
-                        else mudou = UpdateGenericSport(gameDb, ev);
-
-                        // Processa Odds em Memória
+                        // 🔥 CORREÇÃO DE ODDS AQUI
                         ProcessOdds(gameDb, packets);
 
-                        // 1. 🔥 MÁGICA 1: SALVA NO REDIS (Persistência Rápida)
                         var cacheKey = $"live_game:{gameDb.ExternalId}";
                         await _redisDb.StringSetAsync(cacheKey, JsonSerializer.Serialize(gameDb, _jsonOptions), TimeSpan.FromHours(24));
 
-                        // 2. 🔥 MÁGICA 2: PREPARA PACOTE PARA O FRONT (SignalR)
-                        // Criamos um objeto leve só com o que mudou/importa para o Front
                         updatesToSend.Add(new
                         {
                             id = gameDb.ExternalId,
                             time = gameDb.GameTime,
                             score = gameDb.Score,
-                            status = gameDb.Status ?? "Live", // ✅ CORREÇÃO: Usar .Status em vez de .Period
+                            status = gameDb.Status ?? "Live",
                             homeOdd = gameDb.RawOddsHome,
                             drawOdd = gameDb.RawOddsDraw,
                             awayOdd = gameDb.RawOddsAway
                         });
-
-                        // 🚫 NÃO marcamos EntityState.Modified aqui. O SQL descansa.
                     }
                 }
             }
 
-            // 🔥 DISPARO FINAL: ENVIA O LOTE PARA O FRONTEND VIA SIGNALR
             if (updatesToSend.Any())
             {
-                // Console.WriteLine($"📡 Enviando {updatesToSend.Count} updates via SignalR...");
                 await _hubContext.Clients.All.SendAsync("LiveOddsUpdate", updatesToSend);
                 await Task.Delay(100);
             }
         }
 
         // ==========================================================================================
-        // MÉTODOS DE PARSE (Mantidos iguais, mas agora atualizam apenas a memória)
+        // MÉTODOS DE PARSE POR ESPORTE
         // ==========================================================================================
 
         private bool UpdateSoccer(SportsEvent game, B365Packet ev, List<B365Packet> logs)
@@ -381,7 +427,7 @@ namespace Magic_casino_sportbook.Services
             bool changed = false;
             if (!string.IsNullOrEmpty(ev.Ss) && ev.Ss.Contains("-"))
             {
-                if (game.Score != ev.Ss) { Console.WriteLine($"⚽ {game.HomeTeam}: {ev.Ss}"); game.Score = ev.Ss; changed = true; }
+                if (game.Score != ev.Ss) { game.Score = ev.Ss; changed = true; }
             }
             else if (string.IsNullOrEmpty(game.Score)) { game.Score = "0-0"; changed = true; }
 
@@ -432,25 +478,53 @@ namespace Magic_casino_sportbook.Services
             return changed;
         }
 
+        // ==========================================================================================
+        // 🔥 CORREÇÃO ESTRUTURAL DE ODDS (Blindada e Universal)
+        // ==========================================================================================
         private void ProcessOdds(SportsEvent game, List<B365Packet> packets)
         {
-            var odds = packets.Where(p => (p.Type == "PA" || p.Type == "MA") && !string.IsNullOrEmpty(p.Od));
+            // 1. Encontra o ID do Mercado Principal
+            string mainMarketId = null;
+
+            var marketDef = packets.FirstOrDefault(p =>
+                !string.IsNullOrEmpty(p.Id) &&
+                !string.IsNullOrEmpty(p.Na) &&
+                (p.Na == "Full Time Result" ||
+                 p.Na == "Match Winner" ||
+                 p.Na == "Game Lines" ||
+                 p.Na == "Money Line" ||
+                 p.Na == "Resultado Final" ||
+                 p.Na == "1X2")
+            );
+
+            if (marketDef != null)
+            {
+                mainMarketId = marketDef.Id;
+            }
+
+            // 2. Filtra as Odds que pertencem a esse mercado (ou todas se não achar definição)
+            var odds = packets.Where(p =>
+                (p.Type == "PA" || p.Type == "MA") &&
+                !string.IsNullOrEmpty(p.Od) &&
+                (mainMarketId == null || p.Ma == mainMarketId)
+            );
+
             foreach (var odd in odds)
             {
                 decimal valor = ConvertFraction(odd.Od);
                 if (valor <= 1.0m) continue;
+
                 string n2 = (odd.N2 ?? "").Trim();
                 string name = (odd.Na ?? "").ToLower().Trim();
-                bool isHome = n2 == "1" || name == "1" || name.Contains("home") || name.Contains("casa");
-                bool isAway = n2 == "2" || name == "2" || name.Contains("away") || name.Contains("fora");
+
+                bool isHome = n2 == "1" || name == "1" || name.Contains("home") || name.Contains("casa") || name == game.HomeTeam?.ToLower().Trim();
+                bool isAway = n2 == "2" || name == "2" || name.Contains("away") || name.Contains("fora") || name == game.AwayTeam?.ToLower().Trim();
                 bool isDraw = n2 == "x" || name == "x" || name.Contains("draw") || name.Contains("empate");
 
                 if (isHome) game.RawOddsHome = valor;
                 else if (isAway) game.RawOddsAway = valor;
                 else if (isDraw) game.RawOddsDraw = valor;
             }
-            // OBS: Não chamamos mais context.Entry(...).State = Modified aqui.
-            // A atualização vai pro Redis no DispatchUpdates.
         }
 
         public async Task<List<string>> CheckForKickoffAsync(List<SportsEvent> games, AppDbContext context)
@@ -458,7 +532,8 @@ namespace Magic_casino_sportbook.Services
             return await Task.FromResult(new List<string>());
         }
 
-        private decimal ConvertFraction(string fraction)
+        // CORREÇÃO: Aceita string? para evitar warnings e trata nulos internamente
+        private decimal ConvertFraction(string? fraction)
         {
             if (string.IsNullOrEmpty(fraction) || fraction == "0/0") return 0m;
             try

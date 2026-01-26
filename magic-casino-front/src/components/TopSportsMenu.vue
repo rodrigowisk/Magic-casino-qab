@@ -18,12 +18,12 @@ const router = useRouter();
 const route = useRoute();
 
 // Estado de carregamento
-const loadingAdmin = ref(true); // Carregando configuração do Admin
-const loadingApi = ref(true);   // Carregando disponibilidade de jogos
+const loadingAdmin = ref(true); 
+const loadingApi = ref(true);   
 
 // Sets de controle
-const adminVisibleSports = ref<Set<string>>(new Set()); // Esportes ON no admin
-const apiActiveSports = ref<Set<string>>(new Set());    // Esportes com jogos na API (> 0)
+const adminVisibleSports = ref<Set<string>>(new Set()); 
+const apiActiveSports = ref<Set<string>>(new Set());    
 
 // 1️⃣ LISTA MESTRA (Mapeamento de ícones e nomes)
 const ALL_SPORTS_CONFIG = [
@@ -38,7 +38,6 @@ const ALL_SPORTS_CONFIG = [
   { key: 'mma',               name: 'MMA',            file: 'mma.svg' },
   { key: 'boxing',            name: 'Boxe',           file: 'boxing.svg' },
   { key: 'darts',             name: 'Dardos',         file: 'dards.svg' },
-  // Adicione outros mapeamentos conforme necessário
 ];
 
 // --- HELPER DE NORMALIZAÇÃO ---
@@ -60,7 +59,6 @@ const normalizeKey = (apiKey: string): string => {
 
 // --- COMPUTED: LISTA FINAL ---
 const orderedSports = computed(() => {
-    // 1. Se ainda não carregou a config do admin, não mostra nada (ou mostra skeleton)
     if (loadingAdmin.value && !props.isLive) return [];
 
     const list = ALL_SPORTS_CONFIG.map(sport => {
@@ -68,8 +66,8 @@ const orderedSports = computed(() => {
         let hasActiveGames = false;
         let count = 0;
 
-        // --- LÓGICA LIVE ---
         if (props.isLive) {
+            // Lógica Live: Sempre mostra "Todos", os outros dependem de ter jogos
             if (sport.key === 'all') {
                 isVisibleInAdmin = true;
                 hasActiveGames = true; 
@@ -79,50 +77,38 @@ const orderedSports = computed(() => {
                 hasActiveGames = props.liveSports?.has(sport.key) || false;
                 count = props.liveCounts?.[sport.key] || 0;
             }
-        } 
-        // --- LÓGICA PRÉ-JOGO (REQ DO USUÁRIO) ---
-        else {
+        } else {
+            // Lógica Pré-Jogo
             if (sport.key === 'all') {
                 isVisibleInAdmin = false; 
             } else {
-                // REGRA 1: Status Admin (ON/OFF) - Define se o ícone EXISTE na tela
                 isVisibleInAdmin = adminVisibleSports.value.has(sport.key);
-
-                // REGRA 2: Status API (Tem jogo > 0?) - Define se tem COR
                 hasActiveGames = !loadingApi.value && apiActiveSports.value.has(sport.key);
             }
         }
         
         return {
             ...sport,
-            isVisible: isVisibleInAdmin, // Renderiza?
-            isActive: hasActiveGames,    // Colorido/Clicável?
+            isVisible: isVisibleInAdmin,
+            isActive: hasActiveGames,
             count,
             iconPath: `/images/icons/${sport.file}` 
         };
     });
 
-    // Filtro FINAL: Remove da tela o que estiver OFF no Admin
     let finalList = list.filter(s => {
         if (props.isLive) return s.isActive; 
         return s.isVisible;                  
     });
 
-    // Ordenação
     return finalList.sort((a, b) => {
         if (a.key === 'all') return -1;
         if (b.key === 'all') return 1;
-
         if (props.isLive) return b.count - a.count;
-
-        // Pré-jogo: Prioriza os que estão ATIVOS (coloridos) sobre os inativos (cinza)
         if (a.isActive && !b.isActive) return -1;
         if (!a.isActive && b.isActive) return 1;
-
-        // Prioridade fixa Futebol
         if (a.key === 'soccer') return -1;
         if (b.key === 'soccer') return 1;
-
         return a.name.localeCompare(b.name);
     });
 });
@@ -163,8 +149,6 @@ const moveDrag = (e: MouseEvent) => {
 
 const handleSportClick = (sport: any) => {
     if (isDragging) return;
-    
-    // REGRA 3: Só clica se a API liberou (isActive = true, ou seja, count > 0)
     if (sport.isActive) {
         if (props.isLive) {
             emit('select', sport.key);
@@ -175,10 +159,13 @@ const handleSportClick = (sport: any) => {
 };
 
 const shouldShowMenu = computed(() => {
+  // Ajuste aqui: Se isLive for true via prop, sempre mostra.
   if (props.isLive) return true; 
+
   const isEventDetails = route.name === 'event-details' || route.path.includes('/event/');
-  const isLivePage = route.path.includes('/live');
-  return !isEventDetails && !isLivePage;
+  // Removemos a verificação do route.path.includes('/live') aqui, pois se o componente
+  // for inserido manualmente na página Live, ele deve aparecer.
+  return !isEventDetails;
 });
 
 // --- API FETCHING ---
@@ -189,72 +176,51 @@ onMounted(async () => {
         return;
     }
 
-    // ---------------------------------------------------------
-    // PASSO 1: BUSCAR O QUE ESTÁ "ON" NO PAINEL MASTER
-    // ---------------------------------------------------------
     try {
         const adminData = await SportsService.getAdminConfig(); 
-        
-        //console.log("📦 RESPOSTA DO ADMIN CONFIG:", adminData);
-
         const enabledSet = new Set<string>();
-        // Garante que é um array, caso venha nulo ou formato errado
         const list = Array.isArray(adminData) ? adminData : [];
 
         list.forEach((item: any) => {
-            // Verifica maiúsculo/minúsculo (C# vs JSON)
             const isEnabled = item.isActive === true || item.IsActive === true;
             const sportKey = item.key || item.Key;
-
             if (isEnabled && sportKey) {
                 const normalized = normalizeKey(sportKey);
                 if (normalized) enabledSet.add(normalized);
             }
         });
-
         adminVisibleSports.value = enabledSet;
-
     } catch (err) {
-        //console.error("❌ Erro config admin", err);
-        // Fallback: Apenas futebol para não quebrar a tela, mas indicando erro
         adminVisibleSports.value = new Set(['soccer']); 
     } finally {
-        loadingAdmin.value = false; // Aqui os ícones aparecem (CINZA se não tiver jogo)
+        loadingAdmin.value = false;
     }
 
-    // ---------------------------------------------------------
-    // PASSO 2: VERIFICAR NA API QUAIS TEM JOGOS (PARA DAR COR)
-    // ---------------------------------------------------------
     try {
         const data = await SportsService.getActiveSports(); 
         const availableKeys = new Set<string>();
-        
         data.forEach((item: any) => {
-            // ⚠️ CORREÇÃO: Verifica se tem jogos (> 0)
-            // Se vier count: 0, ignoramos e o ícone fica cinza (inativo)
             const hasGames = item.count && Number(item.count) > 0;
-
             if (hasGames) {
                 const normalized = normalizeKey(item.key || item.name);
                 if (normalized) availableKeys.add(normalized);
             }
         });
-        
         apiActiveSports.value = availableKeys;
     } catch (error) { 
         console.error("Erro active sports:", error); 
     } finally { 
-        loadingApi.value = false; // Aqui os ícones ganham COR se tiverem jogo
+        loadingApi.value = false;
     }
 });
 </script>
 
 <template>
-  <div v-if="shouldShowMenu" class="w-full mb-1 sticky top-0 z-50 select-none overflow-hidden bg-[#0f212e]/95 backdrop-blur-md border-b border-white/5">
+  <div v-if="shouldShowMenu" class="w-full sticky top-0 z-40 select-none overflow-hidden bg-[#0f212e] border-b border-white/5 shadow-md h-[72px]">
     
     <div 
         ref="scrollContainer"
-        class="flex items-center justify-start gap-3 px-2 py-1 overflow-x-auto no-scrollbar scroll-smooth cursor-grab active:cursor-grabbing"
+        class="flex items-center justify-start gap-2 px-4 h-full overflow-x-auto no-scrollbar scroll-smooth cursor-grab active:cursor-grabbing"
         @mousedown="startDrag"
         @mouseleave="stopDrag"
         @mouseup="stopDrag"
@@ -270,34 +236,31 @@ onMounted(async () => {
         v-for="sport in orderedSports" 
         :key="sport.key"
         @click="handleSportClick(sport)"
-        class="group flex flex-col items-center min-w-[60px] relative transition-all duration-300"
+        class="group flex flex-col items-center justify-center min-w-[68px] h-[60px] relative transition-all duration-200 hover:bg-white/5 rounded-lg"
         :class="[
             { 'pointer-events-none': isDragging },
-            /* Lógica de Cursor */
-            sport.isActive 
-                ? 'cursor-pointer' 
-                : 'cursor-not-allowed' // Mostra proibido se estiver Cinza
+            sport.isActive ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
         ]" 
       >
-        <div class="relative flex items-center justify-center mb-1.5 transition-all duration-300">
+        <div class="relative flex items-center justify-center mb-1 transition-all duration-300">
           
              <img 
                 :src="sport.iconPath" 
                 :alt="sport.name"
-                class="w-7 h-7 object-contain transition-all duration-300"
+                class="w-6 h-6 object-contain transition-all duration-300 transform"
                 :class="[
                     checkIsSelected(sport.key)
-                        ? 'scale-125 brightness-110 drop-shadow-[0_0_8px_rgba(0,255,127,0.8)]' 
+                        ? 'scale-110 brightness-110 drop-shadow-[0_0_8px_rgba(0,255,127,0.6)]' 
                         : (sport.isActive)
-                            ? 'opacity-90 hover:opacity-100 hover:scale-110 hover:drop-shadow-[0_0_5px_rgba(255,255,255,0.3)]'
-                            : 'grayscale opacity-30 contrast-50' // TOM DE CINZA AQUI
+                            ? 'opacity-70 group-hover:scale-110 group-hover:opacity-100'
+                            : 'grayscale opacity-30 contrast-50'
                 ]"
                 @error="(e) => (e.target as HTMLImageElement).src = '/images/icons/trophy.svg'"
              />
 
              <span 
                 v-if="isLive && sport.count > 0"
-                class="absolute -top-1.5 -right-1.5 bg-red-600 text-white text-[9px] font-bold px-1 rounded-full shadow-sm animate-pulse"
+                class="absolute -top-2 -right-2 bg-red-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full shadow-sm min-w-[16px] text-center border border-[#0f212e]"
             >
                 {{ sport.count }}
             </span>
@@ -305,13 +268,11 @@ onMounted(async () => {
         </div>
 
         <span 
-          class="text-[9px] font-bold uppercase tracking-wide transition-colors duration-300 whitespace-nowrap"
+          class="text-[10px] font-bold uppercase tracking-wide transition-colors duration-300 whitespace-nowrap mt-1"
           :class="[
             checkIsSelected(sport.key)
-              ? 'text-[#00FF7F] drop-shadow-sm' 
-              : (sport.isActive) 
-                  ? 'text-gray-400 group-hover:text-gray-200'
-                  : 'text-gray-700' // Texto mais escuro para item desativado
+              ? 'text-[#00FF7F]' 
+              : 'text-gray-400 group-hover:text-white'
           ]"
         >
           {{ sport.name }}

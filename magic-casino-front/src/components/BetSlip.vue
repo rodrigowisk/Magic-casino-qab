@@ -3,7 +3,7 @@ import { ref, computed, watch, nextTick } from 'vue';
 import { useBetStore } from '../stores/useBetStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import apiSports from '../services/apiSports'; 
-import { X, Trash2, Trophy, Loader2, ChevronRight, AlertCircle } from 'lucide-vue-next';
+import { X, Trash2, Trophy, Loader2, ChevronRight, AlertCircle, ArrowRight } from 'lucide-vue-next'; // Adicionei ArrowRight
 import Swal from 'sweetalert2';
 
 defineProps<{ isOpen?: boolean }>();
@@ -14,6 +14,14 @@ const authStore = useAuthStore();
 const stake = ref<number | null>(null);
 const isLoading = ref(false);
 const stakeError = ref(false);
+
+// --- ESTADO PARA CONFLITO DE ODDS ---
+const oddConflict = ref<{
+    matchName: string;
+    oldOdd: number;
+    newOdd: number;
+    selectionId: string;
+} | null>(null);
 
 const selectionsContainer = ref<HTMLElement | null>(null);
 
@@ -31,6 +39,8 @@ watch(() => store.selections.length, async (newVal, oldVal) => {
 
 watch(stake, () => {
     if (stakeError.value) stakeError.value = false;
+    // Se mexer no valor, limpa o erro de odd para não ficar travado visualmente
+    // (opcional, mas boa prática de UX)
 });
 
 const Toast = Swal.mixin({
@@ -47,7 +57,6 @@ const Toast = Swal.mixin({
   }
 });
 
-// Calcula o retorno (mantém numérico/string interna com ponto para cálculo)
 const potentialReturn = computed(() => {
   const valor = stake.value || 0;
   const odds = store.totalOdds || 0;
@@ -69,9 +78,40 @@ const getMarketLabel = (type: string | undefined, marketName: string | undefined
   return raw; 
 };
 
-// Formata moeda para padrão Brasileiro (R$ 1.000,00)
 const formatCurrency = (value: number | string) => {
     return Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+};
+
+const updateSelectionOdd = (selectionId: string, newOdd: number) => {
+    const index = store.selections.findIndex(s => s.id === selectionId);
+    if (index !== -1) {
+        store.selections[index].odds = newOdd;
+    }
+};
+
+// --- NOVAS FUNÇÕES PARA O ALERTA DISCRETO ---
+
+const confirmOddChange = () => {
+    if (!oddConflict.value) return;
+    
+    // 1. Atualiza a odd
+    updateSelectionOdd(oddConflict.value.selectionId, oddConflict.value.newOdd);
+    
+    // 2. Limpa o alerta
+    oddConflict.value = null;
+    
+    // 3. Tenta apostar novamente
+    handlePlaceBet();
+};
+
+const cancelOddChange = () => {
+    if (!oddConflict.value) return;
+    
+    // 1. Remove do cupom
+    store.removeSelection(oddConflict.value.selectionId);
+    
+    // 2. Limpa alerta
+    oddConflict.value = null;
 };
 
 const handlePlaceBet = async () => {
@@ -86,6 +126,9 @@ const handlePlaceBet = async () => {
     setTimeout(() => stakeError.value = false, 3000);
     return;
   }
+
+  // Limpa conflitos anteriores se houver
+  oddConflict.value = null;
 
   const valorApostado = Number(stake.value);
   isLoading.value = true;
@@ -106,7 +149,11 @@ const handlePlaceBet = async () => {
       }))
     };
 
-    const response = await apiSports.post('/bets/place', payload);
+    const tokenLimpo = authStore.token?.replace(/['"]+/g, '') || '';
+    
+    const response = await apiSports.post('/bets/place', payload, {
+        headers: { Authorization: `Bearer ${tokenLimpo}` }
+    });
 
     if (authStore.user) {
         if (response.data?.newBalance !== undefined && response.data?.newBalance !== -1) {
@@ -133,6 +180,23 @@ const handlePlaceBet = async () => {
     emit('toggle'); 
 
   } catch (error: any) {
+    console.error("Erro ao apostar:", error);
+
+    // 🔥 DETECÇÃO DE CONFLITO DE ODDS - MODO DISCRETO 🔥
+    if (error.response?.status === 409 || error.response?.data?.code === 'ODDS_CHANGED') {
+        const data = error.response.data;
+        // Preenche o estado local para exibir o alerta acima do input
+        oddConflict.value = {
+            matchName: truncateName(data.matchName || 'Jogo', 25),
+            oldOdd: parseFloat(data.oldOdd),
+            newOdd: parseFloat(data.newOdd),
+            selectionId: data.selectionId || data.matchId
+        };
+        // Retorna silenciosamente para manter o usuário no cupom
+        return; 
+    }
+
+    // Erro Genérico (continua usando SweetAlert pois é erro de sistema/crítico)
     const msg = error?.response?.data?.error || "Erro ao processar aposta.";
     Swal.fire({ title: 'Ops!', text: msg, icon: 'error', background: '#162032', color: '#ffffff', confirmButtonColor: '#ef4444' });
   } finally {
@@ -209,12 +273,15 @@ const handlePlaceBet = async () => {
                             <span class="text-[11px] text-blue-400 font-bold truncate">{{ item.selection }}</span>
                         </div>
 
-                        <div class="bg-[#0f172a] text-yellow-400 font-mono font-bold text-xs px-2 py-1 rounded border border-slate-700 shadow-inner">
-                            {{ (item.odds || 0).toFixed(2) }}
+                        <div class="flex items-center gap-2">
+                             <div class="bg-[#0f172a] text-yellow-400 font-mono font-bold text-xs px-2 py-1 rounded border border-slate-700 shadow-inner">
+                                {{ (item.odds || 0).toFixed(2) }}
+                            </div>
                         </div>
                     </div>
                 </div>
-                <div class="absolute left-0 top-0 bottom-0 w-[2px] bg-blue-500"></div>
+                <div v-if="oddConflict && oddConflict.selectionId === item.id" class="absolute inset-0 border-2 border-yellow-500/50 rounded pointer-events-none animate-pulse"></div>
+                <div v-else class="absolute left-0 top-0 bottom-0 w-[2px] bg-blue-500"></div>
             </div>
         </div>
     </div>
@@ -234,6 +301,28 @@ const handlePlaceBet = async () => {
             </div>
         </div>
 
+        <div v-if="oddConflict" class="mb-3 bg-yellow-500/10 border border-yellow-500/30 rounded p-2 flex flex-col gap-2 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <div class="flex items-start gap-2">
+                <AlertCircle class="w-4 h-4 text-yellow-500 mt-0.5 shrink-0" />
+                <div class="text-[10px] leading-tight text-slate-300">
+                    <span class="font-bold text-yellow-500">Atenção:</span> A odd de 
+                    <span class="text-white font-bold">{{ oddConflict.matchName }}</span> alterou.
+                    <div class="flex items-center gap-1.5 mt-1 bg-black/20 w-fit px-1.5 py-0.5 rounded">
+                        <span class="line-through text-red-400 font-mono">{{ oddConflict.oldOdd.toFixed(2) }}</span>
+                        <ArrowRight class="w-3 h-3 text-slate-500" />
+                        <span class="text-green-400 font-bold font-mono text-xs">{{ oddConflict.newOdd.toFixed(2) }}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="flex gap-2 w-full">
+                <button @click="confirmOddChange" class="flex-1 bg-yellow-600 hover:bg-yellow-500 text-white text-[10px] font-bold py-1.5 rounded transition-colors uppercase">
+                    Aceitar
+                </button>
+                <button @click="cancelOddChange" class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[10px] font-bold py-1.5 rounded transition-colors uppercase">
+                    Remover
+                </button>
+            </div>
+        </div>
         <div class="relative mb-3 group">
             <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <span class="text-slate-500 font-bold text-xs">R$</span>
@@ -243,8 +332,8 @@ const handlePlaceBet = async () => {
                 v-model="stake" 
                 type="number" 
                 placeholder="Valor da Aposta" 
-                :disabled="!isUserLoggedIn" 
-                class="w-full bg-[#0b1120] text-white text-sm font-bold border border-slate-700 rounded pl-9 pr-3 py-2.5 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all placeholder:text-slate-600 disabled:opacity-50"
+                :disabled="!isUserLoggedIn || !!oddConflict" 
+                class="w-full bg-[#0b1120] text-white text-sm font-bold border border-slate-700 rounded pl-9 pr-3 py-2.5 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all placeholder:text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed"
                 :class="stakeError ? 'border-red-500 animate-shake' : ''"
             />
 
@@ -255,7 +344,7 @@ const handlePlaceBet = async () => {
 
         <button 
             @click="handlePlaceBet" 
-            :disabled="isLoading || store.count === 0" 
+            :disabled="isLoading || store.count === 0 || !!oddConflict" 
             class="w-full py-2.5 rounded bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-400 text-white font-bold text-xs uppercase tracking-widest shadow-lg shadow-green-900/20 transition-all transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2 border border-green-400/20"
         >
             <Loader2 v-if="isLoading" class="w-4 h-4 animate-spin" />

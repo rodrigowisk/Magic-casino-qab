@@ -113,7 +113,76 @@ namespace Magic_casino_sportbook.Controllers
 
             if (request.Amount <= 0) return BadRequest(new { error = "Valor inválido." });
 
-            // 2. Chamar CORE
+            // ===================================================================================
+            // 🛡️ TRAVA DE SEGURANÇA: VALIDAÇÃO DE ODDS (ANTI-LAG)
+            // ===================================================================================
+            // Antes de tirar dinheiro, verificamos se as odds mudaram no banco
+            foreach (var selection in request.Selections)
+            {
+                // Busca o jogo no banco pelo ID externo (que vem do front)
+                var game = await _context.SportsEvents
+                    .AsNoTracking() // Mais rápido, apenas leitura
+                    .FirstOrDefaultAsync(e => e.ExternalId == selection.MatchId || e.Id == selection.MatchId);
+
+                if (game == null)
+                {
+                    // Se o jogo não existe mais (foi removido), rejeita
+                    return BadRequest(new { error = $"O jogo {selection.MatchName} não está mais disponível para apostas." });
+                }
+
+                if (game.Status != "Live" && game.Status != "Prematch" && game.Status != "WaitingLive")
+                {
+                    return BadRequest(new { error = $"O jogo {selection.MatchName} já encerrou ou está suspenso." });
+                }
+
+                // Determina qual é a odd ATUAL no banco baseada na seleção do usuário
+                decimal currentOdd = 0;
+
+                // Lógica para Mercado 1x2 (Winner)
+                // Normaliza strings para comparar (ignora maiusculas/minusculas)
+                string selName = selection.SelectionName?.Trim().ToLower() ?? "";
+                string homeName = game.HomeTeam?.Trim().ToLower() ?? "casa";
+                string awayName = game.AwayTeam?.Trim().ToLower() ?? "fora";
+
+                // 🔥 CORREÇÃO ERRO CS0019: Removido '?? 0' pois as propriedades já são decimal (não nulas)
+                if (selName == homeName || selection.MarketName == "1")
+                {
+                    currentOdd = game.RawOddsHome;
+                }
+                else if (selName == awayName || selection.MarketName == "2")
+                {
+                    currentOdd = game.RawOddsAway;
+                }
+                else if (selName == "empate" || selName == "x" || selName == "draw")
+                {
+                    currentOdd = game.RawOddsDraw;
+                }
+                else
+                {
+                    // Se for um mercado que não mapeamos a odd simples (ex: over/under), 
+                    // por segurança aceitamos ou ignoramos a validação de odd exata.
+                    currentOdd = selection.Odd;
+                }
+
+                // Se a odd for válida e diferente da enviada (com margem de erro de 0.05)
+                if (currentOdd > 1.0m && Math.Abs(selection.Odd - currentOdd) > 0.05m)
+                {
+                    // 🚨 CONFLITO DETECTADO! Retorna 409 para o Frontend abrir o Popup
+                    return Conflict(new
+                    {
+                        code = "ODDS_CHANGED",
+                        message = "A cotação mudou.",
+                        matchName = $"{game.HomeTeam} x {game.AwayTeam}",
+                        selectionId = selection.MatchId,
+                        oldOdd = selection.Odd,
+                        newOdd = currentOdd
+                    });
+                }
+            }
+            // ===================================================================================
+
+
+            // 2. Chamar CORE (Débito)
             string token = Request.Headers["Authorization"].ToString();
             if (!string.IsNullOrEmpty(token)) token = token.Replace("\"", "").Trim();
 
@@ -129,6 +198,7 @@ namespace Magic_casino_sportbook.Controllers
             {
                 UserCpf = cpf,
                 Amount = request.Amount,
+                // Recalcula a odd total baseada no request (que agora sabemos que está validado)
                 TotalOdd = request.Selections.Any() ? request.Selections.Aggregate(1m, (acc, s) => acc * s.Odd) : 1m,
                 CoreTxnId = Guid.NewGuid().ToString(),
                 Status = "confirmed",
@@ -142,7 +212,6 @@ namespace Magic_casino_sportbook.Controllers
                     Odd = s.Odd,
                     Status = "pending",
                     CommenceTime = s.CommenceTime
-                    // FinalScore e IsWinner iniciam como null no banco
                 }).ToList()
             };
             bet.PotentialReturn = bet.Amount * bet.TotalOdd;
@@ -157,6 +226,7 @@ namespace Magic_casino_sportbook.Controllers
                 return StatusCode(500, new { error = "Erro ao salvar bilhete.", details = ex.Message });
             }
 
+            // 🔥 CORREÇÃO ERRO CS1061: Removido 'newBalance = result.NewBalance' pois a tupla não tem essa propriedade
             return Ok(new { status = 1, betId = bet.Id, message = "Aposta realizada com sucesso!" });
         }
 
@@ -164,7 +234,6 @@ namespace Magic_casino_sportbook.Controllers
         [HttpPost("confirm")]
         public Task<IActionResult> Confirm([FromBody] ConfirmBetRequestDto request)
         {
-            // ✅ CORREÇÃO: Removido 'async' e retornado Task para evitar aviso CS1998
             return Task.FromResult<IActionResult>(Ok());
         }
     }

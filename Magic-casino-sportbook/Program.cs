@@ -7,7 +7,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System.Text;
 using Magic_casino_sportbook.BackgroundServices;
-using StackExchange.Redis; // ✅ ADICIONADO: Necessário para IConnectionMultiplexer
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,20 +16,37 @@ Console.WriteLine(">>>>> SPORTBOOK API - SISTEMA UNIFICADO (BETS API) <<<<<");
 Console.WriteLine("#############################################################");
 
 // =============================================================
-// 1. DATABASE
+// 1. DATABASE (CORREÇÃO: Prioridade para Variável de Ambiente)
 // =============================================================
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+// Tenta pegar do .ENV (Docker/AWS) primeiro. Se for nulo, tenta do appsettings/secrets (Local)
+var connectionString = Environment.GetEnvironmentVariable("DB_CONN_SPORTBOOK")
+                       ?? builder.Configuration.GetConnectionString("DefaultConnection");
+
+if (string.IsNullOrEmpty(connectionString))
+{
+    throw new Exception("CRITICAL ERROR: ConnectionString 'DB_CONN_SPORTBOOK' or 'DefaultConnection' not found!");
+}
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString)
-           .EnableSensitiveDataLogging() // <--- O PULO DO GATO: Mostra os valores reais no log
-           .EnableDetailedErrors());     // <--- Ajuda a detalhar erros de SQL
+           .EnableSensitiveDataLogging()
+           .EnableDetailedErrors());
 
 
 // =============================================================
-// 2. JWT CONFIGURATION 🔐
+// 2. JWT CONFIGURATION 🔐 (CORREÇÃO: Pega do .ENV)
 // =============================================================
-var jwtKey = "ChaveSecretaDoCassino2026SuperSeguraNaoMudeIsso";
+// Pega do .ENV ou usa um fallback (apenas para dev, nunca use fallback em prod)
+var jwtKey = Environment.GetEnvironmentVariable("JWT_SECRET")
+             ?? builder.Configuration["Jwt:Key"]
+             ?? "ChaveSecretaDoCassino2026SuperSeguraNaoMudeIsso";
+
+// >>>>> LOG DEBUG INICIO <<<<<
+Console.WriteLine("#############################################################");
+Console.WriteLine($"[DEBUG PROGRAM - STARTUP] Chave definida para VALIDACAO: '{jwtKey}'");
+Console.WriteLine("#############################################################");
+// >>>>> LOG DEBUG FIM <<<<<
+
 var keyBytes = Encoding.UTF8.GetBytes(jwtKey);
 
 builder.Services
@@ -45,8 +62,8 @@ builder.Services
             IssuerSigningKey = new SymmetricSecurityKey(keyBytes),
             ValidateLifetime = true,
             ClockSkew = TimeSpan.Zero,
-            ValidateIssuer = false,
-            ValidateAudience = false
+            ValidateIssuer = false, // Ajuste conforme necessário
+            ValidateAudience = false // Ajuste conforme necessário
         };
 
         options.Events = new JwtBearerEvents
@@ -87,7 +104,6 @@ builder.Services.AddCors(options =>
                     "http://127.0.0.1:5173",
                     "http://localhost:8080",
                     "http://127.0.0.1:8080",
-                    // 🌍 CASO 2: Domínio Real (Produção/Túnel)
                     "https://quebrandoabanca.bet",
                     "https://www.quebrandoabanca.bet"
                   )
@@ -102,41 +118,39 @@ builder.Services.AddControllers();
 // =============================================================
 // 4. REDIS CONFIGURATION (CACHE + SIGNALR) 🚀
 // =============================================================
-// Pega a conexão da variável de ambiente ou usa o padrão do Docker Compose
-var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION") ?? "redis:6379";
+// CORREÇÃO: Busca exatamente o nome que definimos no .env ("REDIS_CONNECTION_STRING")
+var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING")
+                            ?? Environment.GetEnvironmentVariable("REDIS_CONNECTION") // Fallback legado
+                            ?? "localhost:6379,abortConnect=false";
 
-// 4.1. Injeta o Cliente Redis (Para gravar Odds/Dados no Cache)
-// Configuração robusta para não morrer se o Redis reiniciar
+Console.WriteLine($">>>>> REDIS TARGET: {redisConnectionString}");
+
+// 4.1. Injeta o Cliente Redis
 builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
 {
     var config = ConfigurationOptions.Parse(redisConnectionString);
-    config.AbortOnConnectFail = false; // Não trava o boot se o Redis demorar
+    config.AbortOnConnectFail = false;
     config.ConnectRetry = 10;
     config.KeepAlive = 180;
+
+    // Importante para AWS:
+    if (redisConnectionString.Contains("ssl=true"))
+    {
+        config.Ssl = true;
+    }
+
     return ConnectionMultiplexer.Connect(config);
 });
 
-// 4.2. Configura o SignalR Backplane (Para Websockets Escalar e Estável)
-// 🔥 CONFIGURAÇÃO CORRIGIDA PARA EVITAR "SOCKET CLOSED"
+// 4.2. SignalR Backplane
 builder.Services.AddSignalR()
     .AddStackExchangeRedis(redisConnectionString, options => {
-        // Define um prefixo para não misturar canais
         options.Configuration.ChannelPrefix = "SportbookUpdate";
-
-        // 🚨 O SEGREDO: Não deixa o app travar se o Redis piscar
         options.Configuration.AbortOnConnectFail = false;
-
-        // Tenta reconectar até 20 vezes se cair
         options.Configuration.ConnectRetry = 20;
-
-        // Mantém o "ping" entre o servidor e o Redis a cada 3 minutos (Evita timeout ocioso)
         options.Configuration.KeepAlive = 180;
-
-        // Aumenta o tempo limite para pacotes grandes (Odds) não darem timeout
-        options.Configuration.SyncTimeout = 10000; // 10 segundos
+        options.Configuration.SyncTimeout = 10000;
         options.Configuration.ConnectTimeout = 10000;
-
-        // Buffer de saída maior para aguentar o tranco das odds
     });
 
 // =============================================================
@@ -171,22 +185,13 @@ builder.Services.AddSwaggerGen(c =>
 // ✅ SERVICES DE NEGÓCIO (DI)
 // =============================================================
 
-// 1. Registra o Factory Global (Essencial para LiveSportService)
 builder.Services.AddHttpClient();
-
-// 2. Serviços Legados / Específicos
 builder.Services.AddHttpClient<BetsApiService>();
-//builder.Services.AddHttpClient<TheOddsApiService>();
-builder.Services.AddHttpClient<PreMatchService>(); // Registra como Typed Client
-
-// 3. Registro do LiveSportService
-// Mudamos de AddHttpClient<> para AddScoped<> porque o construtor pede IHttpClientFactory
+builder.Services.AddHttpClient<PreMatchService>();
 builder.Services.AddScoped<LiveSportService>();
-
-// 4. Fila de Robos - Porteiro
 builder.Services.AddSingleton<BetsApiGatekeeper>();
 
-// 5. Seleção de Provedor de Odds
+// Seleção de Provedor de Odds
 string provider = Environment.GetEnvironmentVariable("ODDS_PROVIDER") ?? "BetsApi";
 
 if (provider == "BetsApi")
@@ -200,23 +205,21 @@ else
     builder.Services.AddScoped<IOddsService, TheOddsApiService>();
 }
 
-// 5. Integração com Core (Carteira)
+// Integração com Core
 builder.Services.AddHttpClient<CoreWalletService>(client =>
 {
-    client.BaseAddress = new Uri("http://core:8080");
+    // Tenta pegar URL do .env ou usa padrão Docker
+    var coreUrl = Environment.GetEnvironmentVariable("CORE_API_URL") ?? "http://core:8080";
+    client.BaseAddress = new Uri(coreUrl);
 });
 
 // =============================================================
 // 🤖 BACKGROUND SERVICES
 // =============================================================
 
-// 1. Robô de Ingestão UNIFICADO
 builder.Services.AddHostedService<PreMatchWorker>();
-
-// 2. Robô Ao Vivo
-builder.Services.AddHostedService<LiveUpdateWorker>();
-
-// 3. Robô de Settlement
+builder.Services.AddHostedService<LiveOddsWorker>();
+builder.Services.AddHostedService<GameStatusWorker>();
 builder.Services.AddHostedService<LiveScoreWorker>();
 
 var app = builder.Build();
@@ -249,8 +252,17 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var context = services.GetRequiredService<AppDbContext>();
-        context.Database.Migrate();
-        Console.WriteLine(">>>>> [BANCO DE DADOS] Migrações aplicadas com sucesso!");
+        // Tenta pegar migração. Se falhar conexão, não derruba o app inteiro na hora
+        // Mas loga o erro crítico
+        if (context.Database.CanConnect())
+        {
+            context.Database.Migrate();
+            Console.WriteLine(">>>>> [BANCO DE DADOS] Migrações aplicadas com sucesso!");
+        }
+        else
+        {
+            Console.WriteLine(">>>>> [ALERTA] Banco de dados ainda não está acessível.");
+        }
     }
     catch (Exception ex)
     {

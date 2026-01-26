@@ -80,23 +80,42 @@ namespace Magic_casino.Controllers
             {
                 var wallet = await _context.Wallets.FirstOrDefaultAsync(w => w.UserCpf == user.Cpf);
 
-                // --- GERAÇÃO DO TOKEN (MODO BLINDADO) ---
+                // --- GERAÇÃO DO TOKEN ---
                 var tokenHandler = new JwtSecurityTokenHandler();
 
-                // 🔐 AQUI ESTÁ O SEGREDO: Usamos a MESMA frase fixa do Program.cs
-                // Isso garante que o token gerado aqui abra a porta no Sportbook
-                var jwtKey = "ChaveSecretaDoCassino2026SuperSeguraNaoMudeIsso";
+                // 🔐 ALTERAÇÃO DEFINITIVA: 
+                // Removemos qualquer texto fixo. Pegamos DIRETAMENTE da configuração.
+                // Se a variável 'Jwt:Key' não existir no .env ou appsettings, a variável será nula.
+                var jwtKey = _config["Jwt:Key"];
+
+                // >>>>> LOG DEBUG INICIO <<<<<
+                Console.WriteLine("#############################################################");
+                Console.WriteLine($"[DEBUG CONTROLLER - LOGIN] Chave lida de _config['Jwt:Key']: '{jwtKey}'");
+                Console.WriteLine("#############################################################");
+                // >>>>> LOG DEBUG FIM <<<<<
+
+                // Trava de segurança: Se o .env falhou, paramos aqui com erro 500.
+                if (string.IsNullOrEmpty(jwtKey))
+                {
+                    Console.WriteLine("[DEBUG CONTROLLER] ERRO CRITICO: A chave esta vazia ou nula!");
+                    return StatusCode(500, new { error = "ERRO CRÍTICO: Variável 'Jwt:Key' não encontrada no ambiente do servidor." });
+                }
+
                 var key = Encoding.UTF8.GetBytes(jwtKey);
 
                 var tokenDescriptor = new SecurityTokenDescriptor
                 {
                     Subject = new ClaimsIdentity(new[] {
                         new Claim(ClaimTypes.Name, user.Cpf),
-                        new Claim("cpf", user.Cpf), // Importante para o Sportbook achar o usuário
+                        new Claim("cpf", user.Cpf),
                         new Claim("admin", user.IsAdmin.ToString())
                     }),
                     Expires = DateTime.UtcNow.AddDays(7),
-                    // Desligamos validações complexas de Issuer/Audience para focar na Chave
+
+                    // Garante compatibilidade com o Sportbook
+                    Issuer = _config["Jwt:Issuer"] ?? "MagicCasinoServer",
+                    Audience = _config["Jwt:Audience"] ?? "MagicCasinoApp",
+
                     SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
                 };
 
@@ -118,22 +137,18 @@ namespace Magic_casino.Controllers
             return Unauthorized(new { error = "CPF ou senha inválidos" });
         }
 
-        // --- NOVO: BUSCAR SALDO DIRETO NA FONTE ---
+        // --- SALDO ---
         [Authorize]
         [HttpGet("my-balance")]
         public async Task<IActionResult> GetMyBalance()
         {
-            // Pega o CPF de quem está logado (vem do Token)
             var cpf = User.FindFirst("cpf")?.Value ?? User.Identity?.Name;
 
             if (string.IsNullOrEmpty(cpf)) return Unauthorized();
 
             var wallet = await _context.Wallets.FirstOrDefaultAsync(w => w.UserCpf == cpf);
-
-            // Retorna o saldo do jeito que o Frontend espera
             return Ok(new { balance = wallet?.BalanceQab ?? 0 });
         }
-
 
         // --- UPDATE ---
         [Authorize]
