@@ -3,7 +3,7 @@ import { ref, onMounted, watch, computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { 
   History, CalendarClock, 
-  ChevronDown, ChevronRight, MapPin 
+  ChevronDown, MapPin 
 } from 'lucide-vue-next';
 import SportsService from '../services/SportsService';
 import { getFlag } from '../utils/flags'; 
@@ -49,7 +49,6 @@ const currentSport = computed(() => {
     if (!val) return 'soccer';
 
     // 2. Verifica se é um ID numérico (estamos na tela de detalhes)
-    // Se for número, precisamos recuperar o último esporte visto
     if (/^\d+$/.test(val)) {
         if (typeof window !== 'undefined') {
             return localStorage.getItem('lastSelectedSport') || 'soccer';
@@ -115,7 +114,6 @@ const fetchAndGroupLeagues = async () => {
     expandedCountries.value.clear();
 
     try {
-        // 🔥 Usa o sport correto (memória ou URL)
         const events = await SportsService.getEvents(currentSport.value, 1, 3000);
         
         // Atualiza o contador com o total real
@@ -127,9 +125,10 @@ const fetchAndGroupLeagues = async () => {
 
             events.forEach((event: any) => {
                 let rawLeague = event.league || event.League || 'Outros';
-                let rawCountry = event.country || event.Country;
+                // ✅ CORREÇÃO: Garante string ou 'Internacional' para evitar erro de tipo
+                let rawCountry = event.country || event.Country || 'Internacional';
 
-                if (!rawCountry || rawCountry === 'Internacional') {
+                if (rawCountry === 'Internacional') {
                     const parts = rawLeague.split(' ');
                     const potentialCountry = parts[0]; 
                     if (knownCountries.includes(potentialCountry)) {
@@ -155,13 +154,20 @@ const fetchAndGroupLeagues = async () => {
             
             if (sortedCountries.includes('Brasil')) {
                  const idx = sortedCountries.findIndex(c => c === 'Brasil');
-                 sortedCountries.unshift(sortedCountries.splice(idx, 1)[0]);
+                 if (idx !== -1) {
+                     // ✅ CORREÇÃO: Verificação segura ao mover o Brasil para o topo
+                     const removed = sortedCountries.splice(idx, 1)[0];
+                     if (removed) {
+                         sortedCountries.unshift(removed);
+                     }
+                 }
                  expandedCountries.value.add('Brasil');
             }
 
             countriesList.value = sortedCountries.map(country => ({
                 name: country,
-                leagues: Array.from(groups[country]).sort().map(lgName => ({
+                // ✅ CORREÇÃO: Adicionado '|| []' para garantir que Array.from receba algo iterável
+                leagues: Array.from(groups[country] || []).sort().map(lgName => ({
                     displayName: lgName,
                     queryName: leagueOriginalNames[lgName] || lgName
                 }))

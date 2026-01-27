@@ -4,13 +4,12 @@ import { useRouter } from 'vue-router';
 import { 
   User, 
   Lock, 
-  History, 
   LogOut, 
   FileText, 
   MoreVertical,
   Dices
 } from 'lucide-vue-next';
-import { useAuthStore } from '../stores/useAuthStore'; // Ajuste o caminho conforme seu projeto
+import { useAuthStore } from '../stores/useAuthStore';
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -24,7 +23,6 @@ const menuStyle = ref({
   width: '240px'
 });
 
-// Lógica para obter as iniciais (1ª do Nome + 1ª do Sobrenome)
 const userInitials = computed(() => {
   const name = authStore.user?.name || '';
   if (!name) return 'U';
@@ -41,7 +39,7 @@ const calculatePosition = () => {
     const rect = triggerRef.value.getBoundingClientRect();
     menuStyle.value = {
       top: `${rect.bottom + 8}px`,
-      left: `${rect.right - 240}px`, // Alinha à direita
+      left: `${rect.right - 240}px`, 
       width: '240px'
     };
   }
@@ -65,7 +63,7 @@ const navigateTo = (path: string) => {
 };
 
 const handleLogout = () => {
-  authStore.logout(); // Sua lógica de logout
+  authStore.logout();
   router.push('/');
   closeMenu();
 };
@@ -107,7 +105,6 @@ onUnmounted(() => {
       <div class="w-9 h-9 bg-gradient-to-br from-blue-600 to-blue-800 rounded-full flex items-center justify-center text-white font-bold shadow-lg border border-blue-400/30">
         {{ userInitials }}
       </div>
-
       <MoreVertical class="w-4 h-4 text-gray-400 group-hover:text-white transition-colors" />
     </button>
 
@@ -127,36 +124,28 @@ onUnmounted(() => {
           class="fixed bg-[#1e293b] border border-gray-700 rounded-xl shadow-2xl z-[9999] overflow-hidden ring-1 ring-black/50"
         >
           <div class="p-1.5 space-y-1">
-            
             <button @click="navigateTo('/perfil')" class="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-gray-300 hover:text-white hover:bg-[#0f172a] rounded-lg group transition-all">
               <User class="w-4 h-4 text-gray-500 group-hover:text-blue-400" />
               Editar Perfil
             </button>
-
             <button @click="navigateTo('/senha')" class="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-gray-300 hover:text-white hover:bg-[#0f172a] rounded-lg group transition-all">
               <Lock class="w-4 h-4 text-gray-500 group-hover:text-yellow-400" />
               Alterar Senha
             </button>
-
             <div class="h-px bg-gray-700/50 mx-2 my-1"></div>
-
             <button @click="navigateTo('/minhas-apostas')" class="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-gray-300 hover:text-white hover:bg-[#0f172a] rounded-lg group transition-all">
               <Dices class="w-4 h-4 text-gray-500 group-hover:text-purple-400" />
               Minhas Apostas
             </button>
-
             <button @click="navigateTo('/transacoes')" class="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-gray-300 hover:text-white hover:bg-[#0f172a] rounded-lg group transition-all">
               <FileText class="w-4 h-4 text-gray-500 group-hover:text-green-400" />
               Histórico de Transações
             </button>
-
             <div class="h-px bg-gray-700/50 mx-2 my-1"></div>
-
             <button @click="handleLogout" class="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-bold text-red-400 hover:bg-[#0f172a] rounded-lg group transition-all">
               <LogOut class="w-4 h-4 group-hover:text-red-500" />
               Sair
             </button>
-
           </div>
         </div>
       </transition>

@@ -36,7 +36,7 @@ const event = ref<SportEvent | null>(null);
 const loading = ref(true);
 const expandedMarkets = ref<Set<string>>(new Set());
 
-// --- LÓGICA DE MERCADOS ---
+// --- LÓGICA DE VISUALIZAÇÃO ---
 const toggleMarket = (marketName: string) => {
     if (expandedMarkets.value.has(marketName)) {
         expandedMarkets.value.delete(marketName);
@@ -83,21 +83,33 @@ const groupedMarkets = computed<Record<string, any[]>>(() => {
 
     const groups: Record<string, any[]> = {};
 
+    // 1. Agrupar
     evt.odds.forEach((odd) => {
         const name = translateMarket(odd.marketName);
-        if (!groups[name]) groups[name] = [];
-        groups[name].push(odd);
+        
+        // Garante a criação do array
+        if (!groups[name]) {
+            groups[name] = [];
+        }
+        // Usa asserção de tipo para evitar erro de TS
+        (groups[name] as any[]).push(odd);
     });
 
+    // 2. Ordenar
     const priority = ['Resultado Final', 'Gols Mais/Menos', 'Ambos Marcam', 'Dupla Hipótese'];
     const sortedGroups: Record<string, any[]> = {};
     
     priority.forEach(p => {
-        if (groups[p]) sortedGroups[p] = groups[p];
+        // Captura em variável local para checar undefined
+        const g = groups[p];
+        if (g) sortedGroups[p] = g;
     });
     
     Object.keys(groups).sort().forEach(k => {
-        if (!priority.includes(k)) sortedGroups[k] = groups[k];
+        if (!priority.includes(k)) {
+            const g = groups[k];
+            if (g) sortedGroups[k] = g;
+        }
     });
 
     return sortedGroups;
@@ -110,87 +122,76 @@ watch(groupedMarkets, (newVal) => {
     });
 });
 
-// --- HELPERS DE SELEÇÃO E FORMATAÇÃO ---
+// --- LÓGICA DE SELEÇÃO DE APOSTAS ---
 
-const getBetTypeForSlip = (odd: any, marketName: string): string => {
-    if (isMarket1x2(marketName) && event.value) {
-        const outcome = asString(odd.outcomeName).toLowerCase();
-        const home = asString(event.value.homeTeam).toLowerCase();
-        const away = asString(event.value.awayTeam).toLowerCase();
-        
-        if (outcome === '1' || outcome === home) return '1';
-        if (outcome === '2' || outcome === away) return '2';
-        if (['x', 'draw', 'empate'].includes(outcome)) return 'X';
-        
-        if (outcome.includes(home)) return '1';
-        if (outcome.includes(away)) return '2';
-    }
-    return translateMarket(marketName); 
+const getSelectionUniqueId = (gameId: string, marketNameGrouped: string, outcomeName: string): string => {
+    return `${gameId}_${marketNameGrouped}_${asString(outcomeName)}`.replace(/\s+/g, '');
 };
 
-// Gera um ID que representa a aposta única
-const getSelectionId = (gameId: string, odd: any): string => {
-    const type = getBetTypeForSlip(odd, odd.marketName);
-    
-    // Se for 1x2, usamos o GameID para garantir unicidade no store
-    if (['1', '2', 'X'].includes(type)) return gameId;
-    
-    // Para outros mercados, usamos um ID composto
-    return `${gameId}_${asString(odd.marketName)}_${asString(odd.outcomeName)}`;
-};
-
-const isSelected = (odd: any): boolean => {
+const isSelected = (odd: any, marketNameGrouped: string): boolean => {
     if (!event.value) return false;
     const gameId = asString(route.params.id);
-    const uniqueId = getSelectionId(gameId, odd);
+    const uniqueId = getSelectionUniqueId(gameId, marketNameGrouped, odd.outcomeName);
     return betStore.selections.some(s => s.id === uniqueId);
 };
 
-// 🔥 CORREÇÃO PRINCIPAL AQUI 🔥
-const handleSelection = (odd: any) => {
+const getBetType = (odd: any, marketNameGrouped: string): string => {
+    if (isMarket1x2(marketNameGrouped) && event.value) {
+        const outcome = asString(odd.outcomeName).toLowerCase();
+        const home = asString(event.value.homeTeam).toLowerCase();
+        const away = asString(event.value.awayTeam).toLowerCase();
+        if (outcome === '1' || outcome === home || outcome.includes(home)) return '1';
+        if (outcome === '2' || outcome === away || outcome.includes(away)) return '2';
+        if (['x', 'draw', 'empate'].includes(outcome)) return 'X';
+    }
+    return marketNameGrouped; 
+};
+
+// 🔥 CONTADOR DO BALÃO AMARELO
+const getSelectedCountForMarket = (marketNameGrouped: string) => {
+    if (!event.value) return 0;
+    const gameId = asString(route.params.id);
+    
+    return betStore.selections.filter(s => {
+        const isSameGame = s.id && s.id.startsWith(gameId);
+        const isSameMarket = s.id && s.id.includes(marketNameGrouped.replace(/\s+/g, ''));
+        return isSameGame && isSameMarket;
+    }).length;
+};
+
+// 🔥 FUNÇÃO DE CLIQUE
+const handleSelection = (odd: any, marketNameGrouped: string) => {
     if (!event.value) return;
     
     const gameId = asString(route.params.id);
-    const marketNameTranslated = translateMarket(odd.marketName);
-    const betTypeString = getBetTypeForSlip(odd, odd.marketName);
-    const uniqueId = getSelectionId(gameId, odd);
-
-    // 1. Se já está selecionado (clicou no mesmo), remove e sai
-    if (isSelected(odd)) {
+    const uniqueId = getSelectionUniqueId(gameId, marketNameGrouped, odd.outcomeName);
+    
+    // 1. Alternar (Toggle)
+    const alreadySelected = betStore.selections.find(s => s.id === uniqueId);
+    if (alreadySelected) {
         betStore.removeSelection(uniqueId);
         return;
     }
 
-    // 2. Limpeza Inteligente: Remove outras seleções do MESMO mercado para este jogo
-    // Ex: Se eu selecionei "Handicap +1.5" e clico em "Handicap -1.5", remove o anterior.
-    // Ex: Se eu selecionei "Over 2.5" e clico em "Under 2.5", remove o anterior.
-    
-    const existingSelectionSameMarket = betStore.selections.find(s => {
-        // Verifica se é do mesmo jogo
-        const isSameGame = s.id === gameId || String(s.id).startsWith(gameId + '_');
+    // 2. Exclusividade
+    const existingSelectionInSameMarket = betStore.selections.find(s => {
+        const isSameGame = s.id && s.id.startsWith(gameId); 
         if (!isSameGame) return false;
-
-        // Se for mercado 1x2, o tipo será '1', 'X' ou '2'.
-        if (['1', '2', 'X'].includes(betTypeString)) {
-             return ['1', '2', 'X'].includes(s.type);
-        }
-
-        // Para outros mercados, verificamos se o nome do mercado bate
-        // O `s.marketName` no store guarda o nome traduzido ou tipo
-        return s.marketName === marketNameTranslated;
+        return s.id.includes(marketNameGrouped.replace(/\s+/g, ''));
     });
 
-    if (existingSelectionSameMarket) {
-        betStore.removeSelection(existingSelectionSameMarket.id);
+    if (existingSelectionInSameMarket) {
+        betStore.removeSelection(existingSelectionInSameMarket.id);
     }
 
-    // 3. Define nome da seleção
+    // 3. Adicionar Nova Seleção
+    const betTypeString = getBetType(odd, marketNameGrouped);
     let selectionName = asString(odd.outcomeName);
+    
     if (betTypeString === '1') selectionName = event.value.homeTeam;
     else if (betTypeString === '2') selectionName = event.value.awayTeam;
     else if (betTypeString === 'X') selectionName = 'Empate';
 
-    // 4. Adiciona a nova seleção
     betStore.addOrReplaceSelection(
         uniqueId,
         event.value.homeTeam,
@@ -198,11 +199,11 @@ const handleSelection = (odd: any) => {
         selectionName,
         Number(odd.price),
         betTypeString as BetType,
-        event.value.commenceTime,
-        marketNameTranslated // Passamos o nome do mercado para controle futuro
+        event.value.commenceTime
     );
 };
 
+// --- FORMATADORES ---
 const formatDate = (d: string) => {
     if (!d) return '--/--';
     const date = new Date(d);
@@ -251,24 +252,15 @@ onMounted(fetchDetails);
         <div v-else-if="event" class="space-y-6">
 
             <div class="relative rounded-xl p-6 border border-white/5 shadow-2xl overflow-hidden group min-h-[160px] flex items-center">
-                
                 <div class="absolute inset-0 z-0">
-                    <img src="/images/backgrouns-sport/backgrounds1.png" 
-                         alt="Stadium Background" 
-                         class="w-full h-full object-cover transition-transform duration-[10s] group-hover:scale-110" />
+                    <img src="/images/backgrouns-sport/backgrounds1.png" alt="Stadium" class="w-full h-full object-cover transition-transform duration-[10s] group-hover:scale-110" />
                 </div>
-
                 <div class="absolute inset-0 z-0 bg-gradient-to-t from-[#0f212e] via-[#0f212e]/80 to-[#1a2c38]/70 backdrop-blur-[1px]"></div>
 
                 <div class="relative z-10 flex items-center justify-between gap-4 w-full">
-                    
                     <div class="flex-1 flex flex-col items-center gap-3 text-center">
-                        <div class="relative">
-                            <TeamLogo :teamName="event.homeTeam" size="w-16 h-16 md:w-20 md:h-20" class="drop-shadow-[0_4px_6px_rgba(0,0,0,0.5)] transition-transform group-hover:scale-105 duration-500" />
-                        </div>
-                        <h1 class="text-white font-black text-sm md:text-lg leading-tight line-clamp-2 drop-shadow-md">
-                            {{ event.homeTeam }}
-                        </h1>
+                        <TeamLogo :teamName="event.homeTeam" size="w-16 h-16 md:w-20 md:h-20" class="drop-shadow-[0_4px_6px_rgba(0,0,0,0.5)] transition-transform group-hover:scale-105 duration-500" />
+                        <h1 class="text-white font-black text-sm md:text-lg leading-tight line-clamp-2 drop-shadow-md">{{ event.homeTeam }}</h1>
                     </div>
 
                     <div class="flex flex-col items-center justify-center min-w-[100px]">
@@ -280,19 +272,13 @@ onMounted(fetchDetails);
                                 <Clock class="w-3 h-3 text-stake-blue" />
                                 <span>{{ formatTime(event.commenceTime) }}</span>
                             </div>
-                            <span class="text-xs text-gray-300 font-bold uppercase tracking-wide drop-shadow-sm">
-                                {{ formatDate(event.commenceTime) }}
-                            </span>
+                            <span class="text-xs text-gray-300 font-bold uppercase tracking-wide drop-shadow-sm">{{ formatDate(event.commenceTime) }}</span>
                         </div>
                     </div>
 
                     <div class="flex-1 flex flex-col items-center gap-3 text-center">
-                        <div class="relative">
-                            <TeamLogo :teamName="event.awayTeam" size="w-16 h-16 md:w-20 md:h-20" class="drop-shadow-[0_4px_6px_rgba(0,0,0,0.5)] transition-transform group-hover:scale-105 duration-500" />
-                        </div>
-                        <h1 class="text-white font-black text-sm md:text-lg leading-tight line-clamp-2 drop-shadow-md">
-                            {{ event.awayTeam }}
-                        </h1>
+                        <TeamLogo :teamName="event.awayTeam" size="w-16 h-16 md:w-20 md:h-20" class="drop-shadow-[0_4px_6px_rgba(0,0,0,0.5)] transition-transform group-hover:scale-105 duration-500" />
+                        <h1 class="text-white font-black text-sm md:text-lg leading-tight line-clamp-2 drop-shadow-md">{{ event.awayTeam }}</h1>
                     </div>
                 </div>
             </div>
@@ -304,17 +290,21 @@ onMounted(fetchDetails);
 
                     <div @click="toggleMarket(marketName)"
                         class="flex items-center justify-between p-3.5 cursor-pointer bg-white/[0.02] hover:bg-white/[0.05] transition-colors select-none">
+                        
                         <div class="flex items-center gap-2.5">
                             <div class="bg-stake-blue/10 p-1.5 rounded text-stake-blue">
                                 <BarChart3 v-if="marketName.includes('Gols')" class="w-4 h-4" />
                                 <Trophy v-else class="w-4 h-4" />
                             </div>
                             <h3 class="text-white font-bold text-xs uppercase tracking-wide">{{ marketName }}</h3>
-                        </div>
-                        <div class="flex items-center gap-3">
-                            <span v-if="!expandedMarkets.has(marketName)" class="text-[10px] text-stake-text font-medium bg-black/20 px-2 py-0.5 rounded-full">
-                                {{ odds.length }} opções
+                            
+                            <span v-if="getSelectedCountForMarket(marketName) > 0" 
+                                  class="ml-1 bg-[#eab308] text-black text-[10px] font-black px-1.5 py-0.5 rounded shadow-sm min-w-[20px] text-center">
+                                {{ getSelectedCountForMarket(marketName) }}
                             </span>
+                        </div>
+
+                        <div class="flex items-center gap-3">
                             <component :is="expandedMarkets.has(marketName) ? ChevronDown : ChevronRight" 
                                 class="w-4 h-4 text-stake-text transition-transform duration-300" />
                         </div>
@@ -323,26 +313,24 @@ onMounted(fetchDetails);
                     <div v-show="expandedMarkets.has(marketName)" class="p-3 border-t border-white/5 bg-[#0f212e]/50">
                         <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
                             <button v-for="odd in odds" :key="odd.id || odd.outcomeName" 
-                                @click="handleSelection(odd)"
+                                @click="handleSelection(odd, marketName)"
                                 class="relative group flex flex-col justify-between p-2.5 rounded border transition-all duration-200 h-[52px]"
-                                :class="isSelected(odd) 
-                                    ? 'bg-stake-blue/10 border-stake-blue shadow-[0_0_10px_rgba(0,146,255,0.2)]' 
-                                    : 'bg-[#1a2c38] border-transparent hover:bg-white/5 hover:border-white/10'">
+                                :class="isSelected(odd, marketName) 
+                                    ? 'bg-white text-black border-transparent shadow-[0_0_15px_rgba(255,255,255,0.2)] scale-[1.02]' 
+                                    : 'bg-[#1a2c38] border-transparent hover:bg-white/5 hover:border-white/10 text-stake-text'">
                                 
                                 <span class="text-[10px] font-bold uppercase truncate w-full text-left transition-colors mb-0.5"
-                                    :class="isSelected(odd) ? 'text-stake-blue' : 'text-stake-text group-hover:text-white'">
+                                    :class="isSelected(odd, marketName) ? 'text-black' : 'text-stake-text group-hover:text-white'">
                                     {{ formatOutcomeName(odd.outcomeName) }}
-                                    <span v-if="odd.point" class="text-white ml-1">{{ odd.point > 0 ? '+' : '' }}{{ odd.point }}</span>
+                                    <span v-if="odd.point" class="ml-1" :class="isSelected(odd, marketName) ? 'text-black' : 'text-white'">
+                                        {{ odd.point > 0 ? '+' : '' }}{{ odd.point }}
+                                    </span>
                                 </span>
 
                                 <span class="text-sm font-black text-right w-full leading-none transition-transform group-hover:-translate-y-0.5"
-                                    :class="isSelected(odd) ? 'text-white' : 'text-white'">
+                                    :class="isSelected(odd, marketName) ? 'text-black' : 'text-white'">
                                     {{ Number(odd.price).toFixed(2) }}
                                 </span>
-
-                                <div v-if="isSelected(odd)" class="absolute top-0 right-0 w-2 h-2">
-                                    <span class="absolute inline-flex h-full w-full rounded-bl-md bg-stake-blue opacity-100"></span>
-                                </div>
                             </button>
                         </div>
                     </div>
@@ -355,7 +343,6 @@ onMounted(fetchDetails);
 </template>
 
 <style scoped>
-/* Animação suave para o acordeão */
 .v-enter-active,
 .v-leave-active {
   transition: opacity 0.2s ease;

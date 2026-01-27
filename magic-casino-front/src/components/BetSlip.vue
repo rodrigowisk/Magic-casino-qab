@@ -11,7 +11,11 @@ const emit = defineEmits(['toggle']);
 
 const store = useBetStore();
 const authStore = useAuthStore();
-const stake = ref<number | null>(null);
+
+// Inicializa com o valor salvo no localStorage, se existir
+const savedStake = localStorage.getItem('lastStake');
+const stake = ref<number | null>(savedStake ? Number(savedStake) : null);
+
 const isLoading = ref(false); // Loading da requisição HTTP
 const stakeError = ref(false);
 
@@ -48,7 +52,11 @@ watch(() => store.selections.length, async (newVal, oldVal) => {
   }
 });
 
-watch(stake, () => {
+// Salva no localStorage sempre que o valor mudar
+watch(stake, (newVal) => {
+    if (newVal) {
+        localStorage.setItem('lastStake', String(newVal));
+    }
     if (stakeError.value) stakeError.value = false;
 });
 
@@ -78,7 +86,10 @@ const isUserLoggedIn = computed(() => !!(authStore?.token && authStore?.user));
 const hasLiveSelection = computed(() => {
     const now = new Date();
     return store.selections.some(s => {
-        const start = new Date(s.commenceTime || s.commence_time);
+        // Cast para 'any' para aceitar commence_time se vier do banco antigo
+        const time = s.commenceTime || (s as any).commence_time;
+        if (!time) return false;
+        const start = new Date(time);
         return start < now; 
     });
 });
@@ -110,7 +121,8 @@ const formatCurrency = (value: number | string) => {
 const updateSelectionOdd = (selectionId: string, newOdd: number) => {
     const index = store.selections.findIndex(s => s.id === selectionId);
     if (index !== -1) {
-        store.selections[index].odds = newOdd;
+        // ✅ CORREÇÃO: Adicionado ! para garantir que o objeto existe (TypeScript Strict)
+        store.selections[index]!.odds = newOdd;
     }
 };
 
@@ -183,7 +195,8 @@ const submitBetToApi = async () => {
         selectionName: s.selection,
         marketName: ['1', '2', 'X', 'x'].includes(s.type) ? '1x2' : (s.type || s.marketName || 'Mercado'), 
         odd: Number(s.odds || 0),
-        commenceTime: s.commenceTime || s.commence_time 
+        // Cast seguro e fallback para data atual se vazio, evitando erro de tipagem
+        commenceTime: s.commenceTime || (s as any).commence_time || new Date().toISOString()
       }))
     };
 
@@ -195,11 +208,13 @@ const submitBetToApi = async () => {
 
     isProcessingLive.value = false;
 
+    // Verificação segura do authStore.user para o TypeScript
     if (authStore.user) {
         if (response.data?.newBalance !== undefined && response.data?.newBalance !== -1) {
-             authStore.user.balance = response.data.newBalance;
+             authStore.user!.balance = response.data.newBalance;
         } else {
-             authStore.user.balance = (authStore.user.balance || 0) - valorApostado;
+             const currentBalance = authStore.user!.balance || 0;
+             authStore.user!.balance = currentBalance - valorApostado;
         }
     }
     await authStore.fetchBalance();
@@ -216,7 +231,7 @@ const submitBetToApi = async () => {
     });
 
     store.clearStore();
-    stake.value = null;
+    // Removido 'stake.value = null' para manter o valor para a próxima aposta
     emit('toggle'); 
 
   } catch (error: any) {
