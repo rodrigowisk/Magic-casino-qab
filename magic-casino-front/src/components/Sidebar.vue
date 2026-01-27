@@ -7,6 +7,7 @@ import {
 } from 'lucide-vue-next';
 import SportsService from '../services/SportsService';
 import { getFlag } from '../utils/flags'; 
+import axios from 'axios'; 
 
 const router = useRouter();
 const route = useRoute();
@@ -15,6 +16,10 @@ const route = useRoute();
 const loading = ref(false);
 const countriesList = ref<any[]>([]); 
 const expandedCountries = ref<Set<string>>(new Set());
+
+// --- CONTADORES ---
+const liveCount = ref(0);
+const preMatchCount = ref(0);
 
 // --- LISTA DE PAÍSES ---
 const knownCountries = [
@@ -35,10 +40,28 @@ const translateCountry = (name: string) => {
     return name;
 };
 
-// --- COMPUTED ---
+// --- COMPUTED CORRIGIDO ---
 const currentSport = computed(() => {
-    const id = route.params.id;
-    return (Array.isArray(id) ? id[0] : id) || 'soccer';
+    const param = route.params.id;
+    const val = (Array.isArray(param) ? param[0] : param);
+
+    // 1. Se não tiver parametro, assume soccer
+    if (!val) return 'soccer';
+
+    // 2. Verifica se é um ID numérico (estamos na tela de detalhes)
+    // Se for número, precisamos recuperar o último esporte visto
+    if (/^\d+$/.test(val)) {
+        if (typeof window !== 'undefined') {
+            return localStorage.getItem('lastSelectedSport') || 'soccer';
+        }
+        return 'soccer';
+    }
+
+    // 3. Se for texto (ex: "soccer", "tennis"), salvamos no localStorage e retornamos
+    if (typeof window !== 'undefined') {
+        localStorage.setItem('lastSelectedSport', val);
+    }
+    return val;
 });
 
 const sportNameTranslated = computed(() => {
@@ -70,58 +93,80 @@ const toggleCountry = (countryName: string) => {
     }
 };
 
-// --- LÓGICA DE DADOS ---
+// --- LÓGICA DE CONTAGEM (LIVE) ---
+const fetchLiveCount = async () => {
+    try {
+        const response = await axios.get('/sportbook/api/LiveEvents');
+        if (response.data && Array.isArray(response.data)) {
+            liveCount.value = response.data.length;
+        } else {
+            liveCount.value = 0;
+        }
+    } catch (error) {
+        console.error("Erro ao buscar contagem ao vivo:", error);
+        liveCount.value = 0;
+    }
+};
+
+// --- LÓGICA DE DADOS (PRÉ-JOGO + MENU) ---
 const fetchAndGroupLeagues = async () => {
     loading.value = true;
     countriesList.value = [];
     expandedCountries.value.clear();
 
     try {
-        const events = await SportsService.getEventsBySport(currentSport.value);
-        const groups: Record<string, Set<string>> = {};
-        const leagueOriginalNames: Record<string, string> = {};
-
-        events.forEach((event: any) => {
-            let rawLeague = event.league || event.League || 'Outros';
-            let rawCountry = event.country || event.Country;
-
-            if (!rawCountry || rawCountry === 'Internacional') {
-                const parts = rawLeague.split(' ');
-                const potentialCountry = parts[0]; 
-                if (knownCountries.includes(potentialCountry)) {
-                    rawCountry = potentialCountry;
-                    rawLeague = parts.slice(1).join(' ').trim();
-                    if (!rawLeague) rawLeague = 'Principal'; 
-                } else {
-                    rawCountry = 'Internacional';
-                }
-            }
-
-            const displayCountry = translateCountry(rawCountry);
-
-            if (!groups[displayCountry]) {
-                groups[displayCountry] = new Set();
-            }
-            
-            groups[displayCountry].add(rawLeague);
-            leagueOriginalNames[rawLeague] = event.league || event.League;
-        });
-
-        const sortedCountries = Object.keys(groups).sort();
+        // 🔥 Usa o sport correto (memória ou URL)
+        const events = await SportsService.getEvents(currentSport.value, 1, 3000);
         
-        if (sortedCountries.includes('Brasil')) {
-             const idx = sortedCountries.findIndex(c => c === 'Brasil');
-             sortedCountries.unshift(sortedCountries.splice(idx, 1)[0]);
-             expandedCountries.value.add('Brasil');
-        }
+        // Atualiza o contador com o total real
+        preMatchCount.value = events ? events.length : 0;
 
-        countriesList.value = sortedCountries.map(country => ({
-            name: country,
-            leagues: Array.from(groups[country]).sort().map(lgName => ({
-                displayName: lgName,
-                queryName: leagueOriginalNames[lgName] || lgName
-            }))
-        }));
+        if (events && events.length > 0) {
+            const groups: Record<string, Set<string>> = {};
+            const leagueOriginalNames: Record<string, string> = {};
+
+            events.forEach((event: any) => {
+                let rawLeague = event.league || event.League || 'Outros';
+                let rawCountry = event.country || event.Country;
+
+                if (!rawCountry || rawCountry === 'Internacional') {
+                    const parts = rawLeague.split(' ');
+                    const potentialCountry = parts[0]; 
+                    if (knownCountries.includes(potentialCountry)) {
+                        rawCountry = potentialCountry;
+                        rawLeague = parts.slice(1).join(' ').trim();
+                        if (!rawLeague) rawLeague = 'Principal'; 
+                    } else {
+                        rawCountry = 'Internacional';
+                    }
+                }
+
+                const displayCountry = translateCountry(rawCountry);
+
+                if (!groups[displayCountry]) {
+                    groups[displayCountry] = new Set();
+                }
+                
+                groups[displayCountry].add(rawLeague);
+                leagueOriginalNames[rawLeague] = event.league || event.League;
+            });
+
+            const sortedCountries = Object.keys(groups).sort();
+            
+            if (sortedCountries.includes('Brasil')) {
+                 const idx = sortedCountries.findIndex(c => c === 'Brasil');
+                 sortedCountries.unshift(sortedCountries.splice(idx, 1)[0]);
+                 expandedCountries.value.add('Brasil');
+            }
+
+            countriesList.value = sortedCountries.map(country => ({
+                name: country,
+                leagues: Array.from(groups[country]).sort().map(lgName => ({
+                    displayName: lgName,
+                    queryName: leagueOriginalNames[lgName] || lgName
+                }))
+            }));
+        }
 
     } catch (e) {
         console.error("Erro ao carregar menu lateral:", e);
@@ -132,7 +177,15 @@ const fetchAndGroupLeagues = async () => {
 
 watch(currentSport, () => {
     fetchAndGroupLeagues();
+    fetchLiveCount(); 
 }, { immediate: true });
+
+// Polling apenas para o Live (mais volátil)
+onMounted(() => {
+    fetchLiveCount();
+    // Atualiza contagem ao vivo a cada 30 segundos
+    setInterval(fetchLiveCount, 30000);
+});
 
 </script>
 
@@ -152,7 +205,11 @@ watch(currentSport, () => {
                     <span class="relative inline-flex rounded-full h-2 w-2 bg-red-600"></span>
                 </div>
                 
-                <span class="text-sm font-bold" :class="router.currentRoute.value.path === '/live' ? 'text-white' : 'text-stake-text group-hover:text-white'">Ao Vivo</span>
+                <span class="text-sm font-bold flex-1" :class="router.currentRoute.value.path === '/live' ? 'text-white' : 'text-stake-text group-hover:text-white'">Ao Vivo</span>
+                
+                <span v-if="liveCount > 0" class="text-[10px] font-bold text-white bg-red-500/80 px-1.5 py-0.5 rounded-md min-w-[24px] text-center shadow-sm animate-pulse">
+                    {{ liveCount }}
+                </span>
             </a>
 
             <a href="#" 
@@ -161,7 +218,11 @@ watch(currentSport, () => {
                :class="router.currentRoute.value.name === 'sport-events' && !router.currentRoute.value.query.league ? 'bg-stake-hover text-white' : 'hover:bg-stake-hover text-stake-text'"
             >
                 <CalendarClock class="w-4 h-4 text-stake-text group-hover:text-white" />
-                <span class="text-sm font-semibold group-hover:text-white">Pré Jogo</span>
+                <span class="text-sm font-semibold group-hover:text-white flex-1">Pré Jogo</span>
+
+                <span v-if="preMatchCount > 0" class="text-[10px] font-bold text-stake-text/70 bg-black/20 px-1.5 py-0.5 rounded-md min-w-[24px] text-center group-hover:text-white group-hover:bg-white/10 transition-colors">
+                    {{ preMatchCount }}
+                </span>
             </a>
 
             <a href="#" 

@@ -25,7 +25,7 @@ namespace Magic_casino_sportbook.BackgroundServices
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             Console.WriteLine("\n-------------------------------------------------------------");
-            Console.WriteLine("🏁 [LIVE SCORE] WORKER 6.1: VALIDAÇÃO PADRÃO (1X2) 🏁");
+            Console.WriteLine("🏁 [LIVE SCORE] WORKER 6.2: VALIDAÇÃO FINAL (RESULT ENDPOINT) 🏁");
             Console.WriteLine("-------------------------------------------------------------\n");
 
             while (!stoppingToken.IsCancellationRequested)
@@ -77,7 +77,6 @@ namespace Magic_casino_sportbook.BackgroundServices
                     // Verifica se o jogo acabou (Ended ou Status 3) E tem placar válido
                     if ((game.Status == "Ended" || game.Status == "3") && !string.IsNullOrEmpty(game.Score) && game.Score.Contains("-"))
                     {
-                        // Removemos a necessidade de passar nomes dos times, usamos a lógica pura 1x2
                         ProcessSelectionResult(selection, game.Score);
 
                         if (selection.Bet != null)
@@ -87,8 +86,8 @@ namespace Magic_casino_sportbook.BackgroundServices
 
                         dbChanged = true;
                     }
-                    // Fallback: Se o jogo é antigo (> 4h) e ainda não finalizou, força check na API
-                    else if (game.CommenceTime < DateTime.UtcNow.AddHours(-4))
+                    // 🔥 CORREÇÃO: Se o jogo começou há mais de 135min e ainda tá "Live", força checagem na API de RESULTADOS.
+                    else if (game.CommenceTime < DateTime.UtcNow.AddMinutes(-135))
                     {
                         if (!gamesToForceUpdate.Contains(game.ExternalId)) gamesToForceUpdate.Add(game.ExternalId);
                     }
@@ -125,7 +124,6 @@ namespace Magic_casino_sportbook.BackgroundServices
             if (won) Console.WriteLine($"   ✅ Aposta VENCEDORA: {selection.MarketName} -> {selection.OutcomeName} (Placar: {score})");
         }
 
-        // 🔥 LÓGICA CORRIGIDA: Validação Padrão (1, X, 2)
         private bool CheckWinner(string market, string outcome, string score)
         {
             try
@@ -140,38 +138,28 @@ namespace Magic_casino_sportbook.BackgroundServices
                 // --- 1. MERCADO: VENCEDOR (1X2) ---
                 if (mkt.Contains("result") || mkt.Contains("vencedor") || mkt == "1x2" || mkt.Contains("match winner"))
                 {
-                    // 1 = Casa Vence
                     if (sel == "1") return homeScore > awayScore;
-
-                    // 2 = Fora Vence
                     if (sel == "2") return awayScore > homeScore;
-
-                    // X = Empate
                     if (sel == "x" || sel == "draw" || sel == "empate") return homeScore == awayScore;
                 }
 
                 // --- 2. MERCADO: DUPLA HIPÓTESE ---
                 if (mkt.Contains("double") || mkt.Contains("dupla"))
                 {
-                    if (sel == "1x") return homeScore >= awayScore; // Casa ou Empate
-                    if (sel == "x2" || sel == "2x") return awayScore >= homeScore; // Fora ou Empate
-                    if (sel == "12") return homeScore != awayScore; // Casa ou Fora (sem empate)
+                    if (sel == "1x") return homeScore >= awayScore;
+                    if (sel == "x2" || sel == "2x") return awayScore >= homeScore;
+                    if (sel == "12") return homeScore != awayScore;
                 }
 
                 // --- 3. MERCADO: GOLS (OVER/UNDER) ---
                 if (mkt.Contains("goal") || mkt.Contains("gols") || mkt.Contains("over") || mkt.Contains("under"))
                 {
                     int totalGols = homeScore + awayScore;
-
-                    // Extrai o número da aposta (ex: "Over 2.5" -> 2.5)
                     var match = Regex.Match(sel, @"(\d+(\.\d+)?)");
                     if (match.Success && double.TryParse(match.Value, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double line))
                     {
-                        if (sel.Contains("over") || sel.Contains("mais") || sel.Contains("acima"))
-                            return totalGols > line;
-
-                        if (sel.Contains("under") || sel.Contains("menos") || sel.Contains("abaixo"))
-                            return totalGols < line;
+                        if (sel.Contains("over") || sel.Contains("mais") || sel.Contains("acima")) return totalGols > line;
+                        if (sel.Contains("under") || sel.Contains("menos") || sel.Contains("abaixo")) return totalGols < line;
                     }
                 }
 
@@ -195,9 +183,8 @@ namespace Magic_casino_sportbook.BackgroundServices
         {
             var allSelections = await context.BetSelections.Where(s => s.BetId == ticket.Id).ToListAsync();
 
-            if (allSelections.Any(s => s.Status == "pending")) return; // Ainda tem jogo rolando
+            if (allSelections.Any(s => s.Status == "pending")) return;
 
-            // Se perdeu alguma, o bilhete todo perde
             if (allSelections.Any(s => s.Status == "Lost"))
             {
                 if (ticket.Status != "Lost")
@@ -208,7 +195,6 @@ namespace Magic_casino_sportbook.BackgroundServices
                 return;
             }
 
-            // Se ganhou todas
             if (allSelections.All(s => s.Status == "Won") && ticket.Status != "Won")
             {
                 Console.WriteLine($"🏆 [BILHETE VENCEU] ID: {ticket.Id} -> PAGANDO R$ {ticket.PotentialReturn:N2}...");
@@ -227,11 +213,16 @@ namespace Magic_casino_sportbook.BackgroundServices
             }
         }
 
+        // =========================================================================================
+        // 🔄 MÉTODO ATUALIZADO: USA ENDPOINT DE RESULTADO PARA VALIDAR JOGOS TRAVADOS
+        // =========================================================================================
         private async Task FetchAndSettleFromApi(List<string> matchIds, AppDbContext context, CoreWalletService walletService)
         {
             var idsString = string.Join(",", matchIds);
             var client = _httpClientFactory.CreateClient();
-            var url = $"{BASE_URL}/v1/bet365/event?token={_betsApiToken}&FI={idsString}";
+
+            // 🆕 MUDANÇA: Usa endpoint /result e event_id
+            var url = $"{BASE_URL}/v1/bet365/result?token={_betsApiToken}&event_id={idsString}";
 
             try
             {
@@ -240,30 +231,35 @@ namespace Magic_casino_sportbook.BackgroundServices
                 {
                     var json = await response.Content.ReadAsStringAsync();
                     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true, NumberHandling = JsonNumberHandling.AllowReadingFromString };
-                    var data = JsonSerializer.Deserialize<B365LiveResponse>(json, options);
+
+                    // 🆕 MUDANÇA: Deserializa com o novo modelo B365ResultResponse
+                    var data = JsonSerializer.Deserialize<B365ResultResponse>(json, options);
 
                     if (data?.Results != null)
                     {
-                        var allPackets = data.Results.SelectMany(l => l).ToList();
-                        foreach (var ev in allPackets.Where(p => p.Type == "EV"))
+                        foreach (var res in data.Results)
                         {
-                            if (ev.Status == "3" || ev.TimeStatus == "3")
+                            // 🆕 VALIDAÇÃO: Pelo JSON, Status Encerrado é "3"
+                            if (res.TimeStatus == "3" && !string.IsNullOrEmpty(res.Score))
                             {
-                                var gameDb = await context.SportsEvents.FirstOrDefaultAsync(g => g.ExternalId == ev.Fi);
+                                // Busca jogo pelo ID externo (bet365_id do JSON)
+                                var gameDb = await context.SportsEvents.FirstOrDefaultAsync(g => g.ExternalId == res.Bet365Id);
+
                                 if (gameDb != null)
                                 {
-                                    gameDb.Status = "Ended";
-                                    gameDb.Score = ev.Ss;
+                                    Console.WriteLine($"🏁 [WORKER RESULT] Finalizando jogo: {gameDb.HomeTeam} (Placar Final: {res.Score})");
 
-                                    // Processa apostas desse jogo recuperado
+                                    gameDb.Status = "Ended";
+                                    gameDb.Score = res.Score;
+
                                     var betsForGame = await context.BetSelections
                                         .Include(b => b.Bet)
-                                        .Where(b => b.MatchId == ev.Fi && b.Status == "pending")
+                                        .Where(b => b.MatchId == res.Bet365Id && b.Status == "pending")
                                         .ToListAsync();
 
                                     foreach (var betSel in betsForGame)
                                     {
-                                        ProcessSelectionResult(betSel, ev.Ss ?? "0-0");
+                                        ProcessSelectionResult(betSel, res.Score);
                                         if (betSel.Bet != null) await CheckAndSettleTicketAsync(betSel.Bet, context, walletService);
                                     }
                                 }
@@ -275,7 +271,7 @@ namespace Magic_casino_sportbook.BackgroundServices
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ [API RESGATE] Erro: {ex.Message}");
+                Console.WriteLine($"❌ [API RESULT ERRO] Falha ao buscar resultados: {ex.Message}");
             }
         }
     }

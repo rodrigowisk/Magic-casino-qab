@@ -2,7 +2,6 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signalr';
-// 🔥 CORREÇÃO FINAL: Removido 'Timer' que causava erro no build
 import { Radio, AlertCircle, ChevronDown, ChevronRight, ArrowUp, ArrowDown, Lock } from 'lucide-vue-next';
 import axios from 'axios'; 
 import TeamLogo from '../components/TeamLogo.vue';
@@ -29,7 +28,6 @@ interface LiveGame {
   drawOdd: number;
   awayOdd: number;
   countryCode?: string;
-  // Propriedades de Animação
   homeOddDir?: 'up' | 'down' | null;
   homeOddFlash?: boolean;
   drawOddDir?: 'up' | 'down' | null;
@@ -68,9 +66,8 @@ const getSportCategory = (gameOrKey: LiveGame | string): string => {
     return cleanRaw || 'other'; 
 };
 
-// --- 🔥 NOVA FUNÇÃO: NORMALIZAR DADOS (REUTILIZÁVEL) ---
+// --- NORMALIZAÇÃO ---
 const normalizeGame = (e: any): LiveGame => {
-    // Parse seguro do placar
     let hScore = 0, aScore = 0;
     if (e.score && e.score.includes('-')) {
         const parts = e.score.split('-');
@@ -83,7 +80,7 @@ const normalizeGame = (e: any): LiveGame => {
 
     return {
         ...e,
-        gameId: e.externalId || e.gameId, // Garante que pegamos o ID certo
+        gameId: e.externalId || e.gameId,
         sportKey: e.sportKey || 'soccer',
         league: e.league || 'Ao Vivo',
         currentMinute: e.gameTime || e.currentMinute || '0',
@@ -100,14 +97,11 @@ const normalizeGame = (e: any): LiveGame => {
 const fetchInitialData = async () => {
   try {
     const response = await axios.get('/sportbook/api/LiveEvents');
-    
     if (response.data && Array.isArray(response.data)) {
-        // Usa a função normalizadora
         events.value = response.data.map(normalizeGame);
     } else {
         events.value = [];
     }
-    // Abre todas as ligas inicialmente
     events.value.forEach(e => {
         if(e.league) openLeagues.value.add(e.league);
     });
@@ -134,35 +128,26 @@ onMounted(async () => {
   await fetchInitialData();
   
   const signalRUrl = "/gameHub";
-  console.log(`📡 [AO VIVO] Conectando SignalR em: ${signalRUrl}`);
-
   connection = new HubConnectionBuilder()
     .withUrl(signalRUrl) 
     .withAutomaticReconnect()
     .configureLogging(LogLevel.Information)
     .build();
 
-  // 1. ATUALIZAÇÃO (LiveOddsUpdate)
   connection.on('LiveOddsUpdate', (updatedGames: any[]) => {
     if (!updatedGames || !Array.isArray(updatedGames)) return;
-    
     updatedGames.forEach(update => {
         const index = events.value.findIndex(g => g.gameId === update.id); 
-        
         if (index !== -1) {
             const game = events.value[index];
             if (!game) return; 
-
             if (update.time) game.currentMinute = update.time;
-            
             if (update.score && update.score.includes('-')) {
                 const parts = update.score.split('-');
                 game.homeScore = parseInt(parts[0]) || 0;
                 game.awayScore = parseInt(parts[1]) || 0;
             }
-
             if (update.status) game.period = update.status;
-
             if (update.homeOdd) updateOddWithAnimation(game, 'homeOdd', update.homeOdd);
             if (update.drawOdd) updateOddWithAnimation(game, 'drawOdd', update.drawOdd);
             if (update.awayOdd) updateOddWithAnimation(game, 'awayOdd', update.awayOdd);
@@ -170,60 +155,33 @@ onMounted(async () => {
     });
   });
 
-  // 2. 🔥 NOVO: JOGO ENTROU NO AO VIVO (GameWentLive) 🔥
   connection.on('GameWentLive', (newGames: any[]) => {
       if (!newGames || !Array.isArray(newGames)) return;
-      
-      console.log(`🔥 [SIGNALR] Recebido ${newGames.length} novos jogos ao vivo!`);
-      
-      let addedCount = 0;
       newGames.forEach(rawGame => {
-          // Normaliza os dados (igual ao load inicial)
           const newGame = normalizeGame(rawGame);
-          
-          // Verifica duplicidade
           const exists = events.value.some(g => g.gameId === newGame.gameId);
           if (!exists) {
               events.value.push(newGame);
-              // Garante que a liga esteja aberta para o usuário ver o jogo
               if (newGame.league) openLeagues.value.add(newGame.league);
-              addedCount++;
           }
       });
-      
-      if (addedCount > 0) {
-          console.log(`✅ Adicionados ${addedCount} jogos à lista.`);
-      }
   });
 
-  // 3. REMOÇÃO (RemoveGames)
   connection.on('RemoveGames', (endedIds: string[]) => {
       if (events.value.length > 0) {
-          const initialCount = events.value.length;
           events.value = events.value.filter(e => !endedIds.includes(e.gameId));
-          if (events.value.length < initialCount) {
-              console.log(`🏁 Removidos ${initialCount - events.value.length} jogos encerrados.`);
-          }
       }
   });
 
-  try { 
-      await connection.start(); 
-      console.log("🟢 Conectado ao SignalR Ao Vivo!"); 
-  } catch (err) { 
-      console.error("❌ Erro ao conectar SignalR:", err); 
-  }
+  try { await connection.start(); } catch (err) { console.error("❌ Erro SignalR:", err); }
 });
 
-onUnmounted(() => {
-  if (connection) connection.stop();
-});
+onUnmounted(() => { if (connection) connection.stop(); });
 
-// --- COMPUTED: DADOS PARA O MENU ---
+// --- COMPUTED ---
 const liveSportsData = computed(() => {
     const keys = new Set<string>();
     const counts: Record<string, number> = {};
-
     events.value.forEach(e => {
         const k = getSportCategory(e);
         if (k) {
@@ -234,9 +192,7 @@ const liveSportsData = computed(() => {
     return { keys, counts };
 });
 
-const handleMenuSelect = (key: string) => {
-    selectedSport.value = key;
-};
+const handleMenuSelect = (key: string) => { selectedSport.value = key; };
 
 const filteredEvents = computed(() => {
     if (selectedSport.value === 'all') return events.value;
@@ -253,7 +209,7 @@ const groupedEvents = computed(() => {
   return groups;
 });
 
-// --- HELPERS GERAIS ---
+// --- HELPERS ---
 const isMarketSuspended = (odd: number) => !odd || odd <= 1.01;
 const handleSelection = (game: LiveGame, type: BetType) => {
   const price = type === '1' ? game.homeOdd : type === '2' ? game.awayOdd : game.drawOdd;
@@ -269,31 +225,20 @@ const goToDetails = (gameId: string) => { router.push({ name: 'event-details', p
 const handleImageError = (event: Event) => { (event.target as HTMLImageElement).src = '/images/flags/un.svg'; };
 const isSelected = (game: LiveGame, type: BetType) => betStore.selections.find(s => s.id === game.gameId)?.type === type;
 const getOddValue = (game: LiveGame, type: string) => (type === '1' ? game.homeOdd : type === 'X' ? game.drawOdd : game.awayOdd).toFixed(2);
-
 const getBetTypes = (game: LiveGame) => {
     const sport = getSportCategory(game);
-    if (sport === 'soccer') {
-        return ['1', 'X', '2'];
-    }
+    if (sport === 'soccer') { return ['1', 'X', '2']; }
     return ['1', '2'];
 };
-
 const isNumericTime = (time: string) => time && /\d/.test(time);
-
 const getFlagUrl = (game: LiveGame | undefined) => {
   if (!game) return '/images/flags/un.svg'; 
   if (game.countryCode) return `/images/flags/${game.countryCode.toLowerCase()}.svg`;
-  const leagueName = (game.league || '').toLowerCase();
-  const map: Record<string, string> = { brazil: 'br', england: 'gb', spain: 'es', italy: 'it', germany: 'de', france: 'fr', usa: 'us', portugal: 'pt', argentina: 'ar', russia: 'ru', netherlands: 'nl' };
-  const found = Object.keys(map).find(c => leagueName.includes(c));
-  return found ? `/images/flags/${map[found]}.svg` : '/images/flags/un.svg';
+  return '/images/flags/un.svg';
 };
-
 const getOddDirection = (game: LiveGame, type: string) => { if (type === '1') return game.homeOddDir; if (type === 'X') return game.drawOddDir; if (type === '2') return game.awayOddDir; return null; };
 const getOddFlash = (game: LiveGame, type: string) => { if (type === '1') return game.homeOddFlash; if (type === 'X') return game.drawOddFlash; if (type === '2') return game.awayOddFlash; return false; };
 const getOddRaw = (game: LiveGame, type: string) => { if (type === '1') return game.homeOdd; if (type === 'X') return game.drawOdd; if (type === '2') return game.awayOdd; return 0; };
-
-// 🔥 NOVA FUNÇÃO: Conta jogos selecionados dentro da liga
 const getLeagueSelectionCount = (games: LiveGame[]) => {
     return games.reduce((count, game) => {
         return count + (betStore.selections.some(s => s.id === game.gameId) ? 1 : 0);
@@ -305,15 +250,14 @@ const getLeagueSelectionCount = (games: LiveGame[]) => {
   <div class="space-y-0 pb-20 w-full relative">
     
     <TopSportsMenu 
-        class="-mx-4 -mt-4 md:-mx-6 md:-mt-6 z-50 sticky top-0"
+        class="w-full z-50 sticky top-0 bg-[#0f172a] shadow-lg border-b border-white/5"
         :is-live="true" 
         :live-sports="liveSportsData.keys"
-        :live-counts="liveSportsData.counts"
         :selected-sport="selectedSport"
         @select="handleMenuSelect" 
     />
 
-    <div class="space-y-4 pt-4">
+    <div class="space-y-4 p-4 md:p-6">
 
         <div class="flex items-center gap-2 pb-2 border-b border-stake-dark/50">
             <div class="bg-red-500/10 p-1.5 rounded-full animate-pulse">
@@ -341,10 +285,6 @@ const getLeagueSelectionCount = (games: LiveGame[]) => {
                         <span v-if="getLeagueSelectionCount(games) > 0" class="text-[10px] text-black font-bold bg-yellow-400 px-1.5 py-0.5 rounded-full shadow-sm animate-pulse">
                             {{ getLeagueSelectionCount(games) }}
                         </span>
-                        <span v-else class="text-[10px] text-stake-text/60 font-bold bg-black/20 px-1.5 py-0.5 rounded-full">
-                            {{ games.length }}
-                        </span>
-
                     </div>
                     <component :is="openLeagues.has(String(league)) ? ChevronDown : ChevronRight" class="w-4 h-4 text-stake-text" />
                 </div>

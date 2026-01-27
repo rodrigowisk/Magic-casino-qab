@@ -5,6 +5,11 @@ using System.Text.Json.Serialization;
 
 namespace Magic_casino_sportbook.Models
 {
+    // =========================================================================
+    // 1. MODELOS PARA O LIVE FEED (/v1/bet365/event)
+    // Usado pelo LiveOddsWorker e LiveSportService
+    // =========================================================================
+
     public class B365LiveResponse
     {
         [JsonPropertyName("success")]
@@ -32,28 +37,27 @@ namespace Magic_casino_sportbook.Models
         public string? Fi { get; set; }
 
         // --- DADOS DO JOGO (EV) ---
-        // Aqui está o segredo: Mapeando explicitamente para as siglas MAIÚSCULAS do JSON
-
         [JsonPropertyName("NA")] public string? Na { get; set; } // Nome (Name)
         [JsonPropertyName("SS")] public string? Ss { get; set; } // Placar (Soccer Score)
         [JsonPropertyName("TM")] public string? Tm { get; set; } // Tempo (Time Minute)
         [JsonPropertyName("TS")] public string? Ts { get; set; } // Segundos
         [JsonPropertyName("TT")] public string? Tt { get; set; } // Timer Ticking (1=Rodando)
         [JsonPropertyName("TU")] public string? Tu { get; set; } // Time Updated (Data)
-        [JsonPropertyName("time_status")]                        // Status jogo
 
+        [JsonPropertyName("time_status")]                        // Status jogo
         public string? TimeStatus { get; set; }
+
         // --- DADOS DE LOG/TEXTO (ST) ---
-        [JsonPropertyName("LA")] public string? La { get; set; } // Log Action (Onde pegamos o tempo real)
+        [JsonPropertyName("LA")] public string? La { get; set; } // Log Action
 
         // --- ODDS (PA) ---
         [JsonPropertyName("OD")] public string? Od { get; set; } // Valor da Odd
         [JsonPropertyName("N2")] public string? N2 { get; set; } // 1, X, 2
         [JsonPropertyName("HA")] public string? Ha { get; set; } // Handicap / Header
 
-        // --- OUTROS CAMPOS (Evita erros de parsing) ---
+        // --- OUTROS CAMPOS ---
         [JsonPropertyName("time")] public string? Time { get; set; }
-        [JsonPropertyName("status")] public string? Status { get; set; } // Status numérico como string
+        [JsonPropertyName("status")] public string? Status { get; set; }
 
         [JsonPropertyName("CC")] public string? Cc { get; set; }
         [JsonPropertyName("CT")] public string? Ct { get; set; }
@@ -154,7 +158,58 @@ namespace Magic_casino_sportbook.Models
         [JsonPropertyName("event_id")] public string? EventId { get; set; }
     }
 
-    // Mantive seu converter, ele é útil para IDs que vem como numero ou string
+    // =========================================================================
+    // 2. NOVOS MODELOS PARA O ENDPOINT DE RESULTADOS (/v1/bet365/result)
+    // Usado pelo LiveScoreWorker (FetchAndSettleFromApi)
+    // =========================================================================
+
+    public class B365ResultResponse
+    {
+        [JsonPropertyName("success")]
+        public int Success { get; set; }
+
+        [JsonPropertyName("results")]
+        public List<B365ResultItem>? Results { get; set; }
+    }
+
+    public class B365ResultItem
+    {
+        [JsonPropertyName("id")]
+        public string? Id { get; set; } // ID interno da API
+
+        [JsonPropertyName("bet365_id")]
+        public string? Bet365Id { get; set; } // 🔥 O ID QUE VINCULA AO SEU BANCO (ExternalId)
+
+        [JsonPropertyName("time_status")]
+        public string? TimeStatus { get; set; } // "3" = Encerrado
+
+        [JsonPropertyName("ss")]
+        public string? Score { get; set; } // Placar Final (ex: "0-2")
+
+        [JsonPropertyName("time")]
+        public string? Time { get; set; } // Timestamp
+
+        // (Opcional) Apenas para logar nomes se necessário
+        [JsonPropertyName("home")]
+        public B365ResultTeam? Home { get; set; }
+
+        [JsonPropertyName("away")]
+        public B365ResultTeam? Away { get; set; }
+    }
+
+    public class B365ResultTeam
+    {
+        [JsonPropertyName("name")]
+        public string? Name { get; set; }
+
+        [JsonPropertyName("id")]
+        public string? Id { get; set; }
+    }
+
+    // =========================================================================
+    // 3. CONVERSORES AUXILIARES
+    // =========================================================================
+
     public class StringIntConverter : JsonConverter<string>
     {
         public override string? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)

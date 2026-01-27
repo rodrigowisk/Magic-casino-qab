@@ -264,7 +264,7 @@ const submitBetToApi = async () => {
 
             <div class="flex flex-col items-center gap-0.5 mb-4 text-center">
                 <h3 class="text-white font-bold text-sm">Processando...</h3>
-                <span class="text-slate-400 text-[10px] leading-tight">Aguarde o delay de segurança</span>
+                <span class="text-slate-400 text-[10px] leading-tight">Aguarde enquanto processamos sua aposta</span>
             </div>
 
             <div class="text-3xl font-mono font-black text-white mb-4 tracking-tighter">

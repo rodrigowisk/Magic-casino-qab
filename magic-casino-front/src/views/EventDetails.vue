@@ -36,7 +36,7 @@ const event = ref<SportEvent | null>(null);
 const loading = ref(true);
 const expandedMarkets = ref<Set<string>>(new Set());
 
-// --- LÓGICA DE MERCADOS (Mantida e Organizada) ---
+// --- LÓGICA DE MERCADOS ---
 const toggleMarket = (marketName: string) => {
     if (expandedMarkets.value.has(marketName)) {
         expandedMarkets.value.delete(marketName);
@@ -89,16 +89,13 @@ const groupedMarkets = computed<Record<string, any[]>>(() => {
         groups[name].push(odd);
     });
 
-    // Ordenação Específica de Chaves
     const priority = ['Resultado Final', 'Gols Mais/Menos', 'Ambos Marcam', 'Dupla Hipótese'];
     const sortedGroups: Record<string, any[]> = {};
     
-    // Adiciona prioridades primeiro
     priority.forEach(p => {
         if (groups[p]) sortedGroups[p] = groups[p];
     });
     
-    // Adiciona o resto
     Object.keys(groups).sort().forEach(k => {
         if (!priority.includes(k)) sortedGroups[k] = groups[k];
     });
@@ -106,7 +103,6 @@ const groupedMarkets = computed<Record<string, any[]>>(() => {
     return sortedGroups;
 });
 
-// Auto-expandir os principais
 watch(groupedMarkets, (newVal) => {
     const important = ['Resultado Final', 'Gols Mais/Menos', 'Ambos Marcam'];
     Object.keys(newVal).forEach(k => {
@@ -115,52 +111,86 @@ watch(groupedMarkets, (newVal) => {
 });
 
 // --- HELPERS DE SELEÇÃO E FORMATAÇÃO ---
+
 const getBetTypeForSlip = (odd: any, marketName: string): string => {
     if (isMarket1x2(marketName) && event.value) {
         const outcome = asString(odd.outcomeName).toLowerCase();
         const home = asString(event.value.homeTeam).toLowerCase();
         const away = asString(event.value.awayTeam).toLowerCase();
-        if (['draw', 'x', 'empate'].includes(outcome)) return 'X';
-        if (outcome === '1' || outcome.includes(home)) return '1';
-        if (outcome === '2' || outcome.includes(away)) return '2';
-        return 'X';
+        
+        if (outcome === '1' || outcome === home) return '1';
+        if (outcome === '2' || outcome === away) return '2';
+        if (['x', 'draw', 'empate'].includes(outcome)) return 'X';
+        
+        if (outcome.includes(home)) return '1';
+        if (outcome.includes(away)) return '2';
     }
-    return translateMarket(marketName);
+    return translateMarket(marketName); 
 };
 
+// Gera um ID que representa a aposta única
 const getSelectionId = (gameId: string, odd: any): string => {
     const type = getBetTypeForSlip(odd, odd.marketName);
+    
+    // Se for 1x2, usamos o GameID para garantir unicidade no store
     if (['1', '2', 'X'].includes(type)) return gameId;
+    
+    // Para outros mercados, usamos um ID composto
     return `${gameId}_${asString(odd.marketName)}_${asString(odd.outcomeName)}`;
 };
 
 const isSelected = (odd: any): boolean => {
     if (!event.value) return false;
-    const uniqueId = getSelectionId(asString(route.params.id), odd);
+    const gameId = asString(route.params.id);
+    const uniqueId = getSelectionId(gameId, odd);
     return betStore.selections.some(s => s.id === uniqueId);
 };
 
+// 🔥 CORREÇÃO PRINCIPAL AQUI 🔥
 const handleSelection = (odd: any) => {
     if (!event.value) return;
+    
     const gameId = asString(route.params.id);
+    const marketNameTranslated = translateMarket(odd.marketName);
     const betTypeString = getBetTypeForSlip(odd, odd.marketName);
     const uniqueId = getSelectionId(gameId, odd);
 
+    // 1. Se já está selecionado (clicou no mesmo), remove e sai
     if (isSelected(odd)) {
         betStore.removeSelection(uniqueId);
         return;
     }
 
-    // Lógica de substituição inteligente
-    if (['1', '2', 'X'].includes(betTypeString)) {
-        betStore.selections.filter(s => s.id === gameId).forEach(s => betStore.removeSelection(s.id));
+    // 2. Limpeza Inteligente: Remove outras seleções do MESMO mercado para este jogo
+    // Ex: Se eu selecionei "Handicap +1.5" e clico em "Handicap -1.5", remove o anterior.
+    // Ex: Se eu selecionei "Over 2.5" e clico em "Under 2.5", remove o anterior.
+    
+    const existingSelectionSameMarket = betStore.selections.find(s => {
+        // Verifica se é do mesmo jogo
+        const isSameGame = s.id === gameId || String(s.id).startsWith(gameId + '_');
+        if (!isSameGame) return false;
+
+        // Se for mercado 1x2, o tipo será '1', 'X' ou '2'.
+        if (['1', '2', 'X'].includes(betTypeString)) {
+             return ['1', '2', 'X'].includes(s.type);
+        }
+
+        // Para outros mercados, verificamos se o nome do mercado bate
+        // O `s.marketName` no store guarda o nome traduzido ou tipo
+        return s.marketName === marketNameTranslated;
+    });
+
+    if (existingSelectionSameMarket) {
+        betStore.removeSelection(existingSelectionSameMarket.id);
     }
 
+    // 3. Define nome da seleção
     let selectionName = asString(odd.outcomeName);
     if (betTypeString === '1') selectionName = event.value.homeTeam;
     else if (betTypeString === '2') selectionName = event.value.awayTeam;
     else if (betTypeString === 'X') selectionName = 'Empate';
 
+    // 4. Adiciona a nova seleção
     betStore.addOrReplaceSelection(
         uniqueId,
         event.value.homeTeam,
@@ -168,7 +198,8 @@ const handleSelection = (odd: any) => {
         selectionName,
         Number(odd.price),
         betTypeString as BetType,
-        event.value.commenceTime
+        event.value.commenceTime,
+        marketNameTranslated // Passamos o nome do mercado para controle futuro
     );
 };
 
@@ -181,7 +212,12 @@ const formatDate = (d: string) => {
 const formatTime = (d: string) => d ? new Date(d).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--';
 
 const formatOutcomeName = (val: string | number) => {
-    let str = asString(val).replace(/ or /gi, ' / ').replace(/Draw/gi, 'Empate').replace(/Home/gi, 'Casa').replace(/Away/gi, 'Fora');
+    let str = asString(val)
+        .replace(/ or /gi, ' / ')
+        .replace(/Draw/gi, 'Empate')
+        .replace(/Home/gi, 'Casa')
+        .replace(/Away/gi, 'Fora');
+        
     if (str.toLowerCase() === 'yes') return 'Sim';
     if (str.toLowerCase() === 'no') return 'Não';
     return str;

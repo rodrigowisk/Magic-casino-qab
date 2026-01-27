@@ -74,6 +74,7 @@ namespace Magic_casino_sportbook.Services
                     }
                 }
 
+                // ✅ CORREÇÃO: Trim() obrigatório
                 var gameIds = string.Join(",", batch.Select(g => g.ExternalId.Trim()));
                 var url = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={gameIds}";
 
@@ -133,7 +134,8 @@ namespace Magic_casino_sportbook.Services
         {
             foreach (var game in batch)
             {
-                var url = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={game.ExternalId}";
+                // ✅ CORREÇÃO: Trim() no fallback também
+                var url = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={game.ExternalId.Trim()}";
                 try
                 {
                     var response = await client.GetAsync(url);
@@ -141,13 +143,10 @@ namespace Magic_casino_sportbook.Services
 
                     if (jsonString.Contains("PARAM_INVALID"))
                     {
-                        Console.WriteLine($"🗑️ [LIMPEZA] Jogo inválido removido: {game.ExternalId}");
-
-                        // 🔥 SEGURANÇA: Marca como 'Delayed' em vez de 'Ended' para não processar bilhetes erroneamente
-                        game.Status = "Delayed";
-
-                        context.Entry(game).State = EntityState.Modified;
-                        endedGameIds.Add(game.ExternalId);
+                        // 🛑 MUDANÇA IMPORTANTE: Se der erro na API, NÃO MARCA COMO DELAYED/ENDED.
+                        // Apenas loga o erro. Se o jogo estiver vivo, vamos tentar de novo no próximo ciclo.
+                        // Isso evita que um erro de rede mate o jogo.
+                        Console.WriteLine($"⚠️ [API ERRO] ID rejeitado pela API: {game.ExternalId}. Mantendo estado atual.");
                     }
                     else
                     {
@@ -171,11 +170,9 @@ namespace Magic_casino_sportbook.Services
             var idsToRemoveFromPreMatch = new List<string>();
             if (!candidates.Any()) return idsToRemoveFromPreMatch;
 
-            // ✅ CORREÇÃO CRÍTICA: Criamos um escopo NOVO e usamos AttachRange
             using var scope = sp.CreateScope();
             var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-            // Anexa os objetos ao contexto deste método para permitir salvamento
             context.AttachRange(candidates);
 
             var client = _httpClientFactory.CreateClient();
@@ -199,7 +196,8 @@ namespace Magic_casino_sportbook.Services
                         Console.WriteLine($"⚠️ [HOTZONE] Lote com ID ruim. Verificando individualmente...");
                         foreach (var g in batch)
                         {
-                            var indUrl = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={g.ExternalId}";
+                            // ✅ CORREÇÃO: Trim() no loop individual
+                            var indUrl = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={g.ExternalId.Trim()}";
                             var indResp = await client.GetAsync(indUrl);
                             var indJson = await indResp.Content.ReadAsStringAsync();
 
@@ -209,11 +207,9 @@ namespace Magic_casino_sportbook.Services
                             }
                             else
                             {
-                                // 🔥 CORREÇÃO: Avisar para remover da tela se o ID for inválido
-                                Console.WriteLine($"🗑️ Removendo Jogo Inválido (Delayed): {g.ExternalId}");
-                                g.Status = "Delayed";
-                                context.Entry(g).State = EntityState.Modified;
-                                idsToRemoveFromPreMatch.Add(g.ExternalId);
+                                // 🛑 MUDANÇA IMPORTANTE: Não removemos o jogo nem marcamos Delayed se a API der erro.
+                                // Deixamos o tempo limite (20min) cuidar disso se persistir.
+                                Console.WriteLine($"⚠️ [HOTZONE ERRO] API rejeitou ID {g.ExternalId}. Tentando novamente no próximo ciclo.");
                             }
                             await Task.Delay(1500);
                         }
@@ -264,12 +260,12 @@ namespace Magic_casino_sportbook.Services
                     }
 
                     // CASO 1: JOGO FICOU LIVE
-                    // 🔥 MELHORIA: Considera Live se TS=1 OU se o Cronômetro (TT) estiver rodando (1)
+                    // Considera Live se TS=1 (In Play) OU se o Cronômetro (TT) estiver rodando
                     bool isLive = (ts == "1") ||
                                   (tt == "1") ||
                                   (!string.IsNullOrEmpty(ev.Tm) && ev.Tm != "0" && ev.Tm != "00");
 
-                    // 🔥 CASO 2: JOGO ACABOU / FOI CANCELADO / ADIADO
+                    // CASO 2: JOGO ACABOU / FOI CANCELADO / ADIADO
                     bool isDead = ts == "3" || ts == "4" || ts == "5" || ts == "7" || ts == "8" || ts == "9";
 
                     if (isLive && !tempoExagerado)
@@ -291,7 +287,6 @@ namespace Magic_casino_sportbook.Services
                     }
                     else if (isDead)
                     {
-                        // JOGO ACABOU ANTES DA HORA
                         Console.WriteLine($"🗑️ AUTO-CLEAN: {gameDb.HomeTeam} (Status API: {ts}) -> Removido (Delayed/Ended).");
 
                         gameDb.Status = "Delayed";
@@ -302,9 +297,7 @@ namespace Magic_casino_sportbook.Services
                     }
                     else
                     {
-                        // 🔥 LÓGICA WAITING-LIVE RESTAURADA (Para limpar jogos da tela na hora certa)
-                        // Se TS=0 (Não iniciado na API) mas horário já passou
-
+                        // Se não está Live, verifica se devemos esperar ou matar.
                         // Garante UTC para comparação justa
                         var startTimeUtc = gameDb.CommenceTime.Kind == DateTimeKind.Utc
                             ? gameDb.CommenceTime
@@ -314,26 +307,25 @@ namespace Magic_casino_sportbook.Services
                         {
                             if (gameDb.Status == "Prematch")
                             {
-                                // Remove da tela IMEDIATAMENTE e coloca em espera
-                                Console.WriteLine($"⏳ AGUARDANDO: {gameDb.HomeTeam} (Status: WaitingLive) - API diz TS={ts}");
+                                // Remove da tela IMEDIATAMENTE e coloca em espera (WaitingLive)
+                                // Isso é o comportamento correto: saiu do pré-jogo, mas a API ainda não confirmou Live.
+                                Console.WriteLine($"⏳ AGUARDANDO: {gameDb.HomeTeam} (Status: WaitingLive) - API diz TS={ts}, TM={ev.Tm}");
                                 gameDb.Status = "WaitingLive";
                                 context.Entry(gameDb).State = EntityState.Modified;
                                 idsToRemoveFromPreMatch.Add(gameDb.ExternalId);
                             }
                             else if (gameDb.Status == "WaitingLive")
                             {
-                                // Já estamos esperando. Verificamos se passou do limite (20 min)
-                                var tolerancia = startTimeUtc.AddMinutes(20);
+                                // Já estamos esperando.
+                                // Aumentei a tolerância para 45 minutos (tempo de um tempo inteiro)
+                                // Se a API não confirmar Live em 45 min, provavelmente foi adiado ou erro de dados.
+                                var tolerancia = startTimeUtc.AddMinutes(45);
 
                                 if (DateTime.UtcNow > tolerancia)
                                 {
-                                    // Desiste, marca Delayed
-                                    // LOG DE DIAGNÓSTICO: Ajuda a entender por que caiu aqui
-                                    Console.WriteLine($"⛔ TIMEOUT (20m): {gameDb.HomeTeam} ID:{gameDb.ExternalId} | TS:{ts} | TT:{tt} | TM:{ev.Tm} -> Delayed.");
-
+                                    Console.WriteLine($"⛔ TIMEOUT REAL (45m): {gameDb.HomeTeam} ID:{gameDb.ExternalId} | TS:{ts} -> Delayed.");
                                     gameDb.Status = "Delayed";
                                     context.Entry(gameDb).State = EntityState.Modified;
-                                    // Não precisa adicionar em idsToRemoveFromPreMatch pq já foi removido antes
                                 }
                             }
                         }
@@ -398,7 +390,6 @@ namespace Magic_casino_sportbook.Services
                         else if (sportKey.Contains("volley")) UpdateVolleyball(gameDb, ev);
                         else UpdateGenericSport(gameDb, ev);
 
-                        // 🔥 CORREÇÃO DE ODDS AQUI
                         ProcessOdds(gameDb, packets);
 
                         var cacheKey = $"live_game:{gameDb.ExternalId}";
@@ -486,11 +477,10 @@ namespace Magic_casino_sportbook.Services
         }
 
         // ==========================================================================================
-        // 🔥 CORREÇÃO ESTRUTURAL DE ODDS (Blindada e Universal)
+        // 🔥 CORREÇÃO ESTRUTURAL DE ODDS
         // ==========================================================================================
         private void ProcessOdds(SportsEvent game, List<B365Packet> packets)
         {
-            // 1. Encontra o ID do Mercado Principal
             string mainMarketId = null;
 
             var marketDef = packets.FirstOrDefault(p =>
@@ -509,7 +499,6 @@ namespace Magic_casino_sportbook.Services
                 mainMarketId = marketDef.Id;
             }
 
-            // 2. Filtra as Odds que pertencem a esse mercado (ou todas se não achar definição)
             var odds = packets.Where(p =>
                 (p.Type == "PA" || p.Type == "MA") &&
                 !string.IsNullOrEmpty(p.Od) &&
@@ -539,7 +528,6 @@ namespace Magic_casino_sportbook.Services
             return await Task.FromResult(new List<string>());
         }
 
-        // CORREÇÃO: Aceita string? para evitar warnings e trata nulos internamente
         private decimal ConvertFraction(string? fraction)
         {
             if (string.IsNullOrEmpty(fraction) || fraction == "0/0") return 0m;
