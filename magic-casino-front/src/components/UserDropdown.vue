@@ -69,9 +69,14 @@ const handleLogout = () => {
 };
 
 const handleClickOutside = (event: MouseEvent) => {
-  const clickedInsideMenu = dropdownRef.value?.contains(event.target as Node);
-  const clickedInsideTrigger = triggerRef.value?.contains(event.target as Node);
+  // Se o menu não estiver aberto, não faz nada
+  if (!isOpen.value) return;
+
+  const target = event.target as Node;
+  const clickedInsideMenu = dropdownRef.value?.contains(target);
+  const clickedInsideTrigger = triggerRef.value?.contains(target);
   
+  // Só fecha se o clique NÃO foi no menu E NÃO foi no botão que abre este menu
   if (!clickedInsideMenu && !clickedInsideTrigger) {
     closeMenu();
   }
@@ -98,7 +103,7 @@ onUnmounted(() => {
   <div class="relative">
     <button 
       ref="triggerRef"
-      @click.stop="toggleMenu"
+      @click="toggleMenu"
       class="flex items-center gap-2 p-1 pr-2 rounded-full hover:bg-[#1e293b] transition-colors group select-none"
       :class="{ 'bg-[#1e293b]': isOpen }"
     >

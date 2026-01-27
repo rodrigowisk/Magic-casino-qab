@@ -24,7 +24,6 @@ const menuStyle = ref({
   width: '208px'
 });
 
-// Calcula a posição para garantir que o menu "cole" no botão
 const calculatePosition = () => {
   if (triggerRef.value) {
     const rect = triggerRef.value.getBoundingClientRect();
@@ -54,9 +53,14 @@ const navigateTo = (path: string) => {
 };
 
 const handleClickOutside = (event: MouseEvent) => {
-  const clickedInsideMenu = dropdownRef.value?.contains(event.target as Node);
-  const clickedInsideTrigger = triggerRef.value?.contains(event.target as Node);
+  // Se não estiver aberto, ignora
+  if (!isOpen.value) return;
+
+  const target = event.target as Node;
+  const clickedInsideMenu = dropdownRef.value?.contains(target);
+  const clickedInsideTrigger = triggerRef.value?.contains(target);
   
+  // Só fecha se o clique foi FORA do menu E FORA do botão da carteira
   if (!clickedInsideMenu && !clickedInsideTrigger) {
     closeMenu();
   }
@@ -83,7 +87,7 @@ onUnmounted(() => {
   <div class="relative">
     <button 
       ref="triggerRef"
-      @click.stop="toggleMenu"
+      @click="toggleMenu"
       class="hidden md:flex items-center gap-2 bg-[#0f172a] hover:bg-[#1e293b] px-4 py-1.5 rounded-full text-sm text-white border border-gray-700 shadow-inner transition-all duration-200 group"
       :class="{ 'border-blue-500/50 bg-[#1e293b]': isOpen }"
     >

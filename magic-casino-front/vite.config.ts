@@ -49,7 +49,7 @@ export default defineConfig({
     hmr: {
       // 👇 Mantenha comentado para LOCALHOST.
       // 👇 Descomente APENAS se estiver acessando via https://quebrandoabanca.bet
-       clientPort: 443 
+      //clientPort: 443 
     }
   }
 })
