@@ -2,11 +2,10 @@
 import { ref, onMounted, onUnmounted } from 'vue';
 import { ChevronLeft, ChevronRight } from 'lucide-vue-next';
 
-// Dados simulados dos Banners com IMAGENS REAIS QUE FUNCIONAM
+// Dados simulados dos Banners
 const slides = [
   {
     id: 1,
-    // Estádio de Futebol (Substituindo o arquivo local quebrado)
     image: 'https://images.unsplash.com/photo-1522778119026-d647f0565c6a?q=80&w=1600&auto=format&fit=crop', 
     title: 'BÔNUS DE BOAS-VINDAS',
     subtitle: 'Ganhe 100% até R$ 500 no primeiro depósito',
@@ -15,7 +14,6 @@ const slides = [
   },
   {
     id: 2,
-    // Basquete / NBA
     image: 'https://images.unsplash.com/photo-1546519638-68e109498ffc?q=80&w=1600&auto=format&fit=crop',
     title: 'FINAIS DA NBA',
     subtitle: 'Aposte ao vivo com as melhores odds do mercado',
@@ -24,7 +22,6 @@ const slides = [
   },
   {
     id: 3,
-    // Futebol em ação
     image: 'https://images.unsplash.com/photo-1489944440615-453fc2b6a9a9?q=80&w=1600&auto=format&fit=crop',
     title: 'BRASILEIRÃO SÉRIE A',
     subtitle: 'Cubra todos os lances do campeonato',
@@ -90,7 +87,7 @@ onUnmounted(() => {
     <div class="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
       <button 
         v-for="(slide, index) in slides" 
-        :key="index"
+        :key="slide.id"
         @click="currentSlide = index"
         class="w-1 h-1 rounded-full transition-all"
         :class="currentSlide === index ? 'bg-white w-3' : 'bg-white/40 hover:bg-white/60'"

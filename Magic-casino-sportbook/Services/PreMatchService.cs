@@ -242,9 +242,13 @@ namespace Magic_casino_sportbook.Services
                                     {
                                         var parsedMarkets = parser.Parse(item, sportKey);
 
+                                        // --- NOVA LÓGICA: COLETA INTELIGENTE POR ORDEM ---
+                                        // CORREÇÃO AQUI: Lista deve ser de MarketDto, não EventMarket
+                                        var moneyLineMarkets = new List<MarketDto>();
+
                                         foreach (var m in parsedMarkets)
                                         {
-                                            // 1. Atualiza tabela detalhada (Para apostas)
+                                            // 1. Salva no banco (Tabela de Apostas Detalhadas)
                                             var existing = dbEvent.Odds.FirstOrDefault(o => o.MarketName == m.MarketName && o.OutcomeName == m.OutcomeName);
 
                                             if (existing != null)
@@ -266,19 +270,37 @@ namespace Magic_casino_sportbook.Services
                                                 });
                                             }
 
-                                            // =================================================================
-                                            // 2. ✅ CORREÇÃO: PREENCHE AS COLUNAS DO DBEAVER/FRONTEND
-                                            // Se for o mercado principal, salva nas colunas da tabela principal
-                                            // =================================================================
-                                            if (m.MarketName == "Resultado Final" || m.MarketName == "Vencedor da Partida" ||
-                                                m.MarketName == "Match Winner" || m.MarketName == "Money Line")
+                                            // Filtra quem é Candidato a ser a Odd Principal (Capa do Site)
+                                            string mName = m.MarketName?.Trim().ToUpper() ?? "";
+                                            if (mName.Contains("MONEY LINE") || mName.Contains("WINNER") || mName.Contains("VENCEDOR") || mName == "1X2" || mName == "12")
                                             {
-                                                if (IsHome(m.OutcomeName, dbEvent.HomeTeam))
-                                                    dbEvent.RawOddsHome = m.Price;
-                                                else if (IsDraw(m.OutcomeName))
-                                                    dbEvent.RawOddsDraw = m.Price;
-                                                else if (IsAway(m.OutcomeName, dbEvent.AwayTeam))
-                                                    dbEvent.RawOddsAway = m.Price;
+                                                moneyLineMarkets.Add(m);
+                                            }
+                                        }
+
+                                        // 2. PREENCHE AS COLUNAS DA CAPA (RawOdds)
+                                        // Tenta primeiro por NOME (mais seguro)
+                                        bool foundByLabel = false;
+                                        foreach (var m in moneyLineMarkets)
+                                        {
+                                            if (IsHome(m.OutcomeName, dbEvent.HomeTeam)) { dbEvent.RawOddsHome = m.Price; foundByLabel = true; }
+                                            else if (IsDraw(m.OutcomeName)) { dbEvent.RawOddsDraw = m.Price; foundByLabel = true; }
+                                            else if (IsAway(m.OutcomeName, dbEvent.AwayTeam)) { dbEvent.RawOddsAway = m.Price; foundByLabel = true; }
+                                        }
+
+                                        // 🚨 O PULO DO GATO: Se não achou pelo nome, usa a ORDEM (Para Basquete "Pelado")
+                                        if (!foundByLabel && moneyLineMarkets.Count >= 2)
+                                        {
+                                            // Regra: Em MoneyLine, o primeiro é Casa, o segundo é Fora.
+                                            // (Isso resolve seu JSON onde o nome vem vazio)
+                                            dbEvent.RawOddsHome = moneyLineMarkets[0].Price;
+                                            dbEvent.RawOddsAway = moneyLineMarkets[1].Price;
+
+                                            // Se tiver 3, o do meio costuma ser empate, mas Moneyline de basquete geralmente são 2.
+                                            if (moneyLineMarkets.Count == 3)
+                                            {
+                                                dbEvent.RawOddsDraw = moneyLineMarkets[1].Price;
+                                                dbEvent.RawOddsAway = moneyLineMarkets[2].Price;
                                             }
                                         }
                                     }
@@ -295,6 +317,7 @@ namespace Magic_casino_sportbook.Services
                 }
             });
         }
+
 
         // =================================================================
         // FUNÇÕES AUXILIARES PARA IDENTIFICAR QUEM É QUEM NAS ODDS

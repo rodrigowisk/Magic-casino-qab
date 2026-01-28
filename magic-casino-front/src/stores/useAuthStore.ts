@@ -13,10 +13,15 @@ export const useAuthStore = defineStore('auth', () => {
     // --- AÇÕES ---
 
     function setLogin(userData: any, tokenValue: string) {
-        user.value = userData;
-        token.value = tokenValue;
-        localStorage.setItem('user', JSON.stringify(userData));
-        localStorage.setItem('token', tokenValue);
+    // 1. Atualiza o estado na memória
+    user.value = userData;
+    token.value = tokenValue;
+
+    // 2. Grava no navegador (Persistência)
+    localStorage.setItem('user', JSON.stringify(userData));
+    localStorage.setItem('token', tokenValue);
+
+    fetchBalance();
     }
 
     function logout() {

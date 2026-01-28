@@ -34,6 +34,8 @@ services:
       Jwt__Key: "${JWT_SECRET}"
       Jwt__Issuer: "${JWT_ISSUER}"
       Jwt__Audience: "${JWT_AUDIENCE}"
+      VELANA_API_KEY: "${VELANA_API_KEY}"
+      MY_API_URL: "${MY_API_URL}"
     expose:
       - "8080"
     restart: always

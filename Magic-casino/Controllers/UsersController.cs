@@ -128,6 +128,7 @@ namespace Magic_casino.Controllers
                     Token = token,
                     Code = user.Cpf,
                     Name = user.Name,
+                    Email = user.Email,
                     Balance_fiver = wallet?.BalanceFiver ?? 0,
                     Balance_qab = wallet?.BalanceQab ?? 0,
                     Balance_bonus = wallet?.BalanceBonus ?? 0

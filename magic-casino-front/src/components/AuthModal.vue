@@ -2,11 +2,18 @@
 import { ref } from 'vue';
 import { X, User, Mail, Lock, Phone, FileText, AlertCircle } from 'lucide-vue-next';
 import AuthService from '../services/AuthService';
-import { vMaska } from "maska/vue" // Se tiver maska, senão use v-mask normal ou input texto
+import { vMaska } from "maska/vue" 
+
+// 1. Definimos as Props para aceitar a aba inicial
+const props = defineProps<{
+    initialTab?: 'login' | 'register'
+}>();
 
 const emit = defineEmits(['close', 'login-success']);
 
-const activeTab = ref<'login' | 'register'>('login');
+// 2. Usamos a prop para definir o valor inicial. Se não vier nada, usa 'login'
+const activeTab = ref<'login' | 'register'>(props.initialTab || 'login');
+
 const isLoading = ref(false);
 const errorMessage = ref('');
 
@@ -26,7 +33,6 @@ const handleSubmit = async () => {
         let responseData;
 
         if (activeTab.value === 'login') {
-            // CORREÇÃO: Agora enviamos o CPF para logar
             if (!form.value.cpf) {
                 throw { response: { data: { message: "Digite seu CPF para entrar." } } };
             }
@@ -49,7 +55,6 @@ const handleSubmit = async () => {
         
         if (error.response) {
             const backendError = error.response.data;
-            // Tratamento para ler o erro JSON do seu backend
             if (backendError.error) {
                 errorMessage.value = backendError.error;
             } else if (typeof backendError === 'string') {

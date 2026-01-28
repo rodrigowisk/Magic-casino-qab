@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { Trophy, ChevronRight, Loader2, Play, CircleDot } from 'lucide-vue-next';
+// ✅ CORREÇÃO: Removido 'Trophy' da importação
+import { ChevronRight, Loader2, Play, CircleDot } from 'lucide-vue-next';
 import SportsService from '../services/SportsService';
 
 const router = useRouter();
@@ -20,10 +21,9 @@ const sportImages = [
 
 const getRandomImage = (index: number) => sportImages[index % sportImages.length];
 
-// ✅ FUNÇÃO DE CORREÇÃO AUTOMÁTICA
+// Handler de Erro
 const handleImageError = (e: Event) => {
   const target = e.target as HTMLImageElement;
-  // Substitui por uma textura escura neutra se falhar
   target.src = 'https://images.unsplash.com/photo-1614632537423-1e6c2e7e0aab?q=80&w=600&auto=format&fit=crop';
 };
 
@@ -67,6 +67,7 @@ onMounted(fetchLiveGames);
 
 <template>
   <div class="mt-4 relative">
+    
     <div class="flex items-center justify-between mb-2 px-1">
       <div class="flex items-center gap-2">
         <div class="relative flex h-2.5 w-2.5">
@@ -91,6 +92,7 @@ onMounted(fetchLiveGames);
     </div>
 
     <div v-else class="flex gap-2 overflow-x-auto pb-2 custom-scrollbar snap-x px-1">
+      
       <div 
         v-for="(game, index) in liveGames" 
         :key="getEventId(game)"
@@ -105,37 +107,62 @@ onMounted(fetchLiveGames);
         />
 
         <div class="absolute inset-0 flex flex-col items-center justify-center p-2 text-center z-10">
+          
           <div class="absolute top-1 right-1 flex items-center gap-0.5 bg-red-600/90 backdrop-blur text-white text-[8px] font-black px-1 py-0.5 rounded shadow-sm animate-pulse">
             <CircleDot class="w-1.5 h-1.5 fill-current" />
             <span>{{ getGameTime(game.commenceTime) }}</span>
           </div>
+
           <span class="text-[8px] font-bold text-white/80 uppercase mb-1 tracking-widest bg-black/40 px-1.5 py-0.5 rounded backdrop-blur-sm truncate max-w-full">
             {{ game.league || 'Liga' }}
           </span>
+
           <div class="flex flex-col items-center gap-0.5 w-full">
+            
             <div class="flex items-center justify-between w-full gap-1">
-              <h4 class="text-white font-black text-[10px] leading-tight drop-shadow-md truncate text-right flex-1">{{ game.homeTeam }}</h4>
-              <span class="text-yellow-400 font-mono font-bold text-[10px] bg-black/50 px-1 rounded backdrop-blur-sm">{{ Math.floor(Math.random() * 3) }}</span>
+              <h4 class="text-white font-black text-[10px] leading-tight drop-shadow-md truncate text-right flex-1">
+                {{ game.homeTeam }}
+              </h4>
+              <span class="text-yellow-400 font-mono font-bold text-[10px] bg-black/50 px-1 rounded backdrop-blur-sm">
+                {{ Math.floor(Math.random() * 3) }}
+              </span>
             </div>
+
             <span class="text-[8px] text-gray-300 font-bold uppercase">VS</span>
+
             <div class="flex items-center justify-between w-full gap-1">
-              <span class="text-yellow-400 font-mono font-bold text-[10px] bg-black/50 px-1 rounded backdrop-blur-sm">{{ Math.floor(Math.random() * 2) }}</span>
-              <h4 class="text-white font-black text-[10px] leading-tight drop-shadow-md truncate text-left flex-1">{{ game.awayTeam }}</h4>
+              <span class="text-yellow-400 font-mono font-bold text-[10px] bg-black/50 px-1 rounded backdrop-blur-sm">
+                {{ Math.floor(Math.random() * 2) }}
+              </span>
+              <h4 class="text-white font-black text-[10px] leading-tight drop-shadow-md truncate text-left flex-1">
+                {{ game.awayTeam }}
+              </h4>
             </div>
+
           </div>
+
           <div class="mt-1 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
             <button class="bg-stake-blue text-white p-1 rounded-full hover:scale-110 transition-transform shadow-md">
               <Play class="w-3 h-3 fill-current" />
             </button>
           </div>
+
         </div>
       </div>
+
     </div>
   </div>
 </template>
 
 <style scoped>
-.custom-scrollbar::-webkit-scrollbar { height: 3px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+.custom-scrollbar::-webkit-scrollbar {
+  height: 3px; 
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent; 
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #334155; 
+  border-radius: 3px;
+}
 </style>

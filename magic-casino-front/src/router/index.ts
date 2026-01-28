@@ -10,6 +10,7 @@ import SportEvents from '../views/SportEvents.vue'
 import MyBets from '../views/MyBets.vue'
 import LiveEvents from '../views/LiveEvents.vue' 
 import EventDetails from '../views/EventDetails.vue'
+import DepositView from '../views/DepositView.vue' // ✅ NOVA IMPORTAÇÃO
 
 // Admin Views
 import TournamentAdminList from '../views/Admin/Tournament/TournamentAdminList.vue'
@@ -36,6 +37,9 @@ const router = createRouter({
         { path: 'minhas-apostas', name: 'MyBets', component: MyBets },
         { path: 'live', name: 'live', component: LiveEvents },
         { path: 'event/:id', name: 'event-details', component: EventDetails },
+        
+        // ✅ NOVA ROTA DE DEPÓSITO
+        { path: 'deposito', name: 'deposit', component: DepositView },
       ]
     },
 

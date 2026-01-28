@@ -47,7 +47,9 @@ export default {
             // Objeto formatado padrão para o Front
             const userFormatted = {
                 name: userName,
-                balance: finalBalance
+                balance: finalBalance,
+                code: response.data.code, 
+                email: response.data.email
             };
             
             localStorage.setItem('user', JSON.stringify(userFormatted));

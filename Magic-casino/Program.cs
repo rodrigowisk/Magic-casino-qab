@@ -1,10 +1,11 @@
 ﻿using Magic_casino.Data;
+using Magic_casino.Services; // Certifique-se que o VelanaService está neste namespace
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using System.Text;
 using StackExchange.Redis; // ✅ Necessário para Cache Distribuído
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -66,6 +67,7 @@ builder.Services.AddAuthentication(x =>
 
 builder.Services.AddAuthorization();
 
+
 // =============================================================
 // 3. CORS (Igual ao Sportbook)
 // =============================================================
@@ -109,7 +111,14 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddHttpClient(); // Habilita chamadas HTTP para outros serviços (ex: Sportbook)
+
+// =============================================================
+// ✅ SERVICES DE NEGÓCIO (DI)
+// =============================================================
+builder.Services.AddHttpClient(); // Habilita chamadas HTTP genéricas
+
+// ⬇️ ADICIONADO: REGISTRO DO VELANA SERVICE
+builder.Services.AddHttpClient<VelanaService>();
 
 // =============================================================
 // 5. SWAGGER
