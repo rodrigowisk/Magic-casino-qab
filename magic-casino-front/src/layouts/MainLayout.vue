@@ -19,7 +19,17 @@ const betStore = useBetStore();
 const authStore = useAuthStore();
 
 const isSidebarOpen = ref(true);
+
+// --- LÓGICA DO MODAL DE AUTENTICAÇÃO ---
 const showAuthModal = ref(false);
+const authModalTab = ref<'login' | 'register'>('login'); // Define qual aba abre
+
+// Função que abre o modal na aba correta
+const openAuthModal = (tab: 'login' | 'register') => {
+    authModalTab.value = tab;
+    showAuthModal.value = true;
+};
+
 const isBetSlipOpen = ref(betStore.count > 0);
 
 // --- LÓGICA DE BUSCA ---
@@ -148,7 +158,12 @@ onUnmounted(() => {
 <template>
   <div class="h-screen bg-stake-dark text-stake-text font-sans flex flex-col overflow-hidden">
     
-    <AuthModal v-if="showAuthModal" @close="showAuthModal = false" @login-success="handleLoginSuccess" />
+    <AuthModal 
+        v-if="showAuthModal" 
+        :initial-tab="authModalTab"
+        @close="showAuthModal = false" 
+        @login-success="handleLoginSuccess" 
+    />
 
     <header class="h-16 bg-stake-card flex items-center justify-between px-4 shadow-lg sticky top-0 z-[100] flex-shrink-0 border-b border-white/5">
       <div class="flex items-center">
@@ -244,8 +259,9 @@ onUnmounted(() => {
             <UserDropdown />
         </div>
         <div v-else class="flex items-center gap-3">
-            <button @click="showAuthModal = true" class="font-bold text-gray-300 text-sm hover:text-white transition-colors px-2">Entrar</button>
-            <button @click="showAuthModal = true" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-md font-bold text-sm shadow-lg shadow-blue-900/50 transition-all transform hover:-translate-y-0.5">Cadastre-se</button>
+            <button @click="openAuthModal('login')" class="font-bold text-gray-300 text-sm hover:text-white transition-colors px-2">Entrar</button>
+            
+            <button @click="openAuthModal('register')" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-md font-bold text-sm shadow-lg shadow-blue-900/50 transition-all transform hover:-translate-y-0.5">Cadastre-se</button>
         </div>
       </div>
     </header>

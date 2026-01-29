@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onUnmounted } from 'vue';
+import { ref, computed, watch, nextTick, onUnmounted, onMounted } from 'vue';
 import { useBetStore } from '../stores/useBetStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import apiSports from '../services/apiSports'; 
-import { X, Trash2, Trophy, Loader2, ChevronRight, AlertCircle, ArrowRight, Hourglass, StopCircle } from 'lucide-vue-next';
+import { X, Trash2, Trophy, Loader2, ChevronRight, AlertCircle, ArrowRight, Hourglass, StopCircle, Calendar } from 'lucide-vue-next';
+import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signalr';
 import Swal from 'sweetalert2';
 
 defineProps<{ isOpen?: boolean }>();
@@ -25,6 +26,9 @@ const countdown = ref(12); // Segundos iniciais
 const countdownTotal = 12;
 let timerInterval: any = null;
 
+// --- SIGNALR (Para limpar jogos encerrados) ---
+let connection: HubConnection | null = null;
+
 // --- ESTADO PARA CONFLITO DE ODDS ---
 const oddConflict = ref<{
     matchName: string;
@@ -35,9 +39,75 @@ const oddConflict = ref<{
 
 const selectionsContainer = ref<HTMLElement | null>(null);
 
-// Limpa timer se o componente desmontar
+// --- CICLO DE VIDA (SIGNALR E TIMERS) ---
+
+onMounted(async () => {
+    const signalRUrl = "/gameHub";
+    
+    const newConnection = new HubConnectionBuilder()
+        .withUrl(signalRUrl)
+        .withAutomaticReconnect()
+        .configureLogging(LogLevel.Information)
+        .build();
+
+    // 1. OUVINTE DE REMOÇÃO FORÇADA (Backend manda deletar explicitamente)
+    newConnection.on('RemoveGames', (endedIds: string[]) => {
+        if (!endedIds || !Array.isArray(endedIds) || store.selections.length === 0) return;
+        removeEndedSelections(endedIds);
+    });
+
+    // 2. OUVINTE DE ATUALIZAÇÃO (CORREÇÃO AQUI)
+    // Agora lemos o status do update. Se for "Ended", removemos do cupom.
+    newConnection.on('LiveOddsUpdate', (updatedGames: any[]) => {
+        if (!updatedGames || !Array.isArray(updatedGames) || store.selections.length === 0) return;
+        
+        const endedIdsFromUpdate: string[] = [];
+
+        updatedGames.forEach(u => {
+            // Verifica se o status indica fim de jogo
+            if (u.status === 'Ended' || u.status === 'Completed' || u.status === 'FT' || u.status === '3') {
+                endedIdsFromUpdate.push(String(u.id));
+            }
+        });
+
+        if (endedIdsFromUpdate.length > 0) {
+            removeEndedSelections(endedIdsFromUpdate);
+        }
+    });
+
+    // Silenciador apenas para GameWentLive (não afeta o cupom)
+    newConnection.on('GameWentLive', () => {}); 
+
+    try {
+        await newConnection.start();
+        connection = newConnection; 
+    } catch (err) {
+        console.error("❌ Erro SignalR no Cupom:", err);
+    }
+});
+
+// Função auxiliar para remover seleções
+const removeEndedSelections = (idsToRemove: string[]) => {
+    // Filtra seleções que pertencem aos jogos encerrados
+    const selectionsToRemove = store.selections.filter(s => {
+        const matchId = String(s.id).includes('_') ? String(s.id).split('_')[0] : String(s.id);
+        return idsToRemove.includes(matchId);
+    });
+
+    if (selectionsToRemove.length > 0) {
+        selectionsToRemove.forEach(s => store.removeSelection(s.id));
+        
+        Toast.fire({
+            icon: 'info',
+            title: 'Jogos encerrados foram removidos do cupom.'
+        });
+    }
+};
+
+// Limpa timer e conexão se o componente desmontar
 onUnmounted(() => {
     if (timerInterval) clearInterval(timerInterval);
+    if (connection) connection.stop();
 });
 
 watch(() => store.selections.length, async (newVal, oldVal) => {
@@ -86,7 +156,6 @@ const isUserLoggedIn = computed(() => !!(authStore?.token && authStore?.user));
 const hasLiveSelection = computed(() => {
     const now = new Date();
     return store.selections.some(s => {
-        // Cast para 'any' para aceitar commence_time se vier do banco antigo
         const time = s.commenceTime || (s as any).commence_time;
         if (!time) return false;
         const start = new Date(time);
@@ -94,7 +163,6 @@ const hasLiveSelection = computed(() => {
     });
 });
 
-// Círculo de progresso SVG (Ajustado para raio 20 - Mais compacto)
 const progressDashoffset = computed(() => {
     const radius = 20;
     const circumference = 2 * Math.PI * radius; 
@@ -104,6 +172,17 @@ const progressDashoffset = computed(() => {
 const truncateName = (name: string, limit: number = 20) => {
   if (!name) return '';
   return name.length > limit ? name.substring(0, limit) + '...' : name;
+};
+
+const formatGameDate = (dateString: string | undefined) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    
+    return `${day}/${month} • ${hours}:${minutes}`;
 };
 
 const getMarketLabel = (type: string | undefined, marketName: string | undefined) => {
@@ -121,16 +200,16 @@ const formatCurrency = (value: number | string) => {
 const updateSelectionOdd = (selectionId: string, newOdd: number) => {
     const index = store.selections.findIndex(s => s.id === selectionId);
     if (index !== -1) {
-        // ✅ CORREÇÃO: Adicionado ! para garantir que o objeto existe (TypeScript Strict)
         store.selections[index]!.odds = newOdd;
     }
 };
 
 const confirmOddChange = () => {
     if (!oddConflict.value) return;
+    
     updateSelectionOdd(oddConflict.value.selectionId, oddConflict.value.newOdd);
     oddConflict.value = null;
-    handlePlaceBet(true); // true = forceSubmit
+    handlePlaceBet(false); 
 };
 
 const cancelOddChange = () => {
@@ -145,7 +224,6 @@ const cancelLiveProcessing = () => {
     countdown.value = countdownTotal;
 };
 
-// Função principal de aposta
 const handlePlaceBet = async (forceSubmit = false) => {
   if (!isUserLoggedIn.value) {
     Toast.fire({ icon: 'info', title: 'Faça login para apostar' });
@@ -161,11 +239,12 @@ const handlePlaceBet = async (forceSubmit = false) => {
 
   oddConflict.value = null;
 
-  // --- LÓGICA DO TIMER AO VIVO ---
   if (hasLiveSelection.value && !forceSubmit) {
       isProcessingLive.value = true;
       countdown.value = countdownTotal;
       
+      if (timerInterval) clearInterval(timerInterval);
+
       timerInterval = setInterval(() => {
           countdown.value--;
           if (countdown.value <= 0) {
@@ -192,10 +271,9 @@ const submitBetToApi = async () => {
       selections: store.selections.map((s: any) => ({
         matchId: String(s.id).includes('_') ? String(s.id).split('_')[0] : String(s.id),
         matchName: `${s.homeTeam} x ${s.awayTeam}`,
-        selectionName: s.selection,
+        selectionName: ['1', '2', 'X', 'x'].includes(s.type) ? s.type : s.selection,
         marketName: ['1', '2', 'X', 'x'].includes(s.type) ? '1x2' : (s.type || s.marketName || 'Mercado'), 
         odd: Number(s.odds || 0),
-        // Cast seguro e fallback para data atual se vazio, evitando erro de tipagem
         commenceTime: s.commenceTime || (s as any).commence_time || new Date().toISOString()
       }))
     };
@@ -208,7 +286,6 @@ const submitBetToApi = async () => {
 
     isProcessingLive.value = false;
 
-    // Verificação segura do authStore.user para o TypeScript
     if (authStore.user) {
         if (response.data?.newBalance !== undefined && response.data?.newBalance !== -1) {
              authStore.user!.balance = response.data.newBalance;
@@ -231,7 +308,6 @@ const submitBetToApi = async () => {
     });
 
     store.clearStore();
-    // Removido 'stake.value = null' para manter o valor para a próxima aposta
     emit('toggle'); 
 
   } catch (error: any) {
@@ -343,6 +419,12 @@ const submitBetToApi = async () => {
 
                 <div class="p-2.5">
                     <div class="pr-4 mb-1.5">
+                        
+                        <div class="flex items-center gap-1 text-[9px] text-slate-400 mb-0.5 font-medium tracking-wide">
+                            <Calendar class="w-2.5 h-2.5 opacity-70" />
+                            {{ formatGameDate(item.commenceTime || (item as any).commence_time) }}
+                        </div>
+
                         <div class="text-[11px] font-bold text-white leading-tight truncate">
                             {{ truncateName(item.homeTeam) }} 
                             <span class="text-slate-500 font-normal">vs</span> 

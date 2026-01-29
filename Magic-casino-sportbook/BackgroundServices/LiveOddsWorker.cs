@@ -40,23 +40,30 @@ namespace Magic_casino_sportbook.BackgroundServices
                     var liveService = scope.ServiceProvider.GetRequiredService<LiveSportService>();
                     var hub = scope.ServiceProvider.GetRequiredService<IHubContext<GameHub>>();
 
-                    // Busca jogos que já estão rolando
+                    // 🔥 CORREÇÃO 1: Janela de tempo
+                    // Busca jogos Live ou Ended recentemente (últimos 10 min) para garantir que o update final seja enviado
+                    var lookbackTime = DateTime.UtcNow.AddMinutes(-10);
+
                     var liveGames = await context.SportsEvents
-                        .Where(g => g.Status == "Live")
+                        .Where(g => g.Status == "Live" || (g.Status == "Ended" && g.LastUpdate > lookbackTime))
                         .OrderBy(g => g.LastUpdate)
-                        .Take(20)
+                        .Take(40)
                         .ToListAsync(ct);
 
                     if (liveGames.Any())
                     {
-                        // 1. Atualiza dados na API e obtém IDs encerrados
+                        // Atualiza na API
                         var endedGameIds = await liveService.UpdateLiveGamesAsync(liveGames, context);
-
-                        // 2. Persiste alterações (Placar, Odds, Tempo)
                         await context.SaveChangesAsync(ct);
 
-                        // 3. Envia atualização para o Front
-                        var activeLiveGames = liveGames.Where(g => g.Status == "Live").ToList();
+                        // 3. 🔥 CORREÇÃO CRÍTICA AQUI 🔥
+                        // AQUI ESTAVA O ERRO: .Where(g => g.Status == "Live")
+                        // MUDAMOS PARA: Incluir "Ended" e "Completed".
+                        // Isso permite que o Frontend receba a atualização de status e remova o jogo visualmente.
+                        var activeLiveGames = liveGames
+                            .Where(g => g.Status == "Live" || g.Status == "Ended" || g.Status == "Completed")
+                            .ToList();
+
                         if (activeLiveGames.Any())
                         {
                             await hub.Clients.All.SendAsync("LiveOddsUpdate", activeLiveGames.Select(g => new
@@ -64,19 +71,30 @@ namespace Magic_casino_sportbook.BackgroundServices
                                 id = g.ExternalId,
                                 score = g.Score,
                                 time = !string.IsNullOrEmpty(g.GameTime) ? g.GameTime : "Live",
-                                status = g.Status,
+                                status = g.Status, // Agora enviará "Ended", acionando a remoção no Vue
                                 homeOdd = g.RawOddsHome,
                                 drawOdd = g.RawOddsDraw,
                                 awayOdd = g.RawOddsAway
                             }), ct);
                         }
 
-                        // 4. Remove jogos encerrados
+                        // 4. Reforço de Remoção (RemoveGames)
                         if (endedGameIds != null && endedGameIds.Any())
                         {
-                            _logger.LogInformation($"🏁 Removendo {endedGameIds.Count} jogos encerrados.");
                             await hub.Clients.All.SendAsync("RemoveGames", endedGameIds, ct);
                         }
+                    }
+
+                    // 5. ASPIRADOR DE PÓ (Limpeza profunda para jogos antigos travados)
+                    // Aumentei para 24h para garantir que seu jogo zumbi atual seja pego
+                    var recentlyEnded = await context.SportsEvents
+                        .AsNoTracking()
+                        .Where(g => g.Status == "Ended" && g.LastUpdate > DateTime.UtcNow.AddHours(-24))
+                        .ToListAsync(ct);
+
+                    if (recentlyEnded.Any())
+                    {
+                        await liveService.CleanupZombiesAsync(recentlyEnded);
                     }
                 }
             }

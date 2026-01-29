@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ArrowLeft, ChevronDown, ChevronRight, Calendar, AlertCircle } from 'lucide-vue-next';
+import { ArrowLeft, ChevronDown, ChevronRight, Calendar, AlertCircle, Star } from 'lucide-vue-next';
 import SportsService from '../services/SportsService';
 import TeamLogo from '../components/TeamLogo.vue';
 import { useBetStore, type BetType } from '../stores/useBetStore';
@@ -10,13 +10,18 @@ import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signal
 // Importação do Menu Híbrido
 import TopSportsMenu from '../components/TopSportsMenu.vue';
 
-// ✅ IMPORTAÇÃO DA NOVA FUNÇÃO DE BANDEIRAS
+// ✅ IMPORTAÇÃO DA FUNÇÃO DE BANDEIRAS
 import { getFlag } from '../utils/flags';
 
-// Interface flexível para lidar com PascalCase (C#) e camelCase (JS)
+// ✅ IMPORTAÇÃO DA NOVA TRADUÇÃO (Para unificar nomes)
+import { normalizeCountryName } from '../utils/countryTranslations';
+
+// ✅ IMPORTAÇÃO DA STORE
+import { useFavoritesStore } from '../stores/useFavoritesStore';
+
 interface SportEvent {
   externalId?: string;
-  ExternalId?: string; // Compatibilidade C#
+  ExternalId?: string;
   id?: string;
   Id?: string;
   homeTeam: string;
@@ -43,6 +48,7 @@ interface SportEvent {
 const route = useRoute();
 const router = useRouter();
 const betStore = useBetStore();
+const favStore = useFavoritesStore(); 
 
 // --- ESTADO ---
 const loading = ref(true);
@@ -58,20 +64,18 @@ const connection = ref<HubConnection | null>(null);
 // --- FILTROS ---
 const openLeagues = ref<Set<string>>(new Set());
 const dataSelecionada = ref<string>('all');
-const selectedSport = ref<string>('all'); // Adicionado para controle do menu
+const selectedSport = ref<string>('all'); 
 
 const sportKey = computed(() => {
   const id = route.params?.id;
   return (Array.isArray(id) ? id[0] : id) || 'soccer';
 });
 
-// Sincroniza o sportKey com o selectedSport do menu
 watch(sportKey, (newVal) => {
     selectedSport.value = newVal;
 }, { immediate: true });
 
 const handleMenuSelect = (key: string) => {
-    // No pré-jogo, ao selecionar um esporte, navegamos para a rota dele
     if (key !== sportKey.value) {
         router.push({ name: 'sport-events', params: { id: key } });
     }
@@ -93,9 +97,7 @@ const getLocalDateString = (dateObj: Date) => {
   return `${year}-${month}-${day}`;
 };
 
-// 🔥 FUNÇÃO CRÍTICA: Prioriza o ID Externo e LIMPA ESPAÇOS
 const getGameId = (game: SportEvent): string => {
-  // Tenta pegar ExternalId (PascalCase do C#) ou externalId (camelCase) ou Id interno
   const candidates = [
     game.ExternalId,
     game.externalId,
@@ -109,13 +111,13 @@ const getGameId = (game: SportEvent): string => {
     }
   }
 
-  // Fallback único (evita erros se vier sem ID)
   const home = game.homeTeam || game.HomeTeam || 'Home';
   const away = game.awayTeam || game.AwayTeam || 'Away';
   return `${home}_${away}`;
 };
 
 const countBetsInLeague = (leagueGames: SportEvent[]) => {
+  if (!leagueGames) return 0;
   const leagueGameIds = leagueGames.map(g => getGameId(g));
   return betStore.selections.filter(sel => {
     return leagueGameIds.some(id => sel.id === id || String(sel.id).startsWith(id + '_'));
@@ -165,6 +167,12 @@ const handleSelection = (game: SportEvent, type: BetType) => {
   );
 };
 
+// ✅ AÇÃO CENTRALIZADA
+const toggleLeagueFavorite = (leagueName: string, event: Event) => {
+    event.stopPropagation();
+    favStore.toggleFavorite(leagueName, sportKey.value);
+};
+
 // --- FETCHING ---
 const fetchEvents = async (reset = false) => {
   if (!sportKey.value) return;
@@ -194,11 +202,15 @@ const fetchEvents = async (reset = false) => {
       events.value.push(...uniqueNewEvents);
     }
 
-    // Abre as ligas automaticamente na primeira carga
     if (currentPage.value === 1) {
       newEvents.forEach(e => {
-        const lg = e.league || e.League;
-        if (lg) openLeagues.value.add(lg);
+        const rawLg = e.league || e.League || 'Outros';
+        const rawCountry = e.country || e.Country || 'Internacional';
+        // ✅ PROTEÇÃO: String() garante que não passamos undefined
+        const { country: cleanCountry, league: cleanLeague } = normalizeCountryName(String(rawCountry), String(rawLg));
+        
+        const displayKey = `${cleanCountry} • ${cleanLeague}`;
+        openLeagues.value.add(displayKey);
       });
     }
 
@@ -214,9 +226,10 @@ const fetchEvents = async (reset = false) => {
 
 watch(() => route.params.id, () => fetchEvents(true), { immediate: true });
 
-// --- LIFECYCLE (SIGNALR E SCROLL) ---
+// --- LIFECYCLE ---
 onMounted(async () => {
-  // 1. Scroll Infinito
+  favStore.fetchFavorites();
+
   observer = new IntersectionObserver((entries) => {
     if (entries[0]?.isIntersecting && !loading.value && !loadingMore.value && hasMore.value) {
       fetchEvents(false);
@@ -225,67 +238,43 @@ onMounted(async () => {
   
   if (loadTrigger.value) observer.observe(loadTrigger.value);
 
-  // 2. Conexão SignalR - CORRIGIDA E COM DEBUG
+  // SignalR
   try {
     const signalRUrl = "/gameHub";
-    // console.log(`🔌 [PRÉ-JOGO] Conectando SignalR em: ${signalRUrl}`);
-
+    
     connection.value = new HubConnectionBuilder()
       .withUrl(signalRUrl)
       .configureLogging(LogLevel.Information)
       .withAutomaticReconnect()
       .build();
 
-    // 🔥 OUVINTE 1: REMOÇÃO COM TRATAMENTO DE STRING E DEBUG
     connection.value.on("RemoveGames", (idsToRemove: any[]) => {
       if (!idsToRemove || idsToRemove.length === 0) return;
-
-      // 1. Normaliza os IDs que chegaram (String + Trim)
       const idsSet = new Set(idsToRemove.map(id => String(id).trim()));
 
       if (events.value.length > 0) {
-        // 2. Filtragem: Mantém apenas os jogos cujo ID NÃO está no set de remoção
         events.value = events.value.filter(game => {
           const gameId = getGameId(game).trim();
-          const deveRemover = idsSet.has(gameId);
-
-          if (deveRemover) {
-            console.log(`❌ [RemoveGames] Removendo: ${game.homeTeam} (ID: ${gameId})`);
-          }
-          return !deveRemover;
+          return !idsSet.has(gameId);
         });
       }
     });
 
-    // 🔥 OUVINTE 2 (REDE DE SEGURANÇA): GameWentLive
-    // Se o jogo virou Live, ele deve sair desta tela de Pré-Jogo imediatamente.
-    // Isso cobre casos onde o evento 'RemoveGames' falha ou se perde na reconexão.
     connection.value.on("GameWentLive", (liveGames: any[]) => {
         if (!liveGames || liveGames.length === 0) return;
-
-        const liveIdsSet = new Set(liveGames.map(g => {
-            // Tenta pegar o ID de várias formas possíveis do objeto que vem do hub
-            return String(g.externalId || g.ExternalId || g.id || g.Id).trim();
-        }));
+        const liveIdsSet = new Set(liveGames.map(g => String(g.externalId || g.ExternalId || g.id || g.Id).trim()));
 
         if (events.value.length > 0) {
             events.value = events.value.filter(game => {
                 const gameId = getGameId(game).trim();
-                const deveRemover = liveIdsSet.has(gameId);
-
-                if (deveRemover) {
-                    console.log(`🚀 [GameWentLive] Removendo do Pré-Jogo: ${game.homeTeam} (ID: ${gameId})`);
-                }
-                return !deveRemover;
+                return !liveIdsSet.has(gameId);
             });
         }
     });
 
-    // 🔇 OUVINTE 3: LiveOddsUpdate (Silencia updates de odds pois aqui é pré-jogo)
     connection.value.on("LiveOddsUpdate", () => {});
 
     await connection.value.start();
-    // console.log("🟢 SignalR Conectado e Pronto!");
 
   } catch (err) {
     console.error("❌ Erro SignalR:", err);
@@ -298,8 +287,6 @@ onUnmounted(() => {
     connection.value.stop();
   }
 });
-
-// --- COMPUTEDS AUXILIARES ---
 
 const datasFiltro = computed(() => {
   const opcoes = [{ label: 'TODAS', valor: 'all' }];
@@ -320,14 +307,16 @@ const betTypesToShow = computed(() => {
   return ['1', '2'] as BetType[];
 });
 
-const groupedEvents = computed(() => {
+// 🟢 COMPUTED COM FIXES DE TYPESCRIPT
+const sortedGroups = computed(() => {
   const groups: Record<string, SportEvent[]> = {};
+  const queryNameMap: Record<string, string> = {}; 
+  
   events.value.forEach(event => {
     const lg = event.league || event.League;
-    // Filtro por Liga (Query Param)
+    
     if (leagueFilter.value && lg !== leagueFilter.value) return;
 
-    // Filtro por Data
     const time = event.commenceTime || event.CommenceTime;
     if (dataSelecionada.value !== 'all' && time) {
       const dateObj = new Date(time);
@@ -335,18 +324,94 @@ const groupedEvents = computed(() => {
       if (eventDateLocal !== dataSelecionada.value) return;
     }
 
-    const leagueName = lg || 'Outros';
-    if (!groups[leagueName]) groups[leagueName] = [];
-    groups[leagueName].push(event);
+    const rawCountry = event.country || event.Country || 'Internacional';
+    const rawLg = lg || 'Outros';
+    
+    // ✅ PROTEÇÃO: String(...)
+    const { country: cleanCountry, league: cleanLeague } = normalizeCountryName(String(rawCountry), String(rawLg));
+    const displayKey = `${cleanCountry} • ${cleanLeague}`;
+    
+    if (!groups[displayKey]) groups[displayKey] = [];
+    groups[displayKey].push(event);
+
+    if (!queryNameMap[displayKey]) {
+        // Garantimos que rawLg é uma string, caso venha nulo
+        queryNameMap[displayKey] = String(rawLg); 
+    }
   });
-  return groups;
+
+  // Mapeia chaves para objetos finais
+  const result = Object.keys(groups).map(key => {
+      // ✅ Proteção contra array vazio (TS Safety)
+      const groupEvents = groups[key];
+      if (!groupEvents || groupEvents.length === 0) return null;
+
+      const firstEvt = groupEvents[0];
+      // ✅ CORREÇÃO DO ERRO DE BUILD AQUI
+      // Adicionado "|| ''" para garantir que é string e nunca undefined
+      const rawQueryName = queryNameMap[key] || ''; 
+
+      // ✅ Proteção no acesso aos campos do primeiro evento
+      const { country: cleanCountry } = normalizeCountryName(
+          String(firstEvt?.country || firstEvt?.Country || 'Internacional'), 
+          String(firstEvt?.league || firstEvt?.League || 'Outros')
+      );
+
+      // ✅ USA STORE (Sincronia)
+      const isFavorite = favStore.isFavorite(rawQueryName);
+
+      return {
+          displayName: key,       
+          queryName: rawQueryName, 
+          games: groupEvents, 
+          isFavorite: isFavorite,
+          countryCode: firstEvt?.countryCode,
+          cleanCountry: cleanCountry 
+      };
+  });
+
+  // Filtra nulos e garante a tipagem
+  const validResults = result.filter(r => r !== null) as Array<{
+      displayName: string,
+      queryName: string,
+      games: SportEvent[],
+      isFavorite: boolean,
+      countryCode: string | undefined,
+      cleanCountry: string
+  }>;
+
+  return validResults.sort((a, b) => {
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
+      return a.displayName.localeCompare(b.displayName);
+  });
 });
 
 const formatTime = (d: string | undefined) => d ? new Date(d).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--';
+
+// ✅ NOVA LÓGICA DE DATA: HOJE / AMANHÃ
 const formatDate = (d: string | undefined) => {
   if (!d) return '---';
-  const date = new Date(d);
-  return date.getDate().toString().padStart(2, '0') + '/' + (date.getMonth() + 1).toString().padStart(2, '0');
+  const gameDate = new Date(d);
+  
+  // Zera as horas para comparar apenas o dia
+  gameDate.setHours(0, 0, 0, 0);
+  
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+
+  if (gameDate.getTime() === today.getTime()) {
+      return 'HOJE';
+  } else if (gameDate.getTime() === tomorrow.getTime()) {
+      return 'AMANHÃ';
+  }
+
+  // Fallback para DD/MM
+  const originalDate = new Date(d); // Recria para pegar o dia correto
+  return originalDate.getDate().toString().padStart(2, '0') + '/' + (originalDate.getMonth() + 1).toString().padStart(2, '0');
 };
 
 const traduzirEsporte = (key: string) => {
@@ -406,7 +471,7 @@ const handleImageError = (event: Event) => {
 
         <div v-else class="space-y-3 pt-2">
 
-          <div v-if="Object.keys(groupedEvents).length === 0"
+          <div v-if="sortedGroups.length === 0"
             class="py-10 text-center text-stake-text opacity-50 border border-dashed border-stake-text/20 rounded">
             <AlertCircle class="w-8 h-8 mb-2 opacity-50 mx-auto" />
             <p class="text-xs">Nenhum jogo encontrado para este filtro.</p>
@@ -416,36 +481,54 @@ const handleImageError = (event: Event) => {
             </button>
           </div>
 
-          <div v-else v-for="(games, league) in groupedEvents" :key="league" class="rounded overflow-hidden">
+          <div v-else v-for="group in sortedGroups" :key="group.displayName" class="rounded overflow-hidden">
 
             <div
-              @click="openLeagues.has(String(league)) ? openLeagues.delete(String(league)) : openLeagues.add(String(league))"
-              class="bg-stake-card/60 backdrop-blur-sm p-2 flex items-center justify-between border-l-2 border-stake-blue cursor-pointer hover:bg-stake-card transition-all select-none">
+              @click="openLeagues.has(group.displayName) ? openLeagues.delete(group.displayName) : openLeagues.add(group.displayName)"
+              class="bg-stake-card/60 backdrop-blur-sm p-2 flex items-center justify-between border-l-2 cursor-pointer hover:bg-stake-card transition-all select-none"
+              :class="group.isFavorite ? 'border-yellow-500 bg-yellow-500/5' : 'border-stake-blue'">
+              
               <div class="flex items-center gap-2">
 
-                <img :src="getFlag(league, games[0]?.countryCode)"
+                <button 
+                    @click="toggleLeagueFavorite(group.queryName, $event)"
+                    class="p-1 rounded hover:bg-white/5 transition-all transform active:scale-95 group/star"
+                >
+                    <Star 
+                        class="w-3.5 h-3.5 transition-colors duration-200" 
+                        :class="group.isFavorite 
+                            ? 'text-yellow-400 fill-yellow-400' 
+                            : 'text-gray-500 fill-transparent group-hover/star:text-yellow-200'" 
+                    />
+                </button>
+
+                <img :src="getFlag(group.cleanCountry === 'Brasil' ? 'Brazil' : group.cleanCountry, group.countryCode)"
                   class="w-4 h-3 rounded-[1px] shadow-sm object-cover bg-black/20" @error="handleImageError" />
 
-                <h3 class="text-white font-bold text-xs uppercase tracking-wide">{{ league }}</h3>
+                <h3 class="text-white font-bold text-xs uppercase tracking-wide" :class="group.isFavorite ? 'text-yellow-100' : ''">
+                    {{ group.displayName }}
+                </h3>
 
-                <span v-if="countBetsInLeague(games) > 0"
+                <span v-if="countBetsInLeague(group.games) > 0"
                   class="bg-yellow-500 text-black text-[10px] font-black w-4 h-4 flex items-center justify-center rounded-full ml-1 animate-pulse">{{
-                  countBetsInLeague(games) }}</span>
+                  countBetsInLeague(group.games) }}</span>
                 <span v-else class="text-[9px] text-stake-text/60 font-bold bg-black/20 px-1.5 py-0.5 rounded-full">{{
-                  games.length }}</span>
+                  group.games.length }}</span>
               </div>
-              <component :is="openLeagues.has(String(league)) ? ChevronDown : ChevronRight"
+              <component :is="openLeagues.has(group.displayName) ? ChevronDown : ChevronRight"
                 class="w-4 h-4 text-stake-text" />
             </div>
 
-            <div v-show="openLeagues.has(String(league))" class="bg-stake-dark border-x border-b border-stake-card/20">
-              <div v-for="game in games" :key="getGameId(game)"
+            <div v-show="openLeagues.has(group.displayName)" class="bg-stake-dark border-x border-b border-stake-card/20">
+              <div v-for="game in group.games" :key="getGameId(game)"
                 class="py-2 px-2 border-b border-white/5 flex flex-col md:flex-row items-center gap-2 transition-all hover:bg-[#B6FF00]/[0.02]">
 
                 <div
                   class="flex flex-row md:flex-col items-center justify-start md:justify-center gap-2 md:gap-0.5 min-w-[60px] md:w-[60px] text-left md:text-center mr-2 md:mr-0 border-r md:border-r-0 md:border-b-0 border-white/10 pr-2 md:pr-0 h-full">
-                  <div class="text-[9px] font-bold text-stake-blue leading-none">{{ formatDate(game.commenceTime ||
+                  
+                  <div class="text-[9px] font-bold text-blue-400 leading-none">{{ formatDate(game.commenceTime ||
                     game.CommenceTime) }}</div>
+                  
                   <div class="text-white text-[10px] font-bold leading-none">{{ formatTime(game.commenceTime ||
                     game.CommenceTime) }}</div>
                 </div>

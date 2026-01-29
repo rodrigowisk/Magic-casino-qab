@@ -147,7 +147,9 @@ onMounted(async () => {
                 game.homeScore = parseInt(parts[0]) || 0;
                 game.awayScore = parseInt(parts[1]) || 0;
             }
-            if (update.status) game.period = update.status;
+            // Se o status mudar para Ended, a computed 'filteredEvents' vai removê-lo automaticamente da tela
+            if (update.status) game.period = update.status; 
+            
             if (update.homeOdd) updateOddWithAnimation(game, 'homeOdd', update.homeOdd);
             if (update.drawOdd) updateOddWithAnimation(game, 'drawOdd', update.drawOdd);
             if (update.awayOdd) updateOddWithAnimation(game, 'awayOdd', update.awayOdd);
@@ -182,7 +184,8 @@ onUnmounted(() => { if (connection) connection.stop(); });
 const liveSportsData = computed(() => {
     const keys = new Set<string>();
     const counts: Record<string, number> = {};
-    events.value.forEach(e => {
+    // Conta apenas os jogos que estão visualmente ativos
+    filteredEvents.value.forEach(e => {
         const k = getSportCategory(e);
         if (k) {
             keys.add(k);
@@ -194,9 +197,21 @@ const liveSportsData = computed(() => {
 
 const handleMenuSelect = (key: string) => { selectedSport.value = key; };
 
+// 🔥 FILTRO PRINCIPAL (ZOMBIE GUARD NO FRONTEND) 🔥
+// Essa computed property garante que jogos encerrados não apareçam na lista,
+// mesmo que ainda estejam na memória 'events.value'
 const filteredEvents = computed(() => {
-    if (selectedSport.value === 'all') return events.value;
-    return events.value.filter(e => getSportCategory(e) === selectedSport.value);
+    // 1. Filtra Zumbis: Remove se o status for de encerramento
+    const activeEvents = events.value.filter(e => 
+        e.period !== 'Ended' && 
+        e.period !== 'Completed' && 
+        e.period !== '3' && 
+        e.period !== 'FT'
+    );
+
+    // 2. Filtra por Categoria (Esporte)
+    if (selectedSport.value === 'all') return activeEvents;
+    return activeEvents.filter(e => getSportCategory(e) === selectedSport.value);
 });
 
 const groupedEvents = computed(() => {
@@ -218,7 +233,9 @@ const handleSelection = (game: LiveGame, type: BetType) => {
   const currentSelection = betStore.selections.find(s => s.id === gameId);
   if (currentSelection?.type === type) { betStore.removeSelection(gameId); } 
   else {
-    betStore.addOrReplaceSelection(gameId, game.homeTeam, game.awayTeam, type === '1' ? game.homeTeam : type === '2' ? game.awayTeam : 'Empate', price, type, game.commenceTime);
+    betStore.addOrReplaceSelection(gameId, game.homeTeam, game.awayTeam, 
+    type, 
+    price, type, game.commenceTime);
   }
 };
 const goToDetails = (gameId: string) => { router.push({ name: 'event-details', params: { id: gameId } }); };

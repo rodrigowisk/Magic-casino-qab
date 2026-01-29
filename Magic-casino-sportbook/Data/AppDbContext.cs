@@ -21,6 +21,8 @@ namespace Magic_casino_sportbook.Data
         public DbSet<LiveGameStat> LiveGameStat { get; set; } = default!;
         public DbSet<SportConfiguration> SportConfigurations { get; set; }
 
+        public DbSet<FavoriteLeague> FavoriteLeagues { get; set; }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);

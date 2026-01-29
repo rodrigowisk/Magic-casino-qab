@@ -27,14 +27,18 @@ namespace Magic_casino_sportbook.Controllers
         public async Task<IActionResult> GetMyBalance()
         {
             // Pega o CPF do token
-            var cpf = User.FindFirst("cpf")?.Value
+            var rawCpf = User.FindFirst("cpf")?.Value
                     ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
 
-            if (string.IsNullOrEmpty(cpf)) return Unauthorized();
+            if (string.IsNullOrEmpty(rawCpf)) return Unauthorized();
+
+            // 🔥 CORREÇÃO: Garante que o CPF tenha 11 dígitos (Ex: 322... vira 047322...)
+            var justNumbers = System.Text.RegularExpressions.Regex.Replace(rawCpf, "[^0-9]", "");
+            var cpf = justNumbers.PadLeft(11, '0');
 
             string token = Request.Headers["Authorization"].ToString();
 
-            // Busca o saldo atualizado no Core
+            // Busca o saldo atualizado no Core usando o CPF corrigido
             decimal balance = await _walletService.GetBalanceAsync(cpf, token);
 
             return Ok(new { balance = balance });
@@ -51,12 +55,16 @@ namespace Magic_casino_sportbook.Controllers
             try
             {
                 // 1. Pega o CPF do token
-                var cpf = User.FindFirst("cpf")?.Value
+                var rawCpf = User.FindFirst("cpf")?.Value
                         ?? User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value;
 
-                if (string.IsNullOrEmpty(cpf)) return Unauthorized("CPF não identificado no token.");
+                if (string.IsNullOrEmpty(rawCpf)) return Unauthorized("CPF não identificado no token.");
 
-                // 2. Busca as apostas no banco
+                // 🔥 CORREÇÃO: Normaliza CPF para buscar o histórico correto
+                var justNumbers = System.Text.RegularExpressions.Regex.Replace(rawCpf, "[^0-9]", "");
+                var cpf = justNumbers.PadLeft(11, '0');
+
+                // 2. Busca as apostas no banco usando o CPF corrigido
                 var bets = await _context.Bets
                     .Include(b => b.Selections)
                     .Where(b => b.UserCpf == cpf)
@@ -100,16 +108,21 @@ namespace Magic_casino_sportbook.Controllers
         [Authorize]
         public async Task<IActionResult> PlaceBet([FromBody] BetRequestDto request)
         {
-            // 1. Identificar CPF (Lógica blindada)
-            var cpf = User.FindFirst("cpf")?.Value
+            // 1. Identificar CPF (Lógica blindada e corrigida)
+            var rawCpf = User.FindFirst("cpf")?.Value
                     ?? User.FindFirst(ClaimTypes.Name)?.Value
                     ?? User.FindFirst("unique_name")?.Value
                     ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
-            if (string.IsNullOrEmpty(cpf))
+            if (string.IsNullOrEmpty(rawCpf))
             {
                 return Unauthorized(new { error = "CPF não identificado no token." });
             }
+
+            // 🔥 CORREÇÃO BLINDADA: Remove tudo que não for número e completa com zeros à esquerda
+            // Isso resolve o problema de CPFs como "32257941" que deveriam ser "04732257941"
+            var justNumbers = System.Text.RegularExpressions.Regex.Replace(rawCpf, "[^0-9]", "");
+            var cpf = justNumbers.PadLeft(11, '0');
 
             if (request.Amount <= 0) return BadRequest(new { error = "Valor inválido." });
 
@@ -182,7 +195,7 @@ namespace Magic_casino_sportbook.Controllers
             // ===================================================================================
 
 
-            // 2. Chamar CORE (Débito)
+            // 2. Chamar CORE (Débito) usando o CPF corrigido
             string token = Request.Headers["Authorization"].ToString();
             if (!string.IsNullOrEmpty(token)) token = token.Replace("\"", "").Trim();
 
@@ -193,7 +206,7 @@ namespace Magic_casino_sportbook.Controllers
                 return BadRequest(new { error = result.Message });
             }
 
-            // 3. Salvar Aposta
+            // 3. Salvar Aposta com o CPF corrigido
             var bet = new Bet
             {
                 UserCpf = cpf,
