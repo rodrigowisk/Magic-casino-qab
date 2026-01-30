@@ -25,7 +25,7 @@ namespace Magic_casino_sportbook.BackgroundServices
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             Console.WriteLine("\n-------------------------------------------------------------");
-            Console.WriteLine("🏁 [LIVE SCORE] WORKER GERAL: ATUALIZAÇÃO EM MASSA (10 MIN) 🏁");
+            Console.WriteLine("🏁 [LIVE SCORE] WORKER GERAL: ATUALIZAÇÃO EM MASSA (30 SEG) 🏁");
             Console.WriteLine("-------------------------------------------------------------\n");
 
             while (!stoppingToken.IsCancellationRequested)
@@ -45,14 +45,13 @@ namespace Magic_casino_sportbook.BackgroundServices
                     Console.WriteLine($"❌ [WORKER ERRO]: {ex.Message}");
                 }
 
-                Console.WriteLine("💤 [WORKER] Aguardando 10 minutos para o próximo ciclo...");
-                await Task.Delay(TimeSpan.FromMinutes(10), stoppingToken);
+                Console.WriteLine("💤 [WORKER] Aguardando 30 segundos para o próximo ciclo...");
+                await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
             }
         }
 
         private async Task UpdateAllActiveGamesAsync(AppDbContext context, CoreWalletService walletService)
         {
-            // 1. Busca IDs de TODOS os jogos ativos (Live, WaitingLive, ou Prematch atrasados)
             var activeGamesIds = await context.SportsEvents
                 .Where(g => g.Status == "Live" ||
                             g.Status == "WaitingLive" ||
@@ -60,14 +59,12 @@ namespace Magic_casino_sportbook.BackgroundServices
                 .Select(g => g.ExternalId)
                 .ToListAsync();
 
-            // 2. Busca IDs de jogos com apostas PENDENTES (Para pagar apostas antigas também)
             var pendingBetGameIds = await context.BetSelections
                 .Where(s => s.Status == "pending")
                 .Select(s => s.MatchId)
                 .Distinct()
                 .ToListAsync();
 
-            // 3. Une as listas
             var allTargetIds = activeGamesIds
                 .Union(pendingBetGameIds)
                 .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -78,14 +75,13 @@ namespace Magic_casino_sportbook.BackgroundServices
 
             Console.WriteLine($"🔍 [WORKER MASSIVO] Verificando status de {allTargetIds.Count} jogos na API...");
 
-            // 4. Processa na API em lotes de 10
             if (!string.IsNullOrEmpty(_betsApiToken))
             {
                 var batches = allTargetIds.Chunk(10);
                 foreach (var batch in batches)
                 {
                     await FetchAndSettleFromApi(batch.ToList(), context, walletService);
-                    await Task.Delay(1500); // Rate limit gentil
+                    await Task.Delay(1500);
                 }
             }
         }
@@ -95,8 +91,6 @@ namespace Magic_casino_sportbook.BackgroundServices
             if (selection.Status != "pending") return;
 
             selection.FinalScore = score;
-
-            // ✅ Lógica de verificação de vitória
             bool won = CheckWinner(selection.MarketName, selection.OutcomeName, score);
 
             selection.Status = won ? "Won" : "Lost";
@@ -119,7 +113,6 @@ namespace Magic_casino_sportbook.BackgroundServices
                 var mkt = market?.ToLower().Trim() ?? "";
                 var sel = outcome?.ToLower().Trim() ?? "";
 
-                // 1X2 (Resultado Final)
                 if (mkt.Contains("result") || mkt.Contains("vencedor") || mkt == "1x2" || mkt.Contains("match winner"))
                 {
                     if (sel == "1") return homeScore > awayScore;
@@ -127,7 +120,6 @@ namespace Magic_casino_sportbook.BackgroundServices
                     if (sel == "x" || sel == "draw" || sel == "empate") return homeScore == awayScore;
                 }
 
-                // Dupla Hipótese
                 if (mkt.Contains("double") || mkt.Contains("dupla"))
                 {
                     if (sel == "1x") return homeScore >= awayScore;
@@ -135,7 +127,6 @@ namespace Magic_casino_sportbook.BackgroundServices
                     if (sel == "12") return homeScore != awayScore;
                 }
 
-                // Gols (Over/Under)
                 if (mkt.Contains("goal") || mkt.Contains("gols") || mkt.Contains("over") || mkt.Contains("under"))
                 {
                     int totalGols = homeScore + awayScore;
@@ -147,7 +138,6 @@ namespace Magic_casino_sportbook.BackgroundServices
                     }
                 }
 
-                // BTTS (Ambos Marcam)
                 if (mkt.Contains("both teams") || mkt.Contains("ambos"))
                 {
                     bool bttsYes = homeScore > 0 && awayScore > 0;
@@ -162,12 +152,10 @@ namespace Magic_casino_sportbook.BackgroundServices
 
         private async Task CheckAndSettleTicketAsync(Bet ticket, AppDbContext context, CoreWalletService walletService)
         {
-            // Verifica todas as seleções desse bilhete
             var allSelections = await context.BetSelections.Where(s => s.BetId == ticket.Id).ToListAsync();
 
-            if (allSelections.Any(s => s.Status == "pending")) return; // Ainda tem jogo rolando
+            if (allSelections.Any(s => s.Status == "pending")) return;
 
-            // Se qualquer uma perdeu, o bilhete perdeu
             if (allSelections.Any(s => s.Status == "Lost"))
             {
                 if (ticket.Status != "Lost")
@@ -179,12 +167,10 @@ namespace Magic_casino_sportbook.BackgroundServices
                 return;
             }
 
-            // Se todas venceram, paga!
             if (allSelections.All(s => s.Status == "Won") && ticket.Status != "Won")
             {
                 Console.WriteLine($"🏆 [BILHETE VENCEU] ID: {ticket.Id} -> PAGANDO R$ {ticket.PotentialReturn:N2}...");
 
-                // 1. Credita na Carteira
                 var result = await walletService.CreditFundsAsync(ticket.UserCpf, ticket.PotentialReturn);
 
                 if (result.Success)
@@ -192,12 +178,9 @@ namespace Magic_casino_sportbook.BackgroundServices
                     ticket.Status = "Won";
                     context.Entry(ticket).State = EntityState.Modified;
 
-                    // 2. 🔥 CORREÇÃO BLINDADA: INSERÇÃO DIRETA VIA SQL
-                    // Isso evita o erro de compilação por falta do Model/DbSet no C#
-                    // Mas garante que o registro apareça na tabela "transactions" do banco.
                     try
                     {
-                        // Atenção: PostgreSQL usa aspas duplas para nomes de tabelas/colunas case-sensitive
+                        // SQL RAW para evitar erros de compilação por falta de modelos
                         var sql = "INSERT INTO \"transactions\" (\"user_cpf\", \"amount\", \"external_reference\", \"status\", \"created_at\", \"paid_at\") VALUES ({0}, {1}, {2}, {3}, {4}, {5})";
 
                         await context.Database.ExecuteSqlRawAsync(sql,
@@ -244,7 +227,6 @@ namespace Magic_casino_sportbook.BackgroundServices
                     {
                         foreach (var res in data.Results)
                         {
-                            // Status 3 = Ended
                             if (res.TimeStatus == "3" && !string.IsNullOrEmpty(res.Score))
                             {
                                 var gameDb = await context.SportsEvents.FirstOrDefaultAsync(g => g.ExternalId == res.Bet365Id);
@@ -260,7 +242,6 @@ namespace Magic_casino_sportbook.BackgroundServices
                                         context.Entry(gameDb).State = EntityState.Modified;
                                     }
 
-                                    // Busca apostas pendentes para este jogo
                                     var betsForGame = await context.BetSelections
                                         .Include(b => b.Bet)
                                         .Where(b => b.MatchId == res.Bet365Id && b.Status == "pending")

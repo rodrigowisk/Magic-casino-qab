@@ -3,7 +3,7 @@ import { ref, computed, watch, nextTick, onUnmounted, onMounted } from 'vue';
 import { useBetStore } from '../stores/useBetStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import apiSports from '../services/apiSports'; 
-import { X, Trash2, Trophy, Loader2, ChevronRight, AlertCircle, ArrowRight, Hourglass, StopCircle, Calendar } from 'lucide-vue-next';
+import { X, Trash2, Trophy, Loader2, ChevronRight, AlertCircle, ArrowRight, Hourglass, StopCircle, Calendar, AlertTriangle } from 'lucide-vue-next';
 import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signalr';
 import Swal from 'sweetalert2';
 
@@ -22,6 +22,7 @@ const stakeError = ref(false);
 
 // --- ESTADOS DO TIMER AO VIVO ---
 const isProcessingLive = ref(false); // Controla a tela de espera
+const showCancelledOverlay = ref(false); // Controla o overlay de cancelamento
 const countdown = ref(12); // Segundos iniciais
 const countdownTotal = 12;
 let timerInterval: any = null;
@@ -39,97 +40,6 @@ const oddConflict = ref<{
 
 const selectionsContainer = ref<HTMLElement | null>(null);
 
-// --- CICLO DE VIDA (SIGNALR E TIMERS) ---
-
-onMounted(async () => {
-    const signalRUrl = "/gameHub";
-    
-    const newConnection = new HubConnectionBuilder()
-        .withUrl(signalRUrl)
-        .withAutomaticReconnect()
-        .configureLogging(LogLevel.Information)
-        .build();
-
-    // 1. OUVINTE DE REMOÇÃO FORÇADA (Backend manda deletar explicitamente)
-    newConnection.on('RemoveGames', (endedIds: string[]) => {
-        if (!endedIds || !Array.isArray(endedIds) || store.selections.length === 0) return;
-        removeEndedSelections(endedIds);
-    });
-
-    // 2. OUVINTE DE ATUALIZAÇÃO (CORREÇÃO AQUI)
-    // Agora lemos o status do update. Se for "Ended", removemos do cupom.
-    newConnection.on('LiveOddsUpdate', (updatedGames: any[]) => {
-        if (!updatedGames || !Array.isArray(updatedGames) || store.selections.length === 0) return;
-        
-        const endedIdsFromUpdate: string[] = [];
-
-        updatedGames.forEach(u => {
-            // Verifica se o status indica fim de jogo
-            if (u.status === 'Ended' || u.status === 'Completed' || u.status === 'FT' || u.status === '3') {
-                endedIdsFromUpdate.push(String(u.id));
-            }
-        });
-
-        if (endedIdsFromUpdate.length > 0) {
-            removeEndedSelections(endedIdsFromUpdate);
-        }
-    });
-
-    // Silenciador apenas para GameWentLive (não afeta o cupom)
-    newConnection.on('GameWentLive', () => {}); 
-
-    try {
-        await newConnection.start();
-        connection = newConnection; 
-    } catch (err) {
-        console.error("❌ Erro SignalR no Cupom:", err);
-    }
-});
-
-// Função auxiliar para remover seleções
-const removeEndedSelections = (idsToRemove: string[]) => {
-    // Filtra seleções que pertencem aos jogos encerrados
-    const selectionsToRemove = store.selections.filter(s => {
-        const matchId = String(s.id).includes('_') ? String(s.id).split('_')[0] : String(s.id);
-        return idsToRemove.includes(matchId);
-    });
-
-    if (selectionsToRemove.length > 0) {
-        selectionsToRemove.forEach(s => store.removeSelection(s.id));
-        
-        Toast.fire({
-            icon: 'info',
-            title: 'Jogos encerrados foram removidos do cupom.'
-        });
-    }
-};
-
-// Limpa timer e conexão se o componente desmontar
-onUnmounted(() => {
-    if (timerInterval) clearInterval(timerInterval);
-    if (connection) connection.stop();
-});
-
-watch(() => store.selections.length, async (newVal, oldVal) => {
-  if (newVal > (oldVal || 0)) {
-    await nextTick();
-    if (selectionsContainer.value) {
-      selectionsContainer.value.scrollTo({
-        top: selectionsContainer.value.scrollHeight,
-        behavior: 'smooth'
-      });
-    }
-  }
-});
-
-// Salva no localStorage sempre que o valor mudar
-watch(stake, (newVal) => {
-    if (newVal) {
-        localStorage.setItem('lastStake', String(newVal));
-    }
-    if (stakeError.value) stakeError.value = false;
-});
-
 const Toast = Swal.mixin({
   toast: true,
   position: 'top-end',
@@ -144,6 +54,122 @@ const Toast = Swal.mixin({
   }
 });
 
+// --- FUNÇÃO DE REMOÇÃO SEGURA ---
+const removeEndedSelections = (idsToRemove: any[]) => {
+    if (!idsToRemove || !Array.isArray(idsToRemove)) return;
+
+    const safeIdsToRemove = idsToRemove.map(id => String(id));
+
+    const selectionsToRemove = store.selections.filter(s => {
+        const currentId = String(s.id);
+        const parts = currentId.split('_');
+        const matchId = parts[0] ?? currentId; 
+        return safeIdsToRemove.includes(matchId);
+    });
+
+    if (selectionsToRemove.length > 0) {
+        console.log("🎯 Removendo do cupom:", selectionsToRemove);
+        
+        selectionsToRemove.forEach(s => {
+            if (s.id) {
+                store.removeSelection(String(s.id));
+            }
+        });
+        
+        Toast.fire({
+            icon: 'info',
+            title: 'Jogos encerrados foram removidos do cupom.'
+        });
+    }
+};
+
+// --- CICLO DE VIDA (SIGNALR E TIMERS) ---
+
+onMounted(async () => {
+    console.log("🚀 [DEBUG V4.4 FINAL] BetSlip.vue montado! Overlay Centralizado.");
+
+    const signalRUrl = "/gameHub";
+    
+    const newConnection = new HubConnectionBuilder()
+        .withUrl(signalRUrl)
+        .withAutomaticReconnect()
+        .configureLogging(LogLevel.Information)
+        .build();
+
+    newConnection.on('RemoveGames', (endedIds: any[]) => {
+        if (!endedIds || !Array.isArray(endedIds) || store.selections.length === 0) return;
+        removeEndedSelections(endedIds);
+    });
+
+    newConnection.on('LiveOddsUpdate', (updatedGames: any[]) => {
+        if (!updatedGames || !Array.isArray(updatedGames) || store.selections.length === 0) return;
+        
+        const endedIdsFromUpdate: string[] = [];
+
+        updatedGames.forEach(u => {
+            if (u.status === 'Ended' || u.status === 'Completed' || u.status === 'FT' || u.status === '3') {
+                if (u.id) {
+                    endedIdsFromUpdate.push(String(u.id));
+                }
+            }
+        });
+
+        if (endedIdsFromUpdate.length > 0) {
+            removeEndedSelections(endedIdsFromUpdate);
+        }
+    });
+
+    newConnection.on('GameWentLive', () => {}); 
+
+    try {
+        await newConnection.start();
+        connection = newConnection; 
+    } catch (err) {
+        console.error("❌ Erro SignalR no Cupom:", err);
+    }
+});
+
+onUnmounted(() => {
+    if (timerInterval) clearInterval(timerInterval);
+    if (connection) connection.stop();
+});
+
+// ✅ MONITORAMENTO DE ALTERAÇÕES NO CUPOM
+watch(() => store.selections, () => {
+    // Se estiver processando e o cupom mudar (add/remove/odds), cancela e mostra aviso CENTRAL
+    if (isProcessingLive.value) {
+        cancelLiveProcessing();
+        
+        // Ativa o overlay de aviso
+        showCancelledOverlay.value = true;
+        
+        // Remove o overlay automaticamente após 2.5 segundos
+        setTimeout(() => {
+            showCancelledOverlay.value = false;
+        }, 2500);
+    }
+}, { deep: true });
+
+// Scroll automático ao adicionar itens
+watch(() => store.selections.length, async (newVal, oldVal) => {
+  if (newVal > (oldVal || 0)) {
+    await nextTick();
+    if (selectionsContainer.value) {
+      selectionsContainer.value.scrollTo({
+        top: selectionsContainer.value.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
+  }
+});
+
+watch(stake, (newVal) => {
+    if (newVal) {
+        localStorage.setItem('lastStake', String(newVal));
+    }
+    if (stakeError.value) stakeError.value = false;
+});
+
 const potentialReturn = computed(() => {
   const valor = stake.value || 0;
   const odds = store.totalOdds || 0;
@@ -152,7 +178,6 @@ const potentialReturn = computed(() => {
 
 const isUserLoggedIn = computed(() => !!(authStore?.token && authStore?.user));
 
-// Verifica se existe algum jogo AO VIVO no cupom
 const hasLiveSelection = computed(() => {
     const now = new Date();
     return store.selections.some(s => {
@@ -169,23 +194,27 @@ const progressDashoffset = computed(() => {
     return circumference - (countdown.value / countdownTotal) * circumference;
 });
 
-const truncateName = (name: string, limit: number = 20) => {
+const truncateName = (name: any, limit: number = 20) => {
   if (!name) return '';
-  return name.length > limit ? name.substring(0, limit) + '...' : name;
+  const n = String(name); 
+  return n.length > limit ? n.substring(0, limit) + '...' : n;
 };
 
-const formatGameDate = (dateString: string | undefined) => {
+const formatGameDate = (dateString: any) => {
     if (!dateString) return '';
-    const date = new Date(dateString);
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    
-    return `${day}/${month} • ${hours}:${minutes}`;
+    try {
+        const date = new Date(dateString);
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        return `${day}/${month} • ${hours}:${minutes}`;
+    } catch {
+        return '';
+    }
 };
 
-const getMarketLabel = (type: string | undefined, marketName: string | undefined) => {
+const getMarketLabel = (type: any, marketName: any) => {
   const raw = type || marketName || '';
   if (['1', '2', 'X', 'x'].includes(raw)) {
     return 'Resultado Final';
@@ -320,7 +349,7 @@ const submitBetToApi = async () => {
             matchName: truncateName(data.matchName || 'Jogo', 25),
             oldOdd: parseFloat(data.oldOdd),
             newOdd: parseFloat(data.newOdd),
-            selectionId: data.selectionId || data.matchId
+            selectionId: String(data.selectionId || data.matchId)
         };
         return; 
     }
@@ -367,6 +396,22 @@ const submitBetToApi = async () => {
             </button>
         </div>
     </div>
+
+    <div v-if="showCancelledOverlay" class="absolute inset-0 z-50 bg-black/60 backdrop-blur-[2px] flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div class="bg-[#1e293b] border border-red-500/50 shadow-2xl rounded-xl p-6 flex flex-col items-center w-full max-w-[240px] relative overflow-hidden">
+             <div class="absolute top-0 left-0 w-full h-1 bg-red-500 opacity-70"></div>
+             
+             <div class="bg-red-500/10 p-3 rounded-full mb-3 ring-1 ring-red-500/20">
+                 <AlertTriangle class="w-8 h-8 text-red-500 animate-bounce" />
+             </div>
+
+             <h3 class="text-white font-bold text-sm text-center mb-1">Processamento Cancelado</h3>
+             <p class="text-slate-400 text-[11px] text-center leading-tight">
+                 O cupom foi alterado durante o processamento. Tente novamente.
+             </p>
+        </div>
+    </div>
+
     <div 
         @click="emit('toggle')"
         class="h-12 px-3 border-b border-slate-800 bg-[#1e293b] flex items-center justify-between cursor-pointer hover:bg-[#253248] transition-colors"

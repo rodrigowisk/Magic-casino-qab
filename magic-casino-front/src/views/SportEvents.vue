@@ -24,6 +24,7 @@ interface SportEvent {
   ExternalId?: string;
   id?: string;
   Id?: string;
+  gameId?: string; // Adicionado para compatibilidade extra
   homeTeam: string;
   HomeTeam?: string;
   awayTeam: string;
@@ -35,6 +36,8 @@ interface SportEvent {
   countryCode?: string;
   homeTeamLogo?: string;
   awayTeamLogo?: string;
+  currentMinute?: string; // Adicionado para update em tempo real
+  period?: string;       // Adicionado para update em tempo real
 
   rawOddsHome?: number;
   rawOddsDraw?: number;
@@ -97,28 +100,23 @@ const getLocalDateString = (dateObj: Date) => {
   return `${year}-${month}-${day}`;
 };
 
+// 🔥 CORREÇÃO: ID RIGOROSO 🔥
 const getGameId = (game: SportEvent): string => {
-  const candidates = [
-    game.ExternalId,
-    game.externalId,
-    game.id,
-    game.Id
-  ];
-
-  for (const cand of candidates) {
-    if (cand !== null && cand !== undefined && String(cand).trim() !== '') {
-       return String(cand).trim();
-    }
+  // Busca o ID nas propriedades possíveis enviadas pelo backend
+  const validId = game.id || game.Id || game.gameId || game.externalId || game.ExternalId;
+  
+  if (validId) {
+      return String(validId).trim();
   }
 
-  const home = game.homeTeam || game.HomeTeam || 'Home';
-  const away = game.awayTeam || game.AwayTeam || 'Away';
-  return `${home}_${away}`;
+  // Se não tiver ID, retorna string vazia para não quebrar o SignalR com falsos positivos
+  // (Isso evita a gambiarra de nome de time)
+  return '';
 };
 
 const countBetsInLeague = (leagueGames: SportEvent[]) => {
   if (!leagueGames) return 0;
-  const leagueGameIds = leagueGames.map(g => getGameId(g));
+  const leagueGameIds = leagueGames.map(g => getGameId(g)).filter(id => id !== '');
   return betStore.selections.filter(sel => {
     return leagueGameIds.some(id => sel.id === id || String(sel.id).startsWith(id + '_'));
   }).length;
@@ -141,6 +139,8 @@ const getSelectedType = (gameId: string): BetType | null => {
 
 const handleSelection = (game: SportEvent, type: BetType) => {
   const gameId = getGameId(game);
+  if (!gameId) return; // Segurança contra jogos sem ID
+
   const priceStr = getOdd(game, type);
   const price = parseFloat(priceStr);
 
@@ -197,8 +197,11 @@ const fetchEvents = async (reset = false) => {
     if (reset) {
       events.value = newEvents;
     } else {
-      const existingIds = new Set(events.value.map(e => getGameId(e)));
-      const uniqueNewEvents = newEvents.filter(e => !existingIds.has(getGameId(e)));
+      const existingIds = new Set(events.value.map(e => getGameId(e)).filter(id => id !== ''));
+      const uniqueNewEvents = newEvents.filter(e => {
+          const id = getGameId(e);
+          return id && !existingIds.has(id);
+      });
       events.value.push(...uniqueNewEvents);
     }
 
@@ -272,7 +275,35 @@ onMounted(async () => {
         }
     });
 
-    connection.value.on("LiveOddsUpdate", () => {});
+    // 🔥 IMPLEMENTAÇÃO DO LISTENER DE ODDS 🔥
+    connection.value.on("LiveOddsUpdate", (updatedGames: any[]) => {
+        if (!updatedGames || !Array.isArray(updatedGames)) return;
+
+        updatedGames.forEach(update => {
+            // Tenta pegar o ID do pacote de update
+            const updateId = String(update.id || update.gameId || update.Id || '').trim();
+            if (!updateId) return;
+
+            // Encontra o jogo usando a função getGameId corrigida
+            const game = events.value.find(g => getGameId(g) === updateId);
+
+            if (game) {
+                // Atualiza Odds (Mapeando camelCase para a estrutura do componente)
+                if (update.homeOdd) game.rawOddsHome = update.homeOdd;
+                if (update.drawOdd) game.rawOddsDraw = update.drawOdd;
+                if (update.awayOdd) game.rawOddsAway = update.awayOdd;
+                
+                // Suporte caso o backend mande PascalCase
+                if (update.HomeOdd) game.RawOddsHome = update.HomeOdd;
+                if (update.DrawOdd) game.RawOddsDraw = update.DrawOdd;
+                if (update.AwayOdd) game.RawOddsAway = update.AwayOdd;
+
+                // Atualizações opcionais de tempo/status
+                if (update.time) game.currentMinute = update.time;
+                if (update.status) game.period = update.status;
+            }
+        });
+    });
 
     await connection.value.start();
 
@@ -313,6 +344,9 @@ const sortedGroups = computed(() => {
   const queryNameMap: Record<string, string> = {}; 
   
   events.value.forEach(event => {
+    // Se o evento não tiver ID válido, ignoramos para não poluir a tela
+    if (!getGameId(event)) return;
+
     const lg = event.league || event.League;
     
     if (leagueFilter.value && lg !== leagueFilter.value) return;
