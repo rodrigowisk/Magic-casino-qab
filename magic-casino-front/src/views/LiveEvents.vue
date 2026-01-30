@@ -147,7 +147,6 @@ onMounted(async () => {
                 game.homeScore = parseInt(parts[0]) || 0;
                 game.awayScore = parseInt(parts[1]) || 0;
             }
-            // Se o status mudar para Ended, a computed 'filteredEvents' vai removê-lo automaticamente da tela
             if (update.status) game.period = update.status; 
             
             if (update.homeOdd) updateOddWithAnimation(game, 'homeOdd', update.homeOdd);
@@ -181,11 +180,25 @@ onMounted(async () => {
 onUnmounted(() => { if (connection) connection.stop(); });
 
 // --- COMPUTED ---
+
+// 🔥 1. LISTA LIMPA (SEM ZUMBIS) - Base para tudo
+// Filtra apenas jogos que NÃO terminaram. Não aplica filtro de esporte ainda.
+const activeEvents = computed(() => {
+    return events.value.filter(e => 
+        e.period !== 'Ended' && 
+        e.period !== 'Completed' && 
+        e.period !== '3' && 
+        e.period !== 'FT'
+    );
+});
+
+// 🔥 2. DADOS DO MENU (Baseado na lista completa limpa)
+// Usa 'activeEvents' para contar todos os jogos disponíveis, independente do filtro atual.
 const liveSportsData = computed(() => {
     const keys = new Set<string>();
     const counts: Record<string, number> = {};
-    // Conta apenas os jogos que estão visualmente ativos
-    filteredEvents.value.forEach(e => {
+    
+    activeEvents.value.forEach(e => {
         const k = getSportCategory(e);
         if (k) {
             keys.add(k);
@@ -197,21 +210,11 @@ const liveSportsData = computed(() => {
 
 const handleMenuSelect = (key: string) => { selectedSport.value = key; };
 
-// 🔥 FILTRO PRINCIPAL (ZOMBIE GUARD NO FRONTEND) 🔥
-// Essa computed property garante que jogos encerrados não apareçam na lista,
-// mesmo que ainda estejam na memória 'events.value'
+// 🔥 3. LISTA VISÍVEL (Filtrada pelo menu selecionado)
+// Aplica o filtro de esporte APENAS para o que é exibido na lista de jogos.
 const filteredEvents = computed(() => {
-    // 1. Filtra Zumbis: Remove se o status for de encerramento
-    const activeEvents = events.value.filter(e => 
-        e.period !== 'Ended' && 
-        e.period !== 'Completed' && 
-        e.period !== '3' && 
-        e.period !== 'FT'
-    );
-
-    // 2. Filtra por Categoria (Esporte)
-    if (selectedSport.value === 'all') return activeEvents;
-    return activeEvents.filter(e => getSportCategory(e) === selectedSport.value);
+    if (selectedSport.value === 'all') return activeEvents.value;
+    return activeEvents.value.filter(e => getSportCategory(e) === selectedSport.value);
 });
 
 const groupedEvents = computed(() => {
