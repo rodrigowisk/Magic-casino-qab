@@ -109,8 +109,9 @@
                         {{ formatMarketName(sel.marketName) }}
                     </span>
                     <span class="text-slate-600">👉</span>
+                    
                     <span class="font-bold text-blue-400 border-b border-blue-400/20 pb-0.5">
-                        {{ sel.selectionName }}
+                        {{ getSelectionDisplay(sel) }}
                     </span>
                   </div>
 
@@ -206,15 +207,41 @@ const formatDate = (dateString: string) => {
   return date.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 };
 
-// --- CORREÇÃO: TRADUÇÃO DE NOME DE MERCADO ---
+// --- TRADUÇÃO DE NOME DE MERCADO ---
 const formatMarketName = (name: string) => {
   if (!name) return '';
   const clean = name.toLowerCase().trim();
-  // Se for "1x2" ou variações, retorna o padrão visual do Cupom
   if (clean === '1x2' || clean === 'match winner' || clean === 'moneyline') {
     return 'Resultado Final';
   }
   return name;
+};
+
+// --- 🔥 NOVA FUNÇÃO: TRADUÇÃO DE SELEÇÃO NO HISTÓRICO 🔥 ---
+const getSelectionDisplay = (sel: BetSelection) => {
+    // Garante que matchName existe para evitar erro TS2532
+    const matchName = sel.matchName || '';
+    const parts = matchName.split(' x ');
+    
+    if (parts.length < 2) return sel.selectionName;
+
+    // ✅ CORREÇÃO TS: Usamos || '' para garantir que o retorno do array não seja undefined antes do trim()
+    const homeTeam = (parts[0] || '').trim();
+    const awayTeam = (parts[1] || '').trim();
+    const rawSel = (sel.selectionName || '').toLowerCase().trim();
+
+    // 2. Mapeia a seleção para o nome do time
+    if (rawSel === '1' || rawSel === 'casa' || rawSel === 'home') {
+        return homeTeam;
+    }
+    if (rawSel === '2' || rawSel === 'fora' || rawSel === 'away') {
+        return awayTeam;
+    }
+    if (rawSel === 'x' || rawSel === 'empate' || rawSel === 'draw') {
+        return 'Empate';
+    }
+
+    return sel.selectionName;
 };
 
 // --- LÓGICA DE STATUS ---

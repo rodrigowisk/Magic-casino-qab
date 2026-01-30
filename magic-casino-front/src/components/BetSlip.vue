@@ -86,7 +86,7 @@ const removeEndedSelections = (idsToRemove: any[]) => {
 // --- CICLO DE VIDA (SIGNALR E TIMERS) ---
 
 onMounted(async () => {
-    console.log("🚀 [DEBUG V4.4 FINAL] BetSlip.vue montado! Overlay Centralizado.");
+    console.log("🚀 [DEBUG V4.5 FINAL] BetSlip.vue montado! Tradução Visual Aplicada.");
 
     const signalRUrl = "/gameHub";
     
@@ -136,14 +136,9 @@ onUnmounted(() => {
 
 // ✅ MONITORAMENTO DE ALTERAÇÕES NO CUPOM
 watch(() => store.selections, () => {
-    // Se estiver processando e o cupom mudar (add/remove/odds), cancela e mostra aviso CENTRAL
     if (isProcessingLive.value) {
         cancelLiveProcessing();
-        
-        // Ativa o overlay de aviso
         showCancelledOverlay.value = true;
-        
-        // Remove o overlay automaticamente após 2.5 segundos
         setTimeout(() => {
             showCancelledOverlay.value = false;
         }, 2500);
@@ -222,6 +217,19 @@ const getMarketLabel = (type: any, marketName: any) => {
   return raw; 
 };
 
+// 🔥 NOVA FUNÇÃO: TRADUÇÃO VISUAL NO CUPOM 🔥
+const getSelectionName = (item: any) => {
+    const raw = String(item.selection).toUpperCase();
+    
+    // Se for 1, 2 ou X, traduz usando os nomes dos times que já temos no item
+    if (raw === '1') return truncateName(item.homeTeam);
+    if (raw === '2') return truncateName(item.awayTeam);
+    if (raw === 'X') return 'Empate';
+    
+    // Se não, retorna o original (ex: Over 2.5)
+    return item.selection;
+};
+
 const formatCurrency = (value: number | string) => {
     return Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 };
@@ -235,7 +243,6 @@ const updateSelectionOdd = (selectionId: string, newOdd: number) => {
 
 const confirmOddChange = () => {
     if (!oddConflict.value) return;
-    
     updateSelectionOdd(oddConflict.value.selectionId, oddConflict.value.newOdd);
     oddConflict.value = null;
     handlePlaceBet(false); 
@@ -300,6 +307,8 @@ const submitBetToApi = async () => {
       selections: store.selections.map((s: any) => ({
         matchId: String(s.id).includes('_') ? String(s.id).split('_')[0] : String(s.id),
         matchName: `${s.homeTeam} x ${s.awayTeam}`,
+        // Enviamos '1', '2', 'X' para o backend (que vai traduzir antes de salvar no banco)
+        // Mantemos a consistência do protocolo
         selectionName: ['1', '2', 'X', 'x'].includes(s.type) ? s.type : s.selection,
         marketName: ['1', '2', 'X', 'x'].includes(s.type) ? '1x2' : (s.type || s.marketName || 'Mercado'), 
         odd: Number(s.odds || 0),
@@ -480,7 +489,7 @@ const submitBetToApi = async () => {
                     <div class="flex items-center justify-between gap-2">
                         <div class="flex flex-col min-w-0">
                             <span class="text-[9px] text-slate-500 font-bold uppercase truncate">{{ getMarketLabel(item.type, item.marketName) }}</span>
-                            <span class="text-[11px] text-blue-400 font-bold truncate">{{ item.selection }}</span>
+                            <span class="text-[11px] text-blue-400 font-bold truncate">{{ getSelectionName(item) }}</span>
                         </div>
 
                         <div class="flex items-center gap-2">
