@@ -216,15 +216,36 @@ namespace Magic_casino_sportbook.Controllers
                 CoreTxnId = Guid.NewGuid().ToString(),
                 Status = "confirmed",
                 CreatedAt = DateTime.UtcNow,
-                Selections = request.Selections.Select(s => new BetSelection
+                Selections = request.Selections.Select(s =>
                 {
-                    MatchId = s.MatchId ?? "0",
-                    MatchName = s.MatchName ?? "Jogo",
-                    SelectionName = s.SelectionName ?? "Seleção",
-                    MarketName = s.MarketName ?? "Mercado",
-                    Odd = s.Odd,
-                    Status = "pending",
-                    CommenceTime = s.CommenceTime
+                    // 🔁 LÓGICA DE TRADUÇÃO DE MERCADOS (1, X, 2 -> Casa, Empate, Fora)
+                    string finalSelection = s.SelectionName ?? "Seleção";
+                    string finalMarket = s.MarketName ?? "Mercado";
+
+                    // Se o frontend mandou "1x2" ou "1", "2", "X" como mercado, padroniza
+                    if (finalMarket == "1" || finalMarket == "2" || finalMarket == "X" || finalMarket == "1x2")
+                    {
+                        finalMarket = "Resultado Final";
+                    }
+
+                    // Se for Resultado Final, traduz a seleção
+                    if (finalMarket == "Resultado Final" || finalMarket == "Money Line" || finalMarket == "Match Winner")
+                    {
+                        if (finalSelection == "1") finalSelection = "Casa";
+                        else if (finalSelection == "2") finalSelection = "Fora";
+                        else if (finalSelection.ToUpper() == "X" || finalSelection.ToLower() == "draw") finalSelection = "Empate";
+                    }
+
+                    return new BetSelection
+                    {
+                        MatchId = s.MatchId ?? "0",
+                        MatchName = s.MatchName ?? "Jogo",
+                        SelectionName = finalSelection, // Nome Traduzido
+                        MarketName = finalMarket,       // Nome Padronizado
+                        Odd = s.Odd,
+                        Status = "pending",
+                        CommenceTime = s.CommenceTime
+                    };
                 }).ToList()
             };
             bet.PotentialReturn = bet.Amount * bet.TotalOdd;

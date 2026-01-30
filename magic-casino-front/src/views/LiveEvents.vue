@@ -2,10 +2,11 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signalr';
-import { Radio, AlertCircle, ChevronDown, ChevronRight, ArrowUp, ArrowDown, Lock } from 'lucide-vue-next';
+import { Radio, AlertCircle, ChevronDown, ChevronRight, ArrowUp, ArrowDown, Lock, Star } from 'lucide-vue-next';
 import axios from 'axios'; 
 import TeamLogo from '../components/TeamLogo.vue';
 import { useBetStore, type BetType } from '../stores/useBetStore';
+import { useFavoritesStore } from '../stores/useFavoritesStore';
 
 // Importação do Menu Híbrido
 import TopSportsMenu from '../components/TopSportsMenu.vue';
@@ -37,9 +38,19 @@ interface LiveGame {
   [key: string]: any;
 }
 
+// Interface para garantir a tipagem no v-for e evitar erros de "possibly undefined"
+interface LeagueGroup {
+    league: string;
+    games: LiveGame[];
+    isFavorite: boolean;
+    countryCode?: string;
+}
+
 // --- CONFIGURAÇÃO ---
 const router = useRouter();
 const betStore = useBetStore();
+const favStore = useFavoritesStore(); 
+
 const loading = ref(true);
 const events = ref<LiveGame[]>([]);
 const openLeagues = ref<Set<string>>(new Set());
@@ -123,8 +134,16 @@ const updateOddWithAnimation = (game: LiveGame, field: 'homeOdd' | 'drawOdd' | '
     setTimeout(() => { game[flashField] = false; }, 1000);
 };
 
+// ✅ AÇÃO DE FAVORITAR
+const toggleLeagueFavorite = (leagueName: string, event: Event) => {
+    event.stopPropagation();
+    favStore.toggleFavorite(leagueName, 'live'); 
+};
+
 // --- WEBSOCKET ---
 onMounted(async () => {
+  favStore.fetchFavorites();
+  
   await fetchInitialData();
   
   const signalRUrl = "/gameHub";
@@ -181,8 +200,7 @@ onUnmounted(() => { if (connection) connection.stop(); });
 
 // --- COMPUTED ---
 
-// 🔥 1. LISTA LIMPA (SEM ZUMBIS) - Base para tudo
-// Filtra apenas jogos que NÃO terminaram. Não aplica filtro de esporte ainda.
+// 1. LISTA ATIVA (SEM JOGOS ENCERRADOS)
 const activeEvents = computed(() => {
     return events.value.filter(e => 
         e.period !== 'Ended' && 
@@ -192,8 +210,7 @@ const activeEvents = computed(() => {
     );
 });
 
-// 🔥 2. DADOS DO MENU (Baseado na lista completa limpa)
-// Usa 'activeEvents' para contar todos os jogos disponíveis, independente do filtro atual.
+// 2. DADOS DO MENU
 const liveSportsData = computed(() => {
     const keys = new Set<string>();
     const counts: Record<string, number> = {};
@@ -210,21 +227,40 @@ const liveSportsData = computed(() => {
 
 const handleMenuSelect = (key: string) => { selectedSport.value = key; };
 
-// 🔥 3. LISTA VISÍVEL (Filtrada pelo menu selecionado)
-// Aplica o filtro de esporte APENAS para o que é exibido na lista de jogos.
+// 3. LISTA VISÍVEL (Filtrada pelo menu)
 const filteredEvents = computed(() => {
     if (selectedSport.value === 'all') return activeEvents.value;
     return activeEvents.value.filter(e => getSportCategory(e) === selectedSport.value);
 });
 
-const groupedEvents = computed(() => {
+// 4. GRUPOS ORDENADOS POR FAVORITOS
+// 🔥 CORREÇÃO TS: Tipagem explícita <LeagueGroup[]> para evitar erros no template
+const sortedGroups = computed<LeagueGroup[]>(() => {
   const groups: Record<string, LiveGame[]> = {};
+  
   filteredEvents.value.forEach(game => {
     const league = game.league || 'Outros';
     if (!groups[league]) groups[league] = [];
     groups[league].push(game);
   });
-  return groups;
+
+  const result = Object.keys(groups).map(league => {
+      // ✅ Garante que sempre acessamos um array válido
+      const groupGames = groups[league] || [];
+      return {
+          league,
+          games: groupGames,
+          isFavorite: favStore.isFavorite(league),
+          // ✅ Safe access com optional chaining para evitar TS2532
+          countryCode: groupGames[0]?.countryCode 
+      };
+  });
+
+  return result.sort((a, b) => {
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
+      return a.league.localeCompare(b.league);
+  });
 });
 
 // --- HELPERS ---
@@ -252,14 +288,17 @@ const getBetTypes = (game: LiveGame) => {
 };
 const isNumericTime = (time: string) => time && /\d/.test(time);
 const getFlagUrl = (game: LiveGame | undefined) => {
-  if (!game) return '/images/flags/un.svg'; 
-  if (game.countryCode) return `/images/flags/${game.countryCode.toLowerCase()}.svg`;
+  if (game?.countryCode) return `/images/flags/${game.countryCode.toLowerCase()}.svg`;
   return '/images/flags/un.svg';
 };
 const getOddDirection = (game: LiveGame, type: string) => { if (type === '1') return game.homeOddDir; if (type === 'X') return game.drawOddDir; if (type === '2') return game.awayOddDir; return null; };
 const getOddFlash = (game: LiveGame, type: string) => { if (type === '1') return game.homeOddFlash; if (type === 'X') return game.drawOddFlash; if (type === '2') return game.awayOddFlash; return false; };
 const getOddRaw = (game: LiveGame, type: string) => { if (type === '1') return game.homeOdd; if (type === 'X') return game.drawOdd; if (type === '2') return game.awayOdd; return 0; };
-const getLeagueSelectionCount = (games: LiveGame[]) => {
+
+// ✅ Função helper para evitar erro TS2345 no template
+// Aceita (games: LiveGame[] | undefined), mas trata como array vazio se undefined
+const getLeagueSelectionCount = (games: LiveGame[] | undefined) => {
+    if (!games) return 0;
     return games.reduce((count, game) => {
         return count + (betStore.selections.some(s => s.id === game.gameId) ? 1 : 0);
     }, 0);
@@ -296,21 +335,40 @@ const getLeagueSelectionCount = (games: LiveGame[]) => {
                 <span class="text-xs font-bold">Nenhum jogo ao vivo nesta categoria.</span>
             </div>
             
-            <div v-else v-for="(games, league) in groupedEvents" :key="league" class="rounded overflow-hidden">
-                <div @click="openLeagues.has(String(league)) ? openLeagues.delete(String(league)) : openLeagues.add(String(league))" class="bg-stake-card/60 backdrop-blur-sm p-2 flex items-center justify-between border-l-2 border-stake-blue cursor-pointer hover:bg-stake-card transition-all select-none">
+            <div v-else v-for="group in sortedGroups" :key="group.league" class="rounded overflow-hidden">
+                
+                <div @click="openLeagues.has(group.league) ? openLeagues.delete(group.league) : openLeagues.add(group.league)" 
+                     class="bg-stake-card/60 backdrop-blur-sm p-2 flex items-center justify-between border-l-2 cursor-pointer hover:bg-stake-card transition-all select-none"
+                     :class="group.isFavorite ? 'border-yellow-500 bg-yellow-500/5' : 'border-stake-blue'">
+                    
                     <div class="flex items-center gap-2">
-                        <img :src="getFlagUrl(games[0])" class="w-4 h-3 rounded-[1px] shadow-sm" @error="handleImageError" />
-                        <h3 class="text-white font-bold text-xs uppercase tracking-wide">{{ league }}</h3>
+                        <button 
+                            @click="toggleLeagueFavorite(group.league, $event)"
+                            class="p-1 rounded hover:bg-white/5 transition-all transform active:scale-95 group/star"
+                        >
+                            <Star 
+                                class="w-3.5 h-3.5 transition-colors duration-200" 
+                                :class="group.isFavorite 
+                                    ? 'text-yellow-400 fill-yellow-400' 
+                                    : 'text-gray-500 fill-transparent group-hover/star:text-yellow-200'" 
+                            />
+                        </button>
+
+                        <img :src="getFlagUrl(group.games[0])" class="w-4 h-3 rounded-[1px] shadow-sm" @error="handleImageError" />
                         
-                        <span v-if="getLeagueSelectionCount(games) > 0" class="text-[10px] text-black font-bold bg-yellow-400 px-1.5 py-0.5 rounded-full shadow-sm animate-pulse">
-                            {{ getLeagueSelectionCount(games) }}
+                        <h3 class="text-white font-bold text-xs uppercase tracking-wide" :class="group.isFavorite ? 'text-yellow-100' : ''">
+                            {{ group.league }}
+                        </h3>
+                        
+                        <span v-if="getLeagueSelectionCount(group.games) > 0" class="text-[10px] text-black font-bold bg-yellow-400 px-1.5 py-0.5 rounded-full shadow-sm animate-pulse">
+                            {{ getLeagueSelectionCount(group.games) }}
                         </span>
                     </div>
-                    <component :is="openLeagues.has(String(league)) ? ChevronDown : ChevronRight" class="w-4 h-4 text-stake-text" />
+                    <component :is="openLeagues.has(group.league) ? ChevronDown : ChevronRight" class="w-4 h-4 text-stake-text" />
                 </div>
 
-                <div v-show="openLeagues.has(String(league))" class="bg-stake-dark border-x border-b border-stake-card/20">
-                    <div v-for="game in games" :key="game.gameId" class="py-2 px-2 border-b border-white/5 flex flex-col md:flex-row items-center gap-2 transition-all relative group hover:bg-[#B6FF00]/[0.02]">
+                <div v-show="openLeagues.has(group.league)" class="bg-stake-dark border-x border-b border-stake-card/20">
+                    <div v-for="game in group.games" :key="game.gameId" class="py-2 px-2 border-b border-white/5 flex flex-col md:flex-row items-center gap-2 transition-all relative group hover:bg-[#B6FF00]/[0.02]">
                         
                         <div class="flex flex-row md:flex-col items-center justify-start md:justify-center gap-2 md:gap-0.5 min-w-[60px] md:w-[60px] text-left md:text-center mr-2 md:mr-0 border-r md:border-r-0 md:border-b-0 border-white/10 pr-2 md:pr-0 h-full">
                             
