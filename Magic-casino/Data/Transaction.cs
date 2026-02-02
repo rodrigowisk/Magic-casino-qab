@@ -1,6 +1,6 @@
-﻿using System;
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using Magic_casino.Models;
 
 namespace Magic_casino.Data
 {
@@ -12,19 +12,16 @@ namespace Magic_casino.Data
         [Column("id")]
         public int Id { get; set; }
 
-        // Referência externa (ID do PIX na Velana)
         [Column("external_reference")]
         public string? ExternalReference { get; set; }
 
-        // CPF do Usuário (Relacionamento)
         [Required]
         [Column("user_cpf")]
         public string UserCpf { get; set; } = string.Empty;
 
-        [Column("amount", TypeName = "numeric")]
+        [Column("amount")]
         public decimal Amount { get; set; }
 
-        // Status: pending, paid, canceled, failed
         [Column("status")]
         public string Status { get; set; } = "pending";
 
@@ -34,7 +31,17 @@ namespace Magic_casino.Data
         [Column("paid_at")]
         public DateTime? PaidAt { get; set; }
 
-        // Relacionamento opcional com o Usuário
+        [Column("description")]
+        public string? Description { get; set; }
+
+        // ✅ CORREÇÃO: Agora mapeamos porque vimos no print que elas existem!
+        [Column("type")]
+        public string? Type { get; set; }
+
+        [Column("source")]
+        public string? Source { get; set; }
+
+        // Relacionamento
         [ForeignKey("UserCpf")]
         public virtual User? User { get; set; }
     }

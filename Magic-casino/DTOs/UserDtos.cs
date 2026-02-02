@@ -17,19 +17,22 @@
         public string? Agent_code { get; set; }
     }
 
+    // ✅ NOVO MODELO: ALTERAR SENHA (ADICIONEI AQUI)
+    public class ChangePasswordRequest
+    {
+        public string CurrentPassword { get; set; } = string.Empty;
+        public string NewPassword { get; set; } = string.Empty;
+    }
+
     // Modelo de RESPOSTA PADRÃO
     public class AuthResponse
     {
         public int Status { get; set; }
         public string Msg { get; set; } = string.Empty;
         public string Code { get; set; } = string.Empty;
-
-        // --- ADICIONEI ESTE CAMPO AQUI PARA CORRIGIR O ERRO ---
         public string? Name { get; set; }
-
         public bool Is_admin { get; set; }
         public bool Is_affiliate { get; set; }
-
         public string Token { get; set; } = string.Empty;
 
         // --- CAMPOS DE SALDO ---

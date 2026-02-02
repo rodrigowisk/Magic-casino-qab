@@ -1,6 +1,8 @@
 ﻿using BCrypt.Net;
 using Magic_casino.Data;
 using Magic_casino.DTOs;
+using Magic_casino.Events; // ✅ Necessário para o evento
+using MassTransit; // ✅ Necessário para IPublishEndpoint
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -17,11 +19,14 @@ namespace Magic_casino.Controllers
     {
         private readonly AppDbContext _context;
         private readonly IConfiguration _config;
+        private readonly IPublishEndpoint _publishEndpoint; // ✅ Injeção do RabbitMQ
 
-        public UsersController(AppDbContext context, IConfiguration config)
+        // ✅ Construtor atualizado recebendo IPublishEndpoint
+        public UsersController(AppDbContext context, IConfiguration config, IPublishEndpoint publishEndpoint)
         {
             _context = context;
             _config = config;
+            _publishEndpoint = publishEndpoint;
         }
 
         // --- CADASTRO ---
@@ -60,6 +65,17 @@ namespace Magic_casino.Controllers
                 _context.Users.Add(newUser);
                 _context.Wallets.Add(newWallet);
                 await _context.SaveChangesAsync();
+
+                // =========================================================
+                // 🚀 PUBLICAR EVENTO DE BOAS-VINDAS NO RABBITMQ
+                // =========================================================
+                await _publishEndpoint.Publish(new UserRegisteredEvent
+                {
+                    Name = newUser.Name,
+                    Email = newUser.Email ?? "sem-email@sistema",
+                    Cpf = newUser.Cpf,
+                    RegisteredAt = DateTime.UtcNow
+                });
             }
             catch (Exception ex)
             {
@@ -138,6 +154,51 @@ namespace Magic_casino.Controllers
             return Unauthorized(new { error = "CPF ou senha inválidos" });
         }
 
+
+        [HttpPost("change-password")]
+        [Authorize]
+        public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
+        {
+            try
+            {
+                // 1. Pega o CPF do Token (igual ao Update e Profile)
+                var userCpf = User.FindFirst("cpf")?.Value ?? User.Identity?.Name;
+
+                if (string.IsNullOrEmpty(userCpf))
+                {
+                    return Unauthorized(new { message = "Sessão inválida. Faça login novamente." });
+                }
+
+                // 2. Busca o usuário no banco pelo CPF
+                var user = await _context.Users.FirstOrDefaultAsync(u => u.Cpf == userCpf);
+
+                if (user == null)
+                    return NotFound(new { message = "Usuário não encontrado." });
+
+                // 3. Verifica se a SENHA ATUAL está correta
+                bool senhaConfere = BCrypt.Net.BCrypt.Verify(request.CurrentPassword, user.Password);
+
+                if (!senhaConfere)
+                    return BadRequest(new { message = "A senha atual está incorreta." });
+
+                // 4. Gera o Hash da NOVA SENHA e salva
+                user.Password = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+
+                _context.Users.Update(user);
+                await _context.SaveChangesAsync();
+
+                return Ok(new { message = "Senha alterada com sucesso!" });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Erro ao trocar senha: {ex.Message}");
+                return StatusCode(500, new { message = "Erro interno ao atualizar senha." });
+            }
+        }
+
+
+
+
         // --- SALDO ---
         [Authorize]
         [HttpGet("my-balance")]
@@ -150,6 +211,85 @@ namespace Magic_casino.Controllers
             var wallet = await _context.Wallets.FirstOrDefaultAsync(w => w.UserCpf == cpf);
             return Ok(new { balance = wallet?.BalanceQab ?? 0 });
         }
+
+
+
+        private string DetermineType(string desc)
+        {
+            if (string.IsNullOrEmpty(desc)) return "sportbook";
+
+            desc = desc.ToLower();
+            if (desc.Contains("depósito") || desc.Contains("deposito")) return "deposit";
+            if (desc.Contains("saque") || desc.Contains("withdraw")) return "withdraw";
+            if (desc.Contains("aposta") && desc.Contains("prêmio")) return "win";
+            if (desc.Contains("aposta")) return "bet";
+            if (desc.Contains("torneio")) return "tournament";
+            return "sportbook";
+        }
+
+
+        [Authorize]
+        [HttpGet("transactions")]
+        public async Task<IActionResult> GetTransactions()
+        {
+            try
+            {
+                // 1. Pega CPF limpo (sem pontos/traços se no banco estiver apenas números)
+                var userCpf = User.FindFirst("cpf")?.Value ?? User.Identity?.Name;
+                if (string.IsNullOrEmpty(userCpf)) return Unauthorized();
+
+                // 2. Busca no banco
+                var dbTransactions = await _context.Transactions
+                    .Where(t => t.UserCpf == userCpf)
+                    .OrderByDescending(t => t.CreatedAt)
+                    .Take(50)
+                    .ToListAsync();
+
+                var result = dbTransactions.Select(t => new
+                {
+                    id = "#" + t.Id,
+                    amount = t.Amount,
+                    date = t.CreatedAt,
+                    status = t.Status.ToLower(),
+                    method = t.Description ?? t.Source ?? "Transação", // Prioriza descrição, depois source
+
+                    // ✅ LÓGICA HÍBRIDA: Usa o Type do banco. Se vier nulo, tenta descobrir pela descrição.
+                    type = !string.IsNullOrEmpty(t.Type) ? t.Type.ToLower() : DetermineType(t.Description ?? "")
+                });
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Erro ao carregar histórico." });
+            }
+        }
+
+
+        // --- PERFIL (NOVO) ---
+        [Authorize]
+        [HttpGet("profile")]
+        public async Task<IActionResult> GetProfile()
+        {
+            // Pega o CPF do token
+            var userCpf = User.FindFirst("cpf")?.Value ?? User.Identity?.Name;
+
+            if (string.IsNullOrEmpty(userCpf)) return Unauthorized();
+
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Cpf == userCpf);
+
+            if (user == null) return NotFound("Usuário não encontrado.");
+
+            // Retorna todos os dados editáveis + CPF
+            return Ok(new
+            {
+                cpf = user.Cpf,
+                name = user.Name,
+                email = user.Email,
+                phone = user.Phone
+            });
+        }
+
 
         // --- UPDATE ---
         [Authorize]

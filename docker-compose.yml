@@ -21,6 +21,27 @@ services:
       - "6379:6379"
     command: redis-server --save "" --appendonly no
   
+ # 🐰 RABBITMQ (NOVO SERVIÇO DE FILAS)
+  rabbitmq:
+    image: masstransit/rabbitmq:latest
+    container_name: rabbit
+    ports:
+      - "5672:5672"   # Porta de comunicação (AMQP)
+      - "15672:15672" # Painel de Gestão (http://localhost:15672)
+    environment:
+      - RABBITMQ_DEFAULT_USER=admin
+      - RABBITMQ_DEFAULT_PASS=admin
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    restart: always
+    # 👇 O SEGREDO PARA NÃO DAR ERRO NO CORE 👇
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   # ✅ CORE (Backend Principal)
   core:
     build:
@@ -36,13 +57,18 @@ services:
       Jwt__Audience: "${JWT_AUDIENCE}"
       VELANA_API_KEY: "${VELANA_API_KEY}"
       MY_API_URL: "${MY_API_URL}"
+      # Configuração para conectar no RabbitMQ
+      RABBITMQ_HOST: "rabbitmq"
+      RABBITMQ_USER: "admin"
+      RABBITMQ_PASS: "admin"
     expose:
       - "8080"
     restart: always
     depends_on:
       - redis
+      - rabbitmq
 
-  # ✅ SPORTBOOK (CORRIGIDO AQUI)
+  # ✅ SPORTBOOK
   sportbook:
     build:
       context: .
@@ -51,11 +77,7 @@ services:
     container_name: sportbook
     environment:
       ASPNETCORE_ENVIRONMENT: "Development"
-      
-      # 🔥 CORREÇÃO: Variável exata que o Program.cs procura
       REDIS_CONNECTION_STRING: "redis:6379,abortConnect=false"
-      
-      # Mantemos a antiga por segurança
       ConnectionStrings__Redis: "redis:6379"
       ConnectionStrings__DefaultConnection: "${DB_CONN_SPORTBOOK}"
       OddsApiKey: "${ODDS_API_KEY}"
@@ -103,3 +125,7 @@ services:
       - core
       - slot
     restart: always
+
+# Volumes persistentes
+volumes:
+  rabbitmq_data:

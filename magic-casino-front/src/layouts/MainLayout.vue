@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
+// ✅ Removi o 'Gift' da importação pois usaremos um SVG personalizado
 import { Menu, Search, Trophy, ChevronLeft, Loader2, X, MapPin, Calendar } from 'lucide-vue-next';
-// Removido axios não utilizado
 import SportsService from '../services/SportsService'; 
 
 import Sidebar from '../components/Sidebar.vue'; 
@@ -22,9 +22,8 @@ const isSidebarOpen = ref(true);
 
 // --- LÓGICA DO MODAL DE AUTENTICAÇÃO ---
 const showAuthModal = ref(false);
-const authModalTab = ref<'login' | 'register'>('login'); // Define qual aba abre
+const authModalTab = ref<'login' | 'register'>('login');
 
-// Função que abre o modal na aba correta
 const openAuthModal = (tab: 'login' | 'register') => {
     authModalTab.value = tab;
     showAuthModal.value = true;
@@ -47,7 +46,6 @@ const formatDate = (dateString: string) => {
            date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 };
 
-// Função segura para pegar o ID
 const getEventId = (item: any) => {
     if (!item) return null;
     return item.externalId || item.ExternalId || item.id || item.Id || item.eventId || item.gameId;
@@ -67,7 +65,6 @@ const handleInput = () => {
 
     searchTimeout = setTimeout(async () => {
         try {
-            // Busca Local
             const events = await SportsService.getEvents('soccer', 1, 300);
             
             if (events && Array.isArray(events)) {
@@ -254,8 +251,29 @@ onUnmounted(() => {
       </div>
 
       <div class="flex items-center gap-3">
-        <div v-if="authStore.user" class="flex items-center gap-3">
+        <div v-if="authStore.user" class="flex items-center gap-4">
+            
+            <button 
+                @click="router.push('/promocoes')" 
+                class="relative group transition-all duration-300 transform hover:scale-110"
+                title="Bônus e Recompensas"
+            >
+                <div class="absolute inset-0 bg-green-500/40 blur-lg rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="relative z-10 drop-shadow-lg filter">
+                    <path d="M4 10H20V20C20 21.1046 19.1046 22 18 22H6C4.89543 22 4 21.1046 4 20V10Z" fill="#22c55e" stroke="#166534" stroke-width="1.5"/>
+                    <path d="M2 6H22V10H2V6Z" fill="#4ade80" stroke="#166534" stroke-width="1.5"/>
+                    <path d="M11 10H13V22H11V10Z" fill="#ef4444"/>
+                    <path d="M11 6H13V10H11V6Z" fill="#ef4444"/>
+                    <path d="M12 6C12 6 9 2 6 4C3 6 6 6 12 6Z" fill="#ef4444" stroke="#991b1b" stroke-width="1"/>
+                    <path d="M12 6C12 6 15 2 18 4C21 6 18 6 12 6Z" fill="#ef4444" stroke="#991b1b" stroke-width="1"/>
+                </svg>
+                
+                <span class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-[#1e293b] z-20 animate-pulse shadow-md"></span>
+            </button>
+
             <WalletDropdown :balance="authStore.user.balance || 0" />
+            
             <UserDropdown />
         </div>
         <div v-else class="flex items-center gap-3">

@@ -2,10 +2,12 @@
 {
     public class WalletTransactionDto
     {
-        // ✅ Definido como string para aceitar o CPF
         public string UserCpf { get; set; } = string.Empty;
         public decimal Amount { get; set; }
-        public string Source { get; set; } = "Sportbook";
-        public string ReferenceId { get; set; }
+
+        // Campos adicionais necessários para o registro
+        public string? Source { get; set; }      // Ex: "Sportbook"
+        public string? ReferenceId { get; set; } // UUID da aposta
+        public string? Type { get; set; }        // Ex: "bet", "win", "refund"
     }
 }

@@ -136,7 +136,7 @@ onUnmounted(() => {
 
             <div class="h-px bg-gray-700/50 mx-2 my-1"></div>
 
-            <button @click="navigateTo('/historico')" class="flex items-center gap-3 w-full px-3 py-2 text-sm font-medium text-gray-400 hover:text-white hover:bg-[#0f172a] rounded-lg group transition-all">
+            <button @click="navigateTo('/transactions')" class="flex items-center gap-3 w-full px-3 py-2 text-sm font-medium text-gray-400 hover:text-white hover:bg-[#0f172a] rounded-lg group transition-all">
               <History class="w-4 h-4 text-gray-500 group-hover:text-white" />
               Histórico
             </button>

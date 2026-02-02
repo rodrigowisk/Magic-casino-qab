@@ -69,14 +69,12 @@ const handleLogout = () => {
 };
 
 const handleClickOutside = (event: MouseEvent) => {
-  // Se o menu não estiver aberto, não faz nada
   if (!isOpen.value) return;
 
   const target = event.target as Node;
   const clickedInsideMenu = dropdownRef.value?.contains(target);
   const clickedInsideTrigger = triggerRef.value?.contains(target);
   
-  // Só fecha se o clique NÃO foi no menu E NÃO foi no botão que abre este menu
   if (!clickedInsideMenu && !clickedInsideTrigger) {
     closeMenu();
   }
@@ -128,12 +126,17 @@ onUnmounted(() => {
           :style="menuStyle"
           class="fixed bg-[#1e293b] border border-gray-700 rounded-xl shadow-2xl z-[9999] overflow-hidden ring-1 ring-black/50"
         >
+          
+          <div class="px-4 py-3 bg-[#15222b] border-b border-gray-700/50">
+            <p class="text-[12px] text-gray-500 font-bold tracking-wider mb-0.5">Bem-vindo {{ authStore.user?.name || 'Visitante' }}!</p>
+          </div>
+
           <div class="p-1.5 space-y-1">
-            <button @click="navigateTo('/perfil')" class="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-gray-300 hover:text-white hover:bg-[#0f172a] rounded-lg group transition-all">
+            <button @click="navigateTo('/profile')" class="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-gray-300 hover:text-white hover:bg-[#0f172a] rounded-lg group transition-all">
               <User class="w-4 h-4 text-gray-500 group-hover:text-blue-400" />
               Editar Perfil
             </button>
-            <button @click="navigateTo('/senha')" class="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-gray-300 hover:text-white hover:bg-[#0f172a] rounded-lg group transition-all">
+            <button @click="navigateTo('/profile?tab=security')" class="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-gray-300 hover:text-white hover:bg-[#0f172a] rounded-lg group transition-all">
               <Lock class="w-4 h-4 text-gray-500 group-hover:text-yellow-400" />
               Alterar Senha
             </button>
@@ -142,7 +145,7 @@ onUnmounted(() => {
               <Dices class="w-4 h-4 text-gray-500 group-hover:text-purple-400" />
               Minhas Apostas
             </button>
-            <button @click="navigateTo('/transacoes')" class="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-gray-300 hover:text-white hover:bg-[#0f172a] rounded-lg group transition-all">
+            <button @click="navigateTo('/transactions')" class="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-gray-300 hover:text-white hover:bg-[#0f172a] rounded-lg group transition-all">
               <FileText class="w-4 h-4 text-gray-500 group-hover:text-green-400" />
               Histórico de Transações
             </button>

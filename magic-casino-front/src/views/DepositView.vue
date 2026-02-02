@@ -2,11 +2,10 @@
 import { ref, watch, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import axios from 'axios';
-// 1. IMPORTAMOS O GERADOR DE QR CODE AQUI
 import QrcodeVue from 'qrcode.vue';
 import { 
   ArrowLeft, Wallet, CheckCircle2, Copy, Loader2, AlertCircle, 
-  User, Mail, Fingerprint, Pencil 
+  User, Mail, Fingerprint, Pencil, QrCode
 } from 'lucide-vue-next';
 import { useAuthStore } from '../stores/useAuthStore';
 
@@ -54,11 +53,11 @@ const handleDeposit = async () => {
   error.value = '';
   
   if (!form.value.email || !form.value.email.includes('@')) {
-    error.value = 'E-mail inválido. Se não veio automático, digite manualmente.';
+    error.value = 'E-mail inválido.';
     return;
   }
   if (!form.value.cpf) {
-    error.value = 'CPF não encontrado. Tente sair e logar novamente.';
+    error.value = 'CPF não encontrado.';
     return;
   }
 
@@ -73,9 +72,6 @@ const handleDeposit = async () => {
     };
 
     const response = await axios.post('/core/api/Velana/deposit-pix', payload);
-    
-    // O console confirmou que a API manda a URL como NULL, mas manda o código
-    console.log("PIX GERADO:", response.data);
     pixResult.value = response.data.pix; 
     step.value = 2; 
 
@@ -103,90 +99,132 @@ const resetForm = () => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#0f172a] p-4 md:p-8 flex justify-center items-start pt-20">
-    <div class="w-full max-w-md bg-[#1e293b] border border-gray-700 rounded-2xl shadow-2xl overflow-hidden">
+  <div class="min-h-screen bg-[#0f212e] p-4 flex justify-center items-start pt-10 font-sans">
+    
+    <div class="w-full max-w-sm bg-[#1a2c38] border border-gray-700/50 rounded-xl shadow-2xl overflow-hidden animate-fade-in-up">
       
-      <div class="bg-[#0f172a]/50 p-4 border-b border-gray-700 flex items-center gap-3">
-        <button @click="router.back()" class="text-gray-400 hover:text-white transition-colors">
-          <ArrowLeft class="w-5 h-5" />
-        </button>
-        <h2 class="text-white font-bold text-lg flex items-center gap-2">
-          <Wallet class="w-5 h-5 text-green-400" />
-          Depósito via PIX
-        </h2>
+      <div class="bg-[#15222b] px-4 py-3 border-b border-gray-700/50 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <button @click="router.back()" class="text-gray-500 hover:text-white transition-colors">
+            <ArrowLeft class="w-4 h-4" />
+          </button>
+          <h2 class="text-white font-bold text-sm flex items-center gap-2">
+            <Wallet class="w-4 h-4 text-green-500" />
+            Depósito PIX
+          </h2>
+        </div>
+        <div class="flex items-center gap-1.5 px-2 py-0.5 bg-green-500/10 border border-green-500/20 rounded text-[10px] text-green-400 font-bold uppercase tracking-wider">
+          <QrCode class="w-3 h-3" />
+          Instantâneo
+        </div>
       </div>
 
-      <div class="p-6">
-        <div v-if="step === 1" class="space-y-6">
-          <div class="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50 flex flex-col gap-3 shadow-inner">
-            <div class="flex items-center gap-2 mb-2">
-                 <CheckCircle2 class="w-3 h-3 text-green-500" />
-                 <span class="text-[10px] text-gray-500 uppercase font-bold tracking-widest">Dados da Conta</span>
+      <div class="p-4">
+        
+        <div v-if="step === 1" class="space-y-4">
+          
+          <div class="bg-[#0f212e] rounded-lg p-3 border border-gray-700/50 flex flex-col gap-2">
+            <div class="flex items-center justify-between border-b border-gray-700/50 pb-1.5">
+              <div class="flex items-center gap-2 text-xs text-gray-300">
+                <User class="w-3.5 h-3.5 text-green-500" />
+                <span class="truncate max-w-[150px]">{{ form.name || 'Usuário' }}</span>
+              </div>
+              <span class="text-[9px] text-gray-500 font-mono uppercase">Titular</span>
             </div>
             
-            <div class="flex items-center gap-3 text-white font-medium text-sm border-b border-slate-700/50 pb-2">
-              <User class="w-4 h-4 text-green-400 shrink-0" />
-              <span class="truncate">{{ form.name || 'Usuário' }}</span>
-            </div>
-            
-            <div class="flex items-center gap-3 text-sm border-b border-slate-700/50 pb-2">
-              <Fingerprint class="w-4 h-4 text-gray-400 shrink-0" :class="{'text-yellow-400': !form.cpf}" />
-              <span v-if="form.cpf" class="font-mono tracking-wide text-xs text-gray-400">{{ form.cpf }}</span>
-              <input v-else v-model="form.cpf" type="text" class="bg-slate-900/80 border border-yellow-500/30 rounded px-2 py-1 text-white text-xs w-full focus:outline-none focus:border-yellow-500 font-mono" placeholder="Digite seu CPF" />
-              <Pencil v-if="!form.cpf" class="w-3 h-3 text-yellow-500 animate-pulse ml-auto" />
+            <div class="flex items-center justify-between border-b border-gray-700/50 pb-1.5">
+              <div class="flex items-center gap-2 text-xs">
+                <Fingerprint class="w-3.5 h-3.5 text-gray-500" />
+                <span v-if="form.cpf" class="font-mono text-gray-300">{{ form.cpf }}</span>
+                <input v-else v-model="form.cpf" type="text" class="bg-transparent border-b border-yellow-500/50 text-white w-32 focus:outline-none text-xs" placeholder="CPF..." />
+              </div>
+              <Pencil v-if="!form.cpf" class="w-3 h-3 text-yellow-500" />
             </div>
 
-            <div class="flex items-center gap-3 text-sm">
-              <Mail class="w-4 h-4 text-gray-400 shrink-0" :class="{'text-yellow-400': !form.email}" />
-              <span v-if="form.email" class="text-gray-400 text-xs truncate">{{ form.email }}</span>
-              <input v-else v-model="form.email" type="email" class="bg-slate-900/80 border border-yellow-500/30 rounded px-2 py-1 text-white text-xs w-full focus:outline-none focus:border-yellow-500 placeholder-gray-500" placeholder="Digite seu e-mail" />
-              <Pencil v-if="!form.email" class="w-3 h-3 text-yellow-500 animate-pulse ml-auto" />
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2 text-xs">
+                <Mail class="w-3.5 h-3.5 text-gray-500" />
+                <span v-if="form.email" class="text-gray-300 truncate max-w-[180px]">{{ form.email }}</span>
+                <input v-else v-model="form.email" type="email" class="bg-transparent border-b border-yellow-500/50 text-white w-40 focus:outline-none text-xs" placeholder="E-mail..." />
+              </div>
+              <Pencil v-if="!form.email" class="w-3 h-3 text-yellow-500" />
             </div>
           </div>
 
           <div>
-            <label class="block text-gray-400 text-xs font-bold uppercase mb-2">Quanto você quer depositar?</label>
+            <label class="block text-gray-500 text-[10px] font-bold uppercase mb-1.5 pl-1">Valor do Depósito</label>
             <div class="relative group">
-              <span class="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 font-bold text-xl group-focus-within:text-green-500 transition-colors">R$</span>
-              <input v-model="form.amount" type="text" class="w-full bg-[#0f172a] border border-gray-600 rounded-xl py-4 pl-12 pr-4 text-white font-bold text-2xl focus:ring-2 focus:ring-green-500/50 focus:border-green-500 outline-none transition-all placeholder-gray-600" placeholder="0,00" />
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-bold text-sm group-focus-within:text-green-500 transition-colors">R$</span>
+              <input 
+                v-model="form.amount" 
+                type="text" 
+                class="w-full bg-[#0f212e] border border-gray-600 rounded-lg py-2.5 pl-9 pr-3 text-white font-bold text-lg focus:border-green-500 focus:ring-1 focus:ring-green-500/50 outline-none transition-all placeholder-gray-600 font-mono tracking-tight" 
+                placeholder="0,00" 
+              />
             </div>
           </div>
 
-          <button @click="handleDeposit" :disabled="loading" class="w-full bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-400 text-white font-bold py-4 rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all disabled:opacity-70">
-            <Loader2 v-if="loading" class="w-6 h-6 animate-spin" />
-            <span v-else>GERAR PIX DE R$ {{ form.amount }}</span>
+          <button 
+            @click="handleDeposit" 
+            :disabled="loading" 
+            class="w-full bg-green-600 hover:bg-green-500 text-white font-bold text-xs py-3 rounded-lg shadow-lg shadow-green-900/20 flex items-center justify-center gap-2 transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed uppercase tracking-wide"
+          >
+            <Loader2 v-if="loading" class="w-4 h-4 animate-spin" />
+            <span v-else>Gerar PIX</span>
           </button>
 
-          <div v-if="error" class="bg-red-500/10 border border-red-500/20 p-4 rounded-xl flex items-start gap-3 text-red-400 text-sm">
-            <AlertCircle class="w-5 h-5 shrink-0 mt-0.5" />
-            <span>{{ error }}</span>
+          <div v-if="error" class="bg-red-500/10 border border-red-500/20 p-2.5 rounded-lg flex items-start gap-2 text-red-400 text-xs">
+            <AlertCircle class="w-4 h-4 shrink-0 mt-0.5" />
+            <span class="leading-tight">{{ error }}</span>
           </div>
         </div>
 
-        <div v-else class="flex flex-col items-center animate-in fade-in zoom-in duration-300">
+        <div v-else class="flex flex-col items-center animate-fade-in text-center">
           
-          <div class="bg-white p-4 rounded-2xl mb-6 shadow-2xl ring-4 ring-white/5 flex items-center justify-center">
+          <div class="text-white font-bold text-sm mb-1">Pagamento Gerado!</div>
+          <p class="text-gray-400 text-[10px] mb-4">Escaneie ou copie o código abaixo.</p>
+
+          <div class="bg-white p-3 rounded-xl mb-4 shadow-lg ring-2 ring-white/10">
             <qrcode-vue 
               v-if="pixResult?.qrCode"
               :value="pixResult.qrCode" 
-              :size="220" 
-              level="H" 
+              :size="160" 
+              level="M" 
               render-as="svg"
             />
           </div>
 
-          <div class="w-full relative group">
-            <textarea readonly class="w-full bg-[#0f172a] border border-gray-600 rounded-xl p-4 text-xs text-gray-400 font-mono resize-none h-24 focus:outline-none" :value="pixResult?.qrCode"></textarea>
-            <button @click="copyPixCode" class="absolute bottom-3 right-3 bg-slate-700 hover:bg-slate-600 text-white text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all">
-              <CheckCircle2 v-if="copied" class="w-3.5 h-3.5 text-green-400" />
+          <div class="w-full bg-[#0f212e] border border-gray-700 rounded-lg p-2 flex items-center gap-2 mb-4 group relative overflow-hidden">
+            <div class="flex-1 overflow-hidden">
+              <p class="text-[10px] text-gray-500 font-mono truncate select-all">{{ pixResult?.qrCode }}</p>
+            </div>
+            <button 
+              @click="copyPixCode" 
+              class="shrink-0 bg-green-600 hover:bg-green-500 text-white p-1.5 rounded transition-colors"
+              title="Copiar"
+            >
+              <CheckCircle2 v-if="copied" class="w-3.5 h-3.5" />
               <Copy v-else class="w-3.5 h-3.5" />
-              {{ copied ? 'Copiado!' : 'Copiar' }}
             </button>
+            <div v-if="copied" class="absolute inset-0 bg-green-600/90 flex items-center justify-center text-white text-xs font-bold backdrop-blur-sm transition-all">
+              Copiado com sucesso!
+            </div>
           </div>
-          <button @click="resetForm" class="mt-8 text-gray-500 hover:text-white text-sm font-medium">Voltar</button>
+
+          <button @click="resetForm" class="text-gray-500 hover:text-white text-xs font-bold underline decoration-gray-600 underline-offset-4 transition-colors">
+            Voltar e depositar outro valor
+          </button>
         </div>
 
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.animate-fade-in-up { animation: fadeInUp 0.4s ease-out; }
+.animate-fade-in { animation: fadeIn 0.3s ease-out; }
+
+@keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+</style>

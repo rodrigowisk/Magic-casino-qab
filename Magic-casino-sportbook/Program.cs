@@ -8,6 +8,8 @@ using Microsoft.OpenApi.Models;
 using System.Text;
 using Magic_casino_sportbook.BackgroundServices;
 using StackExchange.Redis;
+using MassTransit; // ✅ Importante para RabbitMQ
+using Magic_casino_sportbook.Consumers; // ✅ Importante para achar o BetPlacedConsumer
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,11 +18,10 @@ Console.WriteLine(">>>>> SPORTBOOK API - SISTEMA UNIFICADO (BETS API) <<<<<");
 Console.WriteLine("#############################################################");
 
 // =============================================================
-// 1. DATABASE (CORREÇÃO: Prioridade para Variável de Ambiente)
+// 1. DATABASE
 // =============================================================
-// Tenta pegar do .ENV (Docker/AWS) primeiro. Se for nulo, tenta do appsettings/secrets (Local)
 var connectionString = Environment.GetEnvironmentVariable("DB_CONN_SPORTBOOK")
-                       ?? builder.Configuration.GetConnectionString("DefaultConnection");
+                        ?? builder.Configuration.GetConnectionString("DefaultConnection");
 
 if (string.IsNullOrEmpty(connectionString))
 {
@@ -34,18 +35,13 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 
 // =============================================================
-// 2. JWT CONFIGURATION 🔐 (CORREÇÃO: Pega do .ENV)
+// 2. JWT CONFIGURATION
 // =============================================================
-// Pega do .ENV ou usa um fallback (apenas para dev, nunca use fallback em prod)
 var jwtKey = Environment.GetEnvironmentVariable("JWT_SECRET")
-             ?? builder.Configuration["Jwt:Key"]
-             ?? "ChaveSecretaDoCassino2026SuperSeguraNaoMudeIsso";
+              ?? builder.Configuration["Jwt:Key"]
+              ?? "ChaveSecretaDoCassino2026SuperSeguraNaoMudeIsso";
 
-// >>>>> LOG DEBUG INICIO <<<<<
-Console.WriteLine("#############################################################");
-Console.WriteLine($"[DEBUG PROGRAM - STARTUP] Chave definida para VALIDACAO: '{jwtKey}'");
-Console.WriteLine("#############################################################");
-// >>>>> LOG DEBUG FIM <<<<<
+Console.WriteLine($"[DEBUG PROGRAM] Chave JWT definida.");
 
 var keyBytes = Encoding.UTF8.GetBytes(jwtKey);
 
@@ -62,8 +58,8 @@ builder.Services
             IssuerSigningKey = new SymmetricSecurityKey(keyBytes),
             ValidateLifetime = true,
             ClockSkew = TimeSpan.Zero,
-            ValidateIssuer = false, // Ajuste conforme necessário
-            ValidateAudience = false // Ajuste conforme necessário
+            ValidateIssuer = false,
+            ValidateAudience = false
         };
 
         options.Events = new JwtBearerEvents
@@ -116,33 +112,24 @@ builder.Services.AddCors(options =>
 builder.Services.AddControllers();
 
 // =============================================================
-// 4. REDIS CONFIGURATION (CACHE + SIGNALR) 🚀
+// 4. REDIS CONFIGURATION
 // =============================================================
-// CORREÇÃO: Busca exatamente o nome que definimos no .env ("REDIS_CONNECTION_STRING")
 var redisConnectionString = Environment.GetEnvironmentVariable("REDIS_CONNECTION_STRING")
-                            ?? Environment.GetEnvironmentVariable("REDIS_CONNECTION") // Fallback legado
+                            ?? Environment.GetEnvironmentVariable("REDIS_CONNECTION")
                             ?? "localhost:6379,abortConnect=false";
 
 Console.WriteLine($">>>>> REDIS TARGET: {redisConnectionString}");
 
-// 4.1. Injeta o Cliente Redis
 builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
 {
     var config = ConfigurationOptions.Parse(redisConnectionString);
     config.AbortOnConnectFail = false;
     config.ConnectRetry = 10;
     config.KeepAlive = 180;
-
-    // Importante para AWS:
-    if (redisConnectionString.Contains("ssl=true"))
-    {
-        config.Ssl = true;
-    }
-
+    if (redisConnectionString.Contains("ssl=true")) config.Ssl = true;
     return ConnectionMultiplexer.Connect(config);
 });
 
-// 4.2. SignalR Backplane
 builder.Services.AddSignalR()
     .AddStackExchangeRedis(redisConnectionString, options => {
         options.Configuration.ChannelPrefix = "SportbookUpdate";
@@ -182,6 +169,34 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 // =============================================================
+// ✅ 6. RABBITMQ (MASSTRANSIT) - CONFIGURAÇÃO ATUALIZADA
+// =============================================================
+builder.Services.AddMassTransit(x =>
+{
+    // 👇 Registra o consumidor que criamos
+    x.AddConsumer<BetPlacedConsumer>();
+    x.AddConsumer<BetWonConsumer>();
+
+    x.UsingRabbitMq((context, cfg) =>
+    {
+        var rabbitHost = Environment.GetEnvironmentVariable("RABBITMQ_HOST") ?? "rabbitmq";
+        var rabbitUser = Environment.GetEnvironmentVariable("RABBITMQ_USER") ?? "admin";
+        var rabbitPass = Environment.GetEnvironmentVariable("RABBITMQ_PASS") ?? "admin";
+
+        Console.WriteLine($">>>>> RABBITMQ CONFIG: Host={rabbitHost}, User={rabbitUser}");
+
+        cfg.Host(rabbitHost, "/", h =>
+        {
+            h.Username(rabbitUser);
+            h.Password(rabbitPass);
+        });
+
+        // Configura automaticamente os endpoints para os consumidores registrados
+        cfg.ConfigureEndpoints(context);
+    });
+});
+
+// =============================================================
 // ✅ SERVICES DE NEGÓCIO (DI)
 // =============================================================
 
@@ -191,7 +206,6 @@ builder.Services.AddHttpClient<PreMatchService>();
 builder.Services.AddScoped<LiveSportService>();
 builder.Services.AddSingleton<BetsApiGatekeeper>();
 
-// Seleção de Provedor de Odds
 string provider = Environment.GetEnvironmentVariable("ODDS_PROVIDER") ?? "BetsApi";
 
 if (provider == "BetsApi")
@@ -205,10 +219,8 @@ else
     builder.Services.AddScoped<IOddsService, TheOddsApiService>();
 }
 
-// Integração com Core
 builder.Services.AddHttpClient<CoreWalletService>(client =>
 {
-    // Tenta pegar URL do .env ou usa padrão Docker
     var coreUrl = Environment.GetEnvironmentVariable("CORE_API_URL") ?? "http://core:8080";
     client.BaseAddress = new Uri(coreUrl);
 });
@@ -252,8 +264,6 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var context = services.GetRequiredService<AppDbContext>();
-        // Tenta pegar migração. Se falhar conexão, não derruba o app inteiro na hora
-        // Mas loga o erro crítico
         if (context.Database.CanConnect())
         {
             context.Database.Migrate();

@@ -26,23 +26,35 @@ namespace Magic_casino.Controllers
             try
             {
                 var cleanCpf = request.Cpf.Replace(".", "").Replace("-", "").Trim();
+
+                // 1. Cria a transação PENDENTE no banco
                 var newTransaction = new Transaction
                 {
                     UserCpf = cleanCpf,
                     Amount = (decimal)request.Amount,
                     Status = "pending",
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = DateTime.UtcNow,
+
+                    // ✅ CORREÇÃO: Preenche os campos para o Histórico funcionar corretamente
+                    Type = "deposit",
+                    Source = "Pix",
+                    Description = "Depósito via PIX (Pendente)"
                 };
 
                 _context.Transactions.Add(newTransaction);
                 await _context.SaveChangesAsync();
 
+                // 2. Chama a Velana
                 var response = await _velanaService.CreatePixDepositAsync(
                     amountDouble: request.Amount,
                     userCpf: request.Cpf,
                     userName: request.Name,
                     userEmail: request.Email
                 );
+
+                // 3. Atualiza a transação com o ID da Velana para vincular depois
+                newTransaction.ExternalReference = response.Id.ToString();
+                await _context.SaveChangesAsync();
 
                 return Ok(response);
             }
@@ -53,7 +65,7 @@ namespace Magic_casino.Controllers
         }
 
         // =================================================================================
-        // 2. WEBHOOK INTELIGENTE (Lê dentro do 'data')
+        // 2. WEBHOOK INTELIGENTE
         // =================================================================================
         [HttpPost("webhook")]
         public async Task<IActionResult> ReceiveWebhook()
@@ -75,42 +87,27 @@ namespace Magic_casino.Controllers
                     NumberHandling = JsonNumberHandling.AllowReadingFromString
                 };
 
-                // 1. Tenta deserializar como WRAPPER (Formato Real da Velana)
-                // A Velana manda tudo dentro de uma propriedade "data"
+                // Lógica de Deserialização (Mantida a sua que já funciona)
                 VelanaWebhookDto payload = null;
-
                 try
                 {
                     var rootObject = JsonSerializer.Deserialize<VelanaWebhookRoot>(rawBody, options);
-                    if (rootObject?.Data != null)
-                    {
-                        payload = rootObject.Data;
-                        Console.WriteLine("[DEBUG] Payload extraído da propriedade 'data' (Formato Velana)");
-                    }
+                    if (rootObject?.Data != null) payload = rootObject.Data;
                 }
                 catch { }
 
-                // 2. Se falhar ou não tiver 'data', tenta deserializar DIRETO (Formato Postman Antigo)
                 if (payload == null || payload.Status == null)
                 {
                     payload = JsonSerializer.Deserialize<VelanaWebhookDto>(rawBody, options);
-                    Console.WriteLine("[DEBUG] Payload lido da raiz (Formato Postman)");
                 }
 
                 if (payload == null) return BadRequest("Falha ao ler JSON");
 
                 // --- LÓGICA DE PAGAMENTO ---
-
                 var status = payload.Status?.ToUpper() ?? "";
-                Console.WriteLine($"[DEBUG] Status Lido: '{status}'");
-
                 bool isPaid = (status == "PAID" || status == "COMPLETED" || status == "CONFIRMED" || status == "APPROVED");
 
-                if (!isPaid)
-                {
-                    Console.WriteLine($"[WEBHOOK IGNORADO] Status não é pago: {status}");
-                    return Ok(new { message = "Status ignorado" });
-                }
+                if (!isPaid) return Ok(new { message = "Status ignorado" });
 
                 // Busca CPF
                 var cpfUsuario = payload.ExternalReference ?? payload.Reference;
@@ -119,64 +116,63 @@ namespace Magic_casino.Controllers
                     cpfUsuario = payload.Customer.Document.Number;
                 }
 
-                if (string.IsNullOrEmpty(cpfUsuario))
-                {
-                    Console.WriteLine("[WEBHOOK ERRO] CPF não encontrado no JSON.");
-                    return Ok(new { message = "Erro de dados: CPF ausente" });
-                }
+                if (string.IsNullOrEmpty(cpfUsuario)) return Ok(new { message = "Erro de dados: CPF ausente" });
 
                 cpfUsuario = cpfUsuario.Replace(".", "").Replace("-", "").Trim();
 
-                // --- AJUSTE DE VALOR ---
-                decimal amountVal = payload.Amount;
+                // Busca a transação pendente pelo ExternalReference (ID da Velana) OU pelo CPF + Valor
+                // Prioriza o ID se tiver
+                Transaction transaction = null;
+                string externalId = payload.Id?.ToString() ?? "";
 
-                // Se vier 1000 (centavos) converte para 10.00
-                if (amountVal > 200 && amountVal % 1 == 0)
+                if (!string.IsNullOrEmpty(externalId))
                 {
-                    amountVal = amountVal / 100m;
+                    transaction = await _context.Transactions
+                        .FirstOrDefaultAsync(t => t.ExternalReference == externalId);
                 }
 
-                Console.WriteLine($"[WEBHOOK PROCESSANDO] CPF: {cpfUsuario}, Valor Lido: {payload.Amount}, Valor Ajustado: {amountVal}");
-
-                var transaction = await _context.Transactions
-                    .Where(t => t.UserCpf == cpfUsuario && t.Status == "pending")
-                    .OrderByDescending(t => t.CreatedAt)
-                    .FirstOrDefaultAsync();
+                // Fallback: Se não achou pelo ID, tenta pelo CPF + Pendente (último 10 min)
+                if (transaction == null)
+                {
+                    transaction = await _context.Transactions
+                        .Where(t => t.UserCpf == cpfUsuario && t.Status == "pending")
+                        .OrderByDescending(t => t.CreatedAt)
+                        .FirstOrDefaultAsync();
+                }
 
                 if (transaction == null)
                 {
-                    // Verifica se já processou
-                    bool jaPago = await _context.Transactions
-                       .AnyAsync(t => t.UserCpf == cpfUsuario && t.Status == "paid" && t.CreatedAt > DateTime.UtcNow.AddMinutes(-60));
-
-                    if (jaPago)
-                    {
-                        Console.WriteLine("[WEBHOOK] Pagamento já processado anteriormente.");
-                        return Ok(new { message = "Já processado" });
-                    }
-
-                    Console.WriteLine($"[WEBHOOK AVISO] Nenhuma transação pendente para {cpfUsuario}.");
-                    return NotFound("Nenhuma transação pendente encontrada.");
+                    Console.WriteLine($"[WEBHOOK AVISO] Nenhuma transação encontrada para processar.");
+                    // Retorna OK para a Velana parar de mandar, já que não temos o que processar
+                    return Ok(new { message = "Transação não encontrada ou já processada" });
                 }
 
-                transaction.Status = "paid";
+                // --- TRAVA DE DUPLICIDADE ---
+                if (transaction.Status == "paid" || transaction.Status == "COMPLETED")
+                {
+                    Console.WriteLine("[WEBHOOK] Pagamento já processado anteriormente.");
+                    return Ok(new { message = "Já processado" });
+                }
+
+                // --- PROCESSA O PAGAMENTO ---
+                transaction.Status = "COMPLETED"; // Padronizado com o sistema
                 transaction.PaidAt = DateTime.UtcNow;
-                if (payload.Id != null) transaction.ExternalReference = payload.Id.ToString();
+                transaction.Type = "deposit";
+                transaction.Source = "Pix";
+                transaction.Description = "Depósito via PIX (Confirmado)";
 
+                if (!string.IsNullOrEmpty(externalId)) transaction.ExternalReference = externalId;
+
+                // Credita na carteira
                 var wallet = await _context.Wallets.FirstOrDefaultAsync(w => w.UserCpf == cpfUsuario);
-
                 if (wallet != null)
                 {
-                    // Credita o valor da transação original (segurança contra erro de centavos)
                     wallet.BalanceQab += transaction.Amount;
-                    await _context.SaveChangesAsync();
-
-                    Console.WriteLine($"[SUCESSO ABSOLUTO] Creditado R$ {transaction.Amount} para {cpfUsuario}");
-                    return Ok(new { message = "Saldo creditado" });
+                    Console.WriteLine($"[SUCESSO] Creditado R$ {transaction.Amount} para {cpfUsuario}");
                 }
 
                 await _context.SaveChangesAsync();
-                return Ok(new { message = "Wallet não encontrada" });
+                return Ok(new { message = "Saldo creditado com sucesso" });
             }
             catch (Exception ex)
             {
@@ -187,17 +183,14 @@ namespace Magic_casino.Controllers
     }
 
     // ==========================================
-    // NOVOS DTOs (Adaptados para a Velana)
+    // DTOs (Mantidos)
     // ==========================================
-
-    // 1. Wrapper (A caixa "data")
     public class VelanaWebhookRoot
     {
         public string Type { get; set; }
         public VelanaWebhookDto Data { get; set; }
     }
 
-    // 2. Conteúdo Real
     public class VelanaWebhookDto
     {
         public string? Status { get; set; }

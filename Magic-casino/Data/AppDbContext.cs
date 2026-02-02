@@ -11,8 +11,6 @@ namespace Magic_casino.Data
         public DbSet<User> Users { get; set; }
         public DbSet<Wallet> Wallets { get; set; }
 
-        // --- ADICIONADO: Tabela de Transações ---
-        // Sem isso, o Controller não consegue salvar o histórico
         public DbSet<Transaction> Transactions { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)

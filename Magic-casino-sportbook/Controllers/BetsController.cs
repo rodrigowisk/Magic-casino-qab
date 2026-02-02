@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
+using MassTransit;
+using Magic_casino_sportbook.Events;
 
 namespace Magic_casino_sportbook.Controllers
 {
@@ -15,11 +17,13 @@ namespace Magic_casino_sportbook.Controllers
     {
         private readonly AppDbContext _context;
         private readonly CoreWalletService _walletService;
+        private readonly IPublishEndpoint _publishEndpoint;
 
-        public BetsController(AppDbContext context, CoreWalletService walletService)
+        public BetsController(AppDbContext context, CoreWalletService walletService, IPublishEndpoint publishEndpoint)
         {
             _context = context;
             _walletService = walletService;
+            _publishEndpoint = publishEndpoint;
         }
 
         [HttpGet("my-balance")]
@@ -259,6 +263,22 @@ namespace Magic_casino_sportbook.Controllers
             {
                 return StatusCode(500, new { error = "Erro ao salvar bilhete.", details = ex.Message });
             }
+
+            // =========================================================================
+            // 🚀 5. RABBITMQ: PUBLICA O EVENTO DE APOSTA REALIZADA (FIRE AND FORGET)
+            // =========================================================================
+            // Isso garante que outras partes do sistema saibam que a aposta aconteceu
+            // sem travar a resposta para o usuário.
+            await _publishEndpoint.Publish(new BetPlacedEvent
+            {
+                // 🔥 CORREÇÃO DE COMPILAÇÃO: Converte string ID para int
+                BetId = bet.Id,
+                UserCpf = bet.UserCpf,
+                Amount = bet.Amount,
+                PotentialReturn = bet.PotentialReturn,
+                SelectionsCount = bet.Selections.Count,
+                Timestamp = DateTime.UtcNow
+            });
 
             // 🔥 CORREÇÃO ERRO CS1061: Removido 'newBalance = result.NewBalance' pois a tupla não tem essa propriedade
             return Ok(new { status = 1, betId = bet.Id, message = "Aposta realizada com sucesso!" });

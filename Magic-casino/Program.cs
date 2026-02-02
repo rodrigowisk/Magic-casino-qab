@@ -1,10 +1,12 @@
 ﻿using Magic_casino.Data;
-using Magic_casino.Services; // Certifique-se que o VelanaService está neste namespace
+using Magic_casino.Services;
+using Magic_casino.Consumers; // ✅ Adicionado para o EmailConsumer
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using StackExchange.Redis; // ✅ Necessário para Cache Distribuído
+using StackExchange.Redis;
+using MassTransit; // ✅ Adicionado para RabbitMQ
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -109,6 +111,33 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
     return ConnectionMultiplexer.Connect(config);
 });
 
+// =============================================================
+// ✅ 5. RABBITMQ (MASSTRANSIT) - NOVO!
+// =============================================================
+builder.Services.AddMassTransit(x =>
+{
+    // Registra o consumidor de email
+    x.AddConsumer<EmailConsumer>();
+
+    x.UsingRabbitMq((context, cfg) =>
+    {
+        var rabbitHost = Environment.GetEnvironmentVariable("RABBITMQ_HOST") ?? "rabbitmq";
+        var rabbitUser = Environment.GetEnvironmentVariable("RABBITMQ_USER") ?? "admin";
+        var rabbitPass = Environment.GetEnvironmentVariable("RABBITMQ_PASS") ?? "admin";
+
+        Console.WriteLine($">>>>> RABBITMQ CORE CONFIG: Host={rabbitHost}, User={rabbitUser}");
+
+        cfg.Host(rabbitHost, "/", h =>
+        {
+            h.Username(rabbitUser);
+            h.Password(rabbitPass);
+        });
+
+        // Cria as filas automaticamente
+        cfg.ConfigureEndpoints(context);
+    });
+});
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 
@@ -121,7 +150,7 @@ builder.Services.AddHttpClient(); // Habilita chamadas HTTP genéricas
 builder.Services.AddHttpClient<VelanaService>();
 
 // =============================================================
-// 5. SWAGGER
+// 6. SWAGGER
 // =============================================================
 builder.Services.AddSwaggerGen(c =>
 {

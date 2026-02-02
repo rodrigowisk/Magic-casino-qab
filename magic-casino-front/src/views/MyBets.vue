@@ -104,15 +104,25 @@
                     <span v-if="sel.gameStatus === 'Live'" class="ml-2 text-[9px] font-bold text-red-500 animate-pulse bg-red-500/10 px-1.5 py-0.5 rounded border border-red-500/20">LIVE</span>
                   </div>
                   
-                  <div class="flex items-center flex-wrap gap-1.5 text-xs">
+                  <div class="flex items-center flex-wrap gap-2 text-xs">
+                    
                     <span class="text-slate-500 font-bold uppercase text-[10px] tracking-wide bg-slate-800/50 px-1.5 py-0.5 rounded">
                         {{ formatMarketName(sel.marketName) }}
                     </span>
-                    <span class="text-slate-600">👉</span>
+
+                    <div v-if="sel.status === 'Won'" class="flex items-center justify-center bg-green-500/10 w-4 h-4 rounded-full">
+                        <Check class="w-3 h-3 text-green-500" stroke-width="3" />
+                    </div>
+                    <div v-else-if="sel.status === 'Lost'" class="flex items-center justify-center bg-red-500/10 w-4 h-4 rounded-full">
+                        <X class="w-3 h-3 text-red-500" stroke-width="3" />
+                    </div>
+                    <span v-else class="text-slate-600">👉</span>
                     
-                    <span class="font-bold text-blue-400 border-b border-blue-400/20 pb-0.5">
+                    <span class="font-bold border-b pb-0.5"
+                          :class="getSelectionStatusClasses(sel.status)">
                         {{ getSelectionDisplay(sel) }}
                     </span>
+
                   </div>
 
                 </div>
@@ -154,6 +164,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
+import { Check, X } from 'lucide-vue-next'; // Ícones
 import BetService from '../services/BetService';
 
 interface BetSelection {
@@ -217,34 +228,33 @@ const formatMarketName = (name: string) => {
   return name;
 };
 
-// --- 🔥 NOVA FUNÇÃO: TRADUÇÃO DE SELEÇÃO NO HISTÓRICO 🔥 ---
+// --- TRADUÇÃO DE SELEÇÃO NO HISTÓRICO ---
 const getSelectionDisplay = (sel: BetSelection) => {
-    // Garante que matchName existe para evitar erro TS2532
     const matchName = sel.matchName || '';
     const parts = matchName.split(' x ');
     
     if (parts.length < 2) return sel.selectionName;
 
-    // ✅ CORREÇÃO TS: Usamos || '' para garantir que o retorno do array não seja undefined antes do trim()
     const homeTeam = (parts[0] || '').trim();
     const awayTeam = (parts[1] || '').trim();
     const rawSel = (sel.selectionName || '').toLowerCase().trim();
 
-    // 2. Mapeia a seleção para o nome do time
-    if (rawSel === '1' || rawSel === 'casa' || rawSel === 'home') {
-        return homeTeam;
-    }
-    if (rawSel === '2' || rawSel === 'fora' || rawSel === 'away') {
-        return awayTeam;
-    }
-    if (rawSel === 'x' || rawSel === 'empate' || rawSel === 'draw') {
-        return 'Empate';
-    }
+    if (rawSel === '1' || rawSel === 'casa' || rawSel === 'home') return homeTeam;
+    if (rawSel === '2' || rawSel === 'fora' || rawSel === 'away') return awayTeam;
+    if (rawSel === 'x' || rawSel === 'empate' || rawSel === 'draw') return 'Empate';
 
     return sel.selectionName;
 };
 
-// --- LÓGICA DE STATUS ---
+// --- CORES DINÂMICAS PARA A SELEÇÃO (NOME DO TIME) ---
+const getSelectionStatusClasses = (status: string) => {
+    const s = (status || '').toLowerCase();
+    if (s === 'won') return 'text-green-400 border-green-500/20'; // Ganhou: Verde
+    if (s === 'lost') return 'text-red-400 border-red-500/20';     // Perdeu: Vermelho
+    return 'text-blue-400 border-blue-400/20';                     // Pendente: Azul
+};
+
+// --- LÓGICA DE STATUS GERAL DA APOSTA ---
 
 const getRealStatus = (bet: Bet): string => {
     const mainStatus = bet.status?.toLowerCase() || '';
