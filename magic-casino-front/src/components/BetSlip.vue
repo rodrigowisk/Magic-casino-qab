@@ -307,8 +307,6 @@ const submitBetToApi = async () => {
       selections: store.selections.map((s: any) => ({
         matchId: String(s.id).includes('_') ? String(s.id).split('_')[0] : String(s.id),
         matchName: `${s.homeTeam} x ${s.awayTeam}`,
-        // Enviamos '1', '2', 'X' para o backend (que vai traduzir antes de salvar no banco)
-        // Mantemos a consistência do protocolo
         selectionName: ['1', '2', 'X', 'x'].includes(s.type) ? s.type : s.selection,
         marketName: ['1', '2', 'X', 'x'].includes(s.type) ? '1x2' : (s.type || s.marketName || 'Mercado'), 
         odd: Number(s.odds || 0),
@@ -375,68 +373,52 @@ const submitBetToApi = async () => {
   <div class="flex flex-col h-full bg-[#0f172a] text-slate-300 font-sans border-l border-slate-800/50 shadow-2xl relative overflow-hidden">
     
     <div v-if="isProcessingLive" class="absolute inset-0 z-50 bg-black/60 backdrop-blur-[2px] flex items-center justify-center p-4 animate-in fade-in duration-200">
-        
         <div class="bg-[#1e293b] border border-white/10 shadow-2xl rounded-xl p-5 flex flex-col items-center w-full max-w-[240px] relative overflow-hidden">
-            
             <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-green-500 to-transparent opacity-50"></div>
-
             <div class="relative w-12 h-12 mb-3 flex items-center justify-center">
                 <svg class="w-full h-full -rotate-90 transform">
                     <circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="3" fill="transparent" class="text-slate-700" />
-                    <circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="3" fill="transparent" 
-                        :stroke-dasharray="2 * Math.PI * 20" 
-                        :stroke-dashoffset="progressDashoffset" 
-                        class="text-green-500 transition-all duration-1000 ease-linear" />
+                    <circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="3" fill="transparent" :stroke-dasharray="2 * Math.PI * 20" :stroke-dashoffset="progressDashoffset" class="text-green-500 transition-all duration-1000 ease-linear" />
                 </svg>
                 <Hourglass class="w-5 h-5 text-green-400 absolute animate-pulse" />
             </div>
-
             <div class="flex flex-col items-center gap-0.5 mb-4 text-center">
                 <h3 class="text-white font-bold text-sm">Processando...</h3>
                 <span class="text-slate-400 text-[10px] leading-tight">Aguarde enquanto processamos sua aposta</span>
             </div>
-
-            <div class="text-3xl font-mono font-black text-white mb-4 tracking-tighter">
-                {{ countdown }}<span class="text-xs text-slate-500 font-bold ml-0.5">s</span>
-            </div>
-
-            <button @click="cancelLiveProcessing" class="w-full flex items-center justify-center gap-2 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 rounded-lg font-bold text-[10px] uppercase tracking-wide transition-all active:scale-95">
-                <StopCircle class="w-3.5 h-3.5" /> Cancelar
-            </button>
+            <div class="text-3xl font-mono font-black text-white mb-4 tracking-tighter">{{ countdown }}<span class="text-xs text-slate-500 font-bold ml-0.5">s</span></div>
+            <button @click="cancelLiveProcessing" class="w-full flex items-center justify-center gap-2 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 rounded-lg font-bold text-[10px] uppercase tracking-wide transition-all active:scale-95"><StopCircle class="w-3.5 h-3.5" /> Cancelar</button>
         </div>
     </div>
 
     <div v-if="showCancelledOverlay" class="absolute inset-0 z-50 bg-black/60 backdrop-blur-[2px] flex items-center justify-center p-4 animate-in fade-in duration-200">
         <div class="bg-[#1e293b] border border-red-500/50 shadow-2xl rounded-xl p-6 flex flex-col items-center w-full max-w-[240px] relative overflow-hidden">
              <div class="absolute top-0 left-0 w-full h-1 bg-red-500 opacity-70"></div>
-             
-             <div class="bg-red-500/10 p-3 rounded-full mb-3 ring-1 ring-red-500/20">
-                 <AlertTriangle class="w-8 h-8 text-red-500 animate-bounce" />
-             </div>
-
+             <div class="bg-red-500/10 p-3 rounded-full mb-3 ring-1 ring-red-500/20"><AlertTriangle class="w-8 h-8 text-red-500 animate-bounce" /></div>
              <h3 class="text-white font-bold text-sm text-center mb-1">Processamento Cancelado</h3>
-             <p class="text-slate-400 text-[11px] text-center leading-tight">
-                 O cupom foi alterado durante o processamento. Tente novamente.
-             </p>
+             <p class="text-slate-400 text-[11px] text-center leading-tight">O cupom foi alterado durante o processamento. Tente novamente.</p>
         </div>
     </div>
 
     <div 
-        @click="emit('toggle')"
-        class="h-12 px-3 border-b border-slate-800 bg-[#1e293b] flex items-center justify-between cursor-pointer hover:bg-[#253248] transition-colors"
+        @click="emit('toggle')" 
+        class="h-12 px-3 border-b border-slate-800 bg-[#1e293b] flex items-center justify-between cursor-pointer hover:bg-[#253248] transition-colors relative border-t border-yellow-500/50 shadow-[0_-4px_15px_rgba(234,179,8,0.2)]"
     >
-      <div class="flex items-center gap-2">
-        <div class="bg-yellow-500/10 p-1 rounded">
-            <Trophy class="w-4 h-4 text-yellow-500" />
-        </div>
-        <h3 class="text-white font-bold text-sm uppercase tracking-wide">
-            Cupom
-        </h3>
-        <span v-if="store.count > 0" class="bg-blue-600 text-white text-[10px] px-1.5 rounded-full font-bold min-w-[18px] text-center">
-            {{ store.count }}
-        </span>
+      
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <div class="bg-yellow-500/10 p-1 rounded"><Trophy class="w-4 h-4 text-yellow-500" /></div>
+        <h3 class="text-white font-bold text-sm uppercase tracking-wide">Cupom</h3>
+        <span v-if="store.count > 0" class="bg-blue-600 text-white text-[10px] px-1.5 rounded-full font-bold min-w-[18px] text-center">{{ store.count }}</span>
       </div>
-      <div class="flex items-center gap-3">
+
+      <div v-if="store.count > 0" class="md:hidden flex-1 flex justify-center items-center">
+          <span class="bg-blue-600/20 text-blue-400 text-[10px] font-bold uppercase px-3 py-1 rounded border border-blue-600/30 tracking-wider shadow-sm truncate max-w-[120px]">
+             {{ store.count === 1 ? 'Simples' : 'Múltipla' }}
+          </span>
+      </div>
+      <div v-else class="flex-1 md:flex-none"></div>
+
+      <div class="flex items-center gap-3 flex-shrink-0 ml-auto">
         <button v-if="store.count > 0" @click.stop="store.clearStore()" class="text-[10px] text-slate-400 hover:text-red-400 flex items-center gap-1 transition-colors uppercase font-bold tracking-wider">
             LIMPAR <Trash2 class="w-3 h-3" />
         </button>
@@ -444,133 +426,83 @@ const submitBetToApi = async () => {
       </div>
     </div>
 
+    <div v-if="store.count > 0" class="hidden md:flex bg-blue-600/10 border-b border-blue-600/20 py-1.5 justify-center items-center shadow-inner">
+         <span class="text-blue-400 text-[10px] font-bold uppercase tracking-widest">
+             {{ store.count === 1 ? 'Aposta Simples' : 'Aposta Múltipla' }}
+         </span>
+    </div>
+
     <div class="flex flex-col flex-1 overflow-hidden bg-[#0f172a]">
-        
         <div v-if="store.count === 0" class="flex-1 flex flex-col items-center justify-center opacity-40 p-6 text-center">
-            <div class="bg-slate-800/50 w-12 h-12 rounded-full flex items-center justify-center mb-3">
-                <Trophy class="w-6 h-6 text-slate-500" />
-            </div>
-            <p class="text-slate-400 text-xs font-bold uppercase tracking-wide">Cupom Vazio</p>
-            <p class="text-slate-600 text-[10px] mt-1">Selecione odds para começar</p>
+            <Trophy class="w-10 h-10 text-slate-500 mb-2" />
+            <p class="text-slate-400 text-xs font-bold uppercase">Cupom Vazio</p>
         </div>
 
-        <div 
-            v-else 
-            ref="selectionsContainer"
-            class="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar"
-        >
-            <div class="sticky top-0 z-10 flex justify-center mb-2 pointer-events-none">
-                <span class="bg-blue-600/90 backdrop-blur text-white text-[9px] font-black uppercase tracking-widest px-3 py-0.5 rounded shadow-lg border border-blue-400/20">
-                    {{ store.count === 1 ? 'Aposta Simples' : 'Múltipla (' + store.count + ')' }}
-                </span>
-            </div>
-
-            <div v-for="item in store.selections" :key="item.id" class="bg-[#1e293b] rounded border border-slate-700/50 hover:border-slate-600 transition-all group relative overflow-hidden">
-                
-                <button @click="store.removeSelection(item.id)" class="absolute top-0 right-0 p-1.5 text-slate-600 hover:text-red-500 transition-colors z-10 opacity-0 group-hover:opacity-100">
-                    <X class="w-3.5 h-3.5" />
-                </button>
-
+        <div v-else ref="selectionsContainer" class="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
+            <div v-for="item in store.selections" :key="item.id" class="bg-[#1e293b] rounded border border-slate-700/50 relative overflow-hidden group">
+                <button @click="store.removeSelection(item.id)" class="absolute top-0 right-0 p-1.5 text-slate-600 hover:text-red-500 transition-colors z-10"><X class="w-3.5 h-3.5" /></button>
                 <div class="p-2.5">
                     <div class="pr-4 mb-1.5">
-                        
-                        <div class="flex items-center gap-1 text-[9px] text-slate-400 mb-0.5 font-medium tracking-wide">
-                            <Calendar class="w-2.5 h-2.5 opacity-70" />
-                            {{ formatGameDate(item.commenceTime || (item as any).commence_time) }}
-                        </div>
-
-                        <div class="text-[11px] font-bold text-white leading-tight truncate">
-                            {{ truncateName(item.homeTeam) }} 
-                            <span class="text-slate-500 font-normal">vs</span> 
-                            {{ truncateName(item.awayTeam) }}
-                        </div>
+                        <div class="flex items-center gap-1 text-[9px] text-slate-400 mb-0.5 font-medium"><Calendar class="w-2.5 h-2.5 opacity-70" /> {{ formatGameDate(item.commenceTime || (item as any).commence_time) }}</div>
+                        <div class="text-[11px] font-bold text-white leading-tight truncate">{{ truncateName(item.homeTeam) }} <span class="text-slate-500 font-normal">vs</span> {{ truncateName(item.awayTeam) }}</div>
                     </div>
-                    
                     <div class="flex items-center justify-between gap-2">
                         <div class="flex flex-col min-w-0">
                             <span class="text-[9px] text-slate-500 font-bold uppercase truncate">{{ getMarketLabel(item.type, item.marketName) }}</span>
                             <span class="text-[11px] text-blue-400 font-bold truncate">{{ getSelectionName(item) }}</span>
                         </div>
-
-                        <div class="flex items-center gap-2">
-                            <div class="bg-[#0f172a] text-yellow-400 font-mono font-bold text-xs px-2 py-1 rounded border border-slate-700 shadow-inner">
-                                {{ (item.odds || 0).toFixed(2) }}
-                            </div>
-                        </div>
+                        <div class="bg-[#0f172a] text-yellow-400 font-mono font-bold text-xs px-2 py-1 rounded border border-slate-700 shadow-inner">{{ (item.odds || 0).toFixed(2) }}</div>
                     </div>
                 </div>
+                
                 <div v-if="oddConflict && oddConflict.selectionId === item.id" class="absolute inset-0 border-2 border-yellow-500/50 rounded pointer-events-none animate-pulse"></div>
                 <div v-else class="absolute left-0 top-0 bottom-0 w-[2px] bg-blue-500"></div>
             </div>
         </div>
     </div>
 
-    <div v-if="store.count > 0" class="bg-[#162032] border-t border-slate-700 p-3 shadow-[0_-4px_10px_rgba(0,0,0,0.5)] z-20">
+    <div v-if="store.count > 0" class="bg-[#162032] p-3 z-20 border-t border-yellow-500/50 shadow-[0_-4px_15px_rgba(234,179,8,0.2)]">
         
-        <div class="flex items-end justify-between mb-3 text-xs">
-            <div class="flex flex-col">
-                <span class="text-[10px] text-slate-500 uppercase font-bold tracking-wide">Odd Total</span>
-                <span class="text-yellow-400 font-bold font-mono text-sm bg-yellow-400/10 px-1.5 rounded w-fit">{{ (store.totalOdds || 0).toFixed(2) }}</span>
-            </div>
-            <div class="flex flex-col items-end">
-                <span class="text-[10px] text-slate-500 uppercase font-bold tracking-wide">Retorno Potencial</span>
-                <span class="text-green-400 font-bold font-mono text-sm bg-green-400/10 px-1.5 rounded">
-                    {{ formatCurrency(potentialReturn) }}
-                </span>
-            </div>
-        </div>
-
-        <div v-if="oddConflict" class="mb-3 bg-yellow-500/10 border border-yellow-500/30 rounded p-2 flex flex-col gap-2 animate-in fade-in slide-in-from-bottom-2 duration-300">
-            <div class="flex items-start gap-2">
+        <div v-if="oddConflict" class="mb-3 bg-yellow-500/10 border border-yellow-500/30 rounded p-2 flex flex-col gap-2">
+            <div class="flex items-start gap-2 text-[10px] leading-tight text-slate-300">
                 <AlertCircle class="w-4 h-4 text-yellow-500 mt-0.5 shrink-0" />
-                <div class="text-[10px] leading-tight text-slate-300">
-                    <span class="font-bold text-yellow-500">Atenção:</span> A odd de 
-                    <span class="text-white font-bold">{{ oddConflict.matchName }}</span> alterou.
-                    <div class="flex items-center gap-1.5 mt-1 bg-black/20 w-fit px-1.5 py-0.5 rounded">
-                        <span class="line-through text-red-400 font-mono">{{ oddConflict.oldOdd.toFixed(2) }}</span>
-                        <ArrowRight class="w-3 h-3 text-slate-500" />
-                        <span class="text-green-400 font-bold font-mono text-xs">{{ oddConflict.newOdd.toFixed(2) }}</span>
+                <div>
+                    <span class="font-bold text-yellow-500">Atenção:</span> A odd de <span class="text-white font-bold">{{ oddConflict.matchName }}</span> alterou.
+                    <div class="flex items-center gap-1 mt-1">
+                        <span class="line-through text-red-400">{{ oddConflict.oldOdd }}</span>
+                        <ArrowRight class="w-3 h-3 text-gray-400" />
+                        <span class="text-green-400 font-bold">{{ oddConflict.newOdd }}</span>
                     </div>
                 </div>
             </div>
-            <div class="flex gap-2 w-full">
-                <button @click="confirmOddChange" class="flex-1 bg-yellow-600 hover:bg-yellow-500 text-white text-[10px] font-bold py-1.5 rounded transition-colors uppercase">
-                    Aceitar
-                </button>
-                <button @click="cancelOddChange" class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[10px] font-bold py-1.5 rounded transition-colors uppercase">
-                    Remover
-                </button>
-            </div>
+            <div class="flex gap-2 w-full"><button @click="confirmOddChange" class="flex-1 bg-yellow-600 text-white text-[10px] font-bold py-1.5 rounded uppercase">Aceitar</button><button @click="cancelOddChange" class="flex-1 bg-slate-700 text-slate-300 text-[10px] font-bold py-1.5 rounded uppercase">Remover</button></div>
         </div>
 
-        <div class="relative mb-3 group">
-            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <span class="text-slate-500 font-bold text-xs">R$</span>
-            </div>
+        <div class="flex flex-wrap items-end justify-between gap-2 mb-3">
             
-            <input 
-                v-model="stake" 
-                type="number" 
-                placeholder="Valor da Aposta" 
-                :disabled="!isUserLoggedIn || !!oddConflict || isProcessingLive" 
-                class="w-full bg-[#0b1120] text-white text-sm font-bold border border-slate-700 rounded pl-9 pr-3 py-2.5 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all placeholder:text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                :class="stakeError ? 'border-red-500 animate-shake' : ''"
-            />
+            <div class="flex flex-col items-start min-w-[60px] order-1">
+                <span class="text-[10px] text-slate-500 uppercase font-bold tracking-wide mb-0.5">Odd Total</span>
+                <span class="text-yellow-400 font-bold font-mono text-sm bg-yellow-400/10 px-2 py-0.5 rounded">{{ (store.totalOdds || 0).toFixed(2) }}</span>
+            </div>
 
-            <span v-if="stakeError" class="absolute right-3 top-1/2 -translate-y-1/2 text-red-500 flex items-center gap-1 text-[10px] font-bold">
-                <AlertCircle class="w-3 h-3" /> Inválido
-            </span>
+            <div class="flex flex-col items-end min-w-[80px] order-3 md:order-2">
+                <span class="text-[10px] text-slate-500 uppercase font-bold tracking-wide mb-0.5">Retorno</span>
+                <span class="text-green-400 font-bold font-mono text-sm bg-green-400/10 px-2 py-0.5 rounded">{{ formatCurrency(potentialReturn) }}</span>
+            </div>
+
+            <div class="relative group order-2 md:order-3 flex-1 md:w-full md:mt-2">
+                <div class="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
+                    <span class="text-slate-500 font-bold text-xs">R$</span>
+                </div>
+                <input v-model="stake" type="number" placeholder="Valor" :disabled="!isUserLoggedIn || !!oddConflict || isProcessingLive" class="w-full bg-[#0b1120] text-white text-center text-sm font-bold border border-slate-700 rounded py-2 pl-6 pr-2 focus:border-blue-500 focus:ring-1 outline-none transition-all" :class="stakeError ? 'border-red-500 animate-shake' : ''" />
+                <span v-if="stakeError" class="absolute -top-6 left-1/2 -translate-x-1/2 text-red-500 bg-[#1e293b] border border-red-500 px-2 py-0.5 rounded text-[10px] font-bold whitespace-nowrap shadow-lg z-10">Inválido</span>
+            </div>
         </div>
 
-        <button 
-            @click="() => handlePlaceBet(false)" 
-            :disabled="isLoading || store.count === 0 || !!oddConflict || isProcessingLive" 
-            class="w-full py-2.5 rounded bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-400 text-white font-bold text-xs uppercase tracking-widest shadow-lg shadow-green-900/20 transition-all transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2 border border-green-400/20"
-        >
+        <button @click="() => handlePlaceBet(false)" :disabled="isLoading || store.count === 0 || !!oddConflict || isProcessingLive" class="w-full py-2.5 rounded bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-400 text-white font-bold text-xs uppercase tracking-widest shadow-lg shadow-green-900/20 transition-all flex justify-center items-center gap-2 border border-green-400/20">
             <Loader2 v-if="isLoading" class="w-4 h-4 animate-spin" />
             <span v-else>{{ isUserLoggedIn ? 'CONFIRMAR APOSTA' : 'ENTRE PARA APOSTAR' }}</span>
         </button>
-
     </div>
   </div>
 </template>

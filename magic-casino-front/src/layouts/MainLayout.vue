@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
-// ✅ Removi o 'Gift' da importação pois usaremos um SVG personalizado
-import { Menu, Search, Trophy, ChevronLeft, Loader2, X, MapPin, Calendar } from 'lucide-vue-next';
+import { Menu, Search, Trophy, ChevronLeft, Loader2, X, MapPin, Calendar, ChevronUp, ChevronDown } from 'lucide-vue-next';
 import SportsService from '../services/SportsService'; 
 
 import Sidebar from '../components/Sidebar.vue'; 
@@ -19,8 +18,9 @@ const betStore = useBetStore();
 const authStore = useAuthStore();
 
 const isSidebarOpen = ref(true);
+const isBetSlipOpen = ref(betStore.count > 0);
+const isMobile = ref(false); 
 
-// --- LÓGICA DO MODAL DE AUTENTICAÇÃO ---
 const showAuthModal = ref(false);
 const authModalTab = ref<'login' | 'register'>('login');
 
@@ -28,8 +28,6 @@ const openAuthModal = (tab: 'login' | 'register') => {
     authModalTab.value = tab;
     showAuthModal.value = true;
 };
-
-const isBetSlipOpen = ref(betStore.count > 0);
 
 // --- LÓGICA DE BUSCA ---
 const searchQuery = ref('');
@@ -53,20 +51,17 @@ const getEventId = (item: any) => {
 
 const handleInput = () => {
     if (searchTimeout) clearTimeout(searchTimeout);
-
     if (searchQuery.value.length < 2) {
         searchResults.value = [];
         showSearchResults.value = false;
         return;
     }
-
     isSearching.value = true;
     showSearchResults.value = true;
 
     searchTimeout = setTimeout(async () => {
         try {
             const events = await SportsService.getEvents('soccer', 1, 300);
-            
             if (events && Array.isArray(events)) {
                 const term = searchQuery.value.toLowerCase();
                 searchResults.value = events.filter((e: any) => {
@@ -95,10 +90,7 @@ const clearSearch = () => {
 
 const goToEvent = (item: any) => {
     const id = getEventId(item);
-    if (!id) {
-        console.error("ID não encontrado no objeto:", item);
-        return;
-    }
+    if (!id) { return; }
     router.push(`/event/${id}`);
     showSearchResults.value = false;
     clearSearch(); 
@@ -109,8 +101,6 @@ const handleClickOutsideSearch = (event: MouseEvent) => {
         showSearchResults.value = false;
     }
 };
-
-// ----------------------------------------------------
 
 const handleLoginSuccess = (data: any) => {
     authStore.setLogin(data.user || data, localStorage.getItem('token') || '');
@@ -125,15 +115,39 @@ watch(
   () => betStore.count,
   (newCount, oldCount) => {
     if (newCount > (oldCount || 0)) {
-        isBetSlipOpen.value = true;
+        if (!isMobile.value) { 
+            isBetSlipOpen.value = true;
+        }
     }
   }
 );
 
+let lastWidth = typeof window !== 'undefined' ? window.innerWidth : 0;
+
+const handleResize = () => {
+    if (typeof window === 'undefined') return;
+    
+    const currentWidth = window.innerWidth;
+    isMobile.value = currentWidth < 768;
+
+    if (currentWidth !== lastWidth) {
+        if (isMobile.value) {
+            isSidebarOpen.value = false;
+        } else {
+            isSidebarOpen.value = true;
+        }
+        lastWidth = currentWidth;
+    }
+};
+
 const checkScreenSize = () => {
     if (typeof window !== 'undefined') {
-        if (window.innerWidth < 768) {
+        const width = window.innerWidth;
+        isMobile.value = width < 768;
+        
+        if (isMobile.value) {
             isSidebarOpen.value = false;
+            isBetSlipOpen.value = false;
         } else {
             isSidebarOpen.value = true;
         }
@@ -142,12 +156,12 @@ const checkScreenSize = () => {
 
 onMounted(() => {
     checkScreenSize();
-    window.addEventListener('resize', checkScreenSize);
+    window.addEventListener('resize', handleResize);
     document.addEventListener('click', handleClickOutsideSearch);
 });
 
 onUnmounted(() => {
-    window.removeEventListener('resize', checkScreenSize);
+    window.removeEventListener('resize', handleResize);
     document.removeEventListener('click', handleClickOutsideSearch);
 });
 </script>
@@ -178,72 +192,24 @@ onUnmounted(() => {
       </div>
       
       <div class="hidden md:flex relative w-96 z-[101]" ref="searchContainerRef">
-        
         <div class="w-full flex items-center bg-stake-dark rounded-full border border-gray-700/50 hover:border-gray-500 transition-colors focus-within:border-stake-blue focus-within:ring-1 focus-within:ring-stake-blue">
             <div class="pl-4 pr-2 py-2 text-stake-text">
                 <Search v-if="!isSearching" class="w-4 h-4" />
                 <Loader2 v-else class="w-4 h-4 animate-spin text-stake-blue" />
             </div>
-            
-            <input 
-                type="text" 
-                v-model="searchQuery"
-                @input="handleInput"
-                @focus="showSearchResults = true"
-                placeholder="Buscar jogos..." 
-                class="bg-transparent outline-none text-white text-sm w-full py-2 placeholder-gray-500"
-            >
-
-            <button v-if="searchQuery" @click="clearSearch" class="mr-3 text-gray-500 hover:text-white transition-colors">
-                <X class="w-4 h-4" />
-            </button>
+            <input type="text" v-model="searchQuery" @input="handleInput" @focus="showSearchResults = true" placeholder="Buscar jogos..." class="bg-transparent outline-none text-white text-sm w-full py-2 placeholder-gray-500">
+            <button v-if="searchQuery" @click="clearSearch" class="mr-3 text-gray-500 hover:text-white transition-colors"><X class="w-4 h-4" /></button>
         </div>
 
-        <transition
-            enter-active-class="transition duration-100 ease-out"
-            enter-from-class="transform scale-95 opacity-0 -translate-y-2"
-            enter-to-class="transform scale-100 opacity-100 translate-y-0"
-            leave-active-class="transition duration-75 ease-in"
-            leave-from-class="transform scale-100 opacity-100 translate-y-0"
-            leave-to-class="transform scale-95 opacity-0 -translate-y-2"
-        >
-            <div v-if="showSearchResults && (searchResults.length > 0 || isSearching || searchQuery.length >= 2)" 
-                 class="absolute top-full left-0 w-full mt-2 bg-[#1e293b] border border-gray-700 rounded-xl shadow-2xl overflow-hidden max-h-[400px] overflow-y-auto custom-scrollbar z-[9999]">
-                
-                <div v-if="isSearching" class="p-4 text-center text-sm text-gray-400 flex items-center justify-center gap-2">
-                    <Loader2 class="w-4 h-4 animate-spin" /> Buscando...
-                </div>
-
-                <div v-else-if="searchResults.length === 0 && searchQuery.length >= 2" class="p-4 text-center text-sm text-gray-400">
-                    Nenhum jogo encontrado.
-                </div>
-
+        <transition enter-active-class="transition duration-100 ease-out" enter-from-class="transform scale-95 opacity-0 -translate-y-2" enter-to-class="transform scale-100 opacity-100 translate-y-0" leave-active-class="transition duration-75 ease-in" leave-from-class="transform scale-100 opacity-100 translate-y-0" leave-to-class="transform scale-95 opacity-0 -translate-y-2">
+            <div v-if="showSearchResults && (searchResults.length > 0 || isSearching || searchQuery.length >= 2)" class="absolute top-full left-0 w-full mt-2 bg-[#1e293b] border border-gray-700 rounded-xl shadow-2xl overflow-hidden max-h-[400px] overflow-y-auto custom-scrollbar z-[9999]">
+                <div v-if="isSearching" class="p-4 text-center text-sm text-gray-400 flex items-center justify-center gap-2"><Loader2 class="w-4 h-4 animate-spin" /> Buscando...</div>
+                <div v-else-if="searchResults.length === 0 && searchQuery.length >= 2" class="p-4 text-center text-sm text-gray-400">Nenhum jogo encontrado.</div>
                 <div v-else-if="searchResults.length > 0" class="flex flex-col">
-                    <div class="px-3 py-2 text-[10px] uppercase font-bold text-gray-500 bg-[#0f172a]/50 border-b border-white/5">
-                        Resultados Encontrados
-                    </div>
-                    
-                    <button 
-                        v-for="result in searchResults" 
-                        :key="getEventId(result)"
-                        @click="goToEvent(result)"
-                        class="flex flex-col gap-1 px-4 py-3 hover:bg-[#2f4553] transition-colors border-b border-white/5 last:border-0 text-left group"
-                    >
-                        <div class="flex items-center gap-2 text-[10px] text-gray-400 mb-0.5">
-                            <MapPin class="w-3 h-3 text-gray-500" />
-                            <span class="truncate max-w-[180px] font-medium">{{ result.league || result.League }}</span>
-                            <span class="w-1 h-1 bg-gray-600 rounded-full"></span>
-                            <Calendar class="w-3 h-3 text-gray-500" />
-                            <span>{{ formatDate(result.commenceTime || result.commence_time) }}</span>
-                        </div>
-
-                        <div class="flex items-center justify-between">
-                            <div class="text-sm font-bold text-white group-hover:text-stake-blue transition-colors">
-                                {{ result.homeTeam || result.HomeTeam }} 
-                                <span class="text-gray-500 mx-1 font-normal">vs</span> 
-                                {{ result.awayTeam || result.AwayTeam }}
-                            </div>
-                        </div>
+                    <div class="px-3 py-2 text-[10px] uppercase font-bold text-gray-500 bg-[#0f172a]/50 border-b border-white/5">Resultados Encontrados</div>
+                    <button v-for="result in searchResults" :key="getEventId(result)" @click="goToEvent(result)" class="flex flex-col gap-1 px-4 py-3 hover:bg-[#2f4553] transition-colors border-b border-white/5 last:border-0 text-left group">
+                        <div class="flex items-center gap-2 text-[10px] text-gray-400 mb-0.5"><MapPin class="w-3 h-3 text-gray-500" /><span class="truncate max-w-[180px] font-medium">{{ result.league || result.League }}</span><span class="w-1 h-1 bg-gray-600 rounded-full"></span><Calendar class="w-3 h-3 text-gray-500" /><span>{{ formatDate(result.commenceTime || result.commence_time) }}</span></div>
+                        <div class="flex items-center justify-between"><div class="text-sm font-bold text-white group-hover:text-stake-blue transition-colors">{{ result.homeTeam || result.HomeTeam }} <span class="text-gray-500 mx-1 font-normal">vs</span> {{ result.awayTeam || result.AwayTeam }}</div></div>
                     </button>
                 </div>
             </div>
@@ -252,14 +218,8 @@ onUnmounted(() => {
 
       <div class="flex items-center gap-3">
         <div v-if="authStore.user" class="flex items-center gap-4">
-            
-            <button 
-                @click="router.push('/promocoes')" 
-                class="relative group transition-all duration-300 transform hover:scale-110"
-                title="Bônus e Recompensas"
-            >
+            <button @click="router.push('/promocoes')" class="relative group transition-all duration-300 transform hover:scale-110" title="Bônus e Recompensas">
                 <div class="absolute inset-0 bg-green-500/40 blur-lg rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="relative z-10 drop-shadow-lg filter">
                     <path d="M4 10H20V20C20 21.1046 19.1046 22 18 22H6C4.89543 22 4 21.1046 4 20V10Z" fill="#22c55e" stroke="#166534" stroke-width="1.5"/>
                     <path d="M2 6H22V10H2V6Z" fill="#4ade80" stroke="#166534" stroke-width="1.5"/>
@@ -268,17 +228,13 @@ onUnmounted(() => {
                     <path d="M12 6C12 6 9 2 6 4C3 6 6 6 12 6Z" fill="#ef4444" stroke="#991b1b" stroke-width="1"/>
                     <path d="M12 6C12 6 15 2 18 4C21 6 18 6 12 6Z" fill="#ef4444" stroke="#991b1b" stroke-width="1"/>
                 </svg>
-                
                 <span class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-[#1e293b] z-20 animate-pulse shadow-md"></span>
             </button>
-
             <WalletDropdown :balance="authStore.user.balance || 0" />
-            
             <UserDropdown />
         </div>
         <div v-else class="flex items-center gap-3">
             <button @click="openAuthModal('login')" class="font-bold text-gray-300 text-sm hover:text-white transition-colors px-2">Entrar</button>
-            
             <button @click="openAuthModal('register')" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-md font-bold text-sm shadow-lg shadow-blue-900/50 transition-all transform hover:-translate-y-0.5">Cadastre-se</button>
         </div>
       </div>
@@ -286,20 +242,75 @@ onUnmounted(() => {
 
     <div class="flex flex-1 overflow-hidden relative">
       <Sidebar v-show="isSidebarOpen" class="w-64 flex-shrink-0 transition-all duration-300 border-r border-white/5" />
+      
       <main class="flex-1 overflow-y-auto bg-stake-dark custom-scrollbar relative transition-all duration-300 !p-0">
-        <div class="w-full h-full">
+        <div class="w-full h-full pb-20 md:pb-0">
             <router-view />
         </div>
       </main>
       
-      <div v-show="isBetSlipOpen" class="w-[320px] bg-[#1e293b] border-l border-gray-700 flex flex-col flex-shrink-0 transition-all duration-300 shadow-2xl z-40">
-          <BetSlip @toggle="toggleBetSlip" :is-open="true" />
+      <div 
+        v-show="isBetSlipOpen" 
+        class="
+            fixed bottom-0 left-0 w-full z-[150] bg-[#1e293b] shadow-[0_-5px_30px_rgba(0,0,0,0.8)] border-t border-gray-700
+            transition-transform duration-300 ease-in-out flex flex-col
+        "
+        :class="[
+            isMobile 
+                ? 'h-[40vh] rounded-t-2xl' 
+                : 'md:static md:w-[320px] md:h-full md:rounded-none md:border-t-0 md:border-l md:shadow-none md:z-40'
+        ]"
+      >
+          <div 
+            class="md:hidden absolute -top-7 left-4 z-20 bg-[#1e293b] text-gray-400 border-t border-x border-gray-700 rounded-t-lg px-3 py-1 flex items-center gap-1 shadow-lg cursor-pointer"
+            @click="toggleBetSlip"
+          >
+              <span class="text-[9px] font-bold uppercase tracking-wider">Minimizar</span>
+              <ChevronDown class="w-3 h-3" />
+          </div>
+
+          <div class="flex-1 overflow-y-auto custom-scrollbar relative bg-[#1e293b]">
+              <BetSlip @toggle="toggleBetSlip" :is-open="true" />
+          </div>
       </div>
+
+      <button 
+        v-if="!isBetSlipOpen && betStore.count > 0"
+        @click="toggleBetSlip"
+        class="
+            fixed bottom-0 left-0 w-full z-[140]
+            bg-[#1e293b] border-t border-yellow-500/50 text-white
+            h-14 px-4 flex items-center justify-between shadow-[0_-4px_20px_rgba(0,0,0,0.8)]
+            md:hidden animate-slide-up
+        "
+      >
+        <div class="flex items-center gap-3">
+            <span class="bg-yellow-500 text-black text-xs font-black w-6 h-6 rounded-full flex items-center justify-center shadow-lg shadow-yellow-500/20">
+                {{ betStore.count }}
+            </span>
+            <div class="flex flex-col items-start leading-tight">
+                <span class="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Boletim</span>
+                <span class="text-xs font-bold text-white flex items-center gap-1">
+                    Ver Apostas <ChevronUp class="w-3.5 h-3.5 text-green-400 animate-bounce" />
+                </span>
+            </div>
+        </div>
+        
+        <div class="flex flex-col items-end leading-tight">
+            <span class="text-[10px] text-gray-400 uppercase font-bold">Odd Total</span>
+            <span class="text-yellow-400 font-bold font-mono text-sm">
+                {{ betStore.totalOdds.toFixed(2) }}
+            </span>
+        </div>
+      </button>
 
       <button 
         v-if="!isBetSlipOpen"
         @click="toggleBetSlip"
-        class="absolute bottom-2 right-2 z-50 bg-[#1e293b]/90 hover:bg-[#1e293b] text-white border border-yellow-500/30 shadow-2xl shadow-black/80 rounded-md px-4 py-2 flex items-center gap-2 transition-all hover:scale-105 group"
+        class="
+            hidden md:flex
+            absolute bottom-2 right-2 z-50 bg-[#1e293b]/90 hover:bg-[#1e293b] text-white border border-yellow-500/30 shadow-2xl shadow-black/80 rounded-md px-4 py-2 items-center gap-2 transition-all hover:scale-105 group
+        "
       >
         <div class="relative">
             <Trophy class="w-4 h-4 text-yellow-500 group-hover:rotate-12 transition-transform" />
@@ -310,6 +321,7 @@ onUnmounted(() => {
         <span class="font-bold text-xs uppercase tracking-wide">Cupom de Apostas</span>
         <ChevronLeft class="w-4 h-4 text-gray-400 group-hover:text-white" />
       </button>
+
     </div>
   </div>
 </template>
@@ -330,5 +342,13 @@ onUnmounted(() => {
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #475569; 
+}
+
+@keyframes slide-up {
+    from { transform: translateY(100%); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+.animate-slide-up {
+    animation: slide-up 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 </style>
