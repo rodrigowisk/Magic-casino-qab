@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
-import { CalendarDays } from 'lucide-vue-next';
+import { CalendarDays, ChevronDown, Check, Calendar } from 'lucide-vue-next';
 import FiltroDatas from '../FiltroDatas.vue'; 
 
 // --- PROPS ---
@@ -19,6 +19,17 @@ const emit = defineEmits<{
   (e: 'update:selectedSport', val: string): void;
   (e: 'update:selectedDate', val: string): void;
 }>();
+
+// --- STATE DO DROPDOWN CUSTOMIZADO ---
+const isDateDropdownOpen = ref(false);
+
+const toggleDateDropdown = () => {
+  isDateDropdownOpen.value = !isDateDropdownOpen.value;
+};
+
+const closeDateDropdown = () => {
+  isDateDropdownOpen.value = false;
+};
 
 // --- CONFIGURAÇÃO DE ÍCONES ---
 const ALL_SPORTS_CONFIG = [
@@ -46,7 +57,7 @@ const normalizeKey = (apiKey: string): string => {
     return 'all'; 
 };
 
-// --- LÓGICA INTELIGENTE: FILTRO & CONTAGEM ---
+// --- LÓGICA INTELIGENTE: FILTRO & CONTAGEM DE ESPORTES ---
 const availableSports = computed(() => {
     const counts: Record<string, number> = { all: 0 };
     const sportsFound = new Set<string>();
@@ -86,6 +97,67 @@ const availableSports = computed(() => {
     return result;
 });
 
+// ✅ NOVA LÓGICA: Define se o layout mobile deve ser compacto (uma linha) ou quebrado
+const isMobileCompact = computed(() => {
+  // Se tiver 2 ou menos esportes, cabe na mesma linha que os botões.
+  // Se tiver mais, precisa quebrar para baixo.
+  return availableSports.value.length <= 2;
+});
+
+// --- LÓGICA PARA AS OPÇÕES DE DATA ---
+const mobileDateOptions = computed(() => {
+  const lista = [{ label: 'DATA: TODAS', value: 'all' }];
+  const rawGames = props.games || [];
+  if (rawGames.length === 0) return lista;
+
+  const datasUnicas = new Set<string>();
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  const amanha = new Date(hoje);
+  amanha.setDate(amanha.getDate() + 1);
+
+  rawGames.forEach((game: any) => {
+      const timeData = game.commenceTime || game.start_at || game.date;
+      if (!timeData) return;
+      const d = new Date(timeData);
+      if (isNaN(d.getTime())) return;
+      const ano = d.getFullYear();
+      const mes = String(d.getMonth() + 1).padStart(2, '0');
+      const dia = String(d.getDate()).padStart(2, '0');
+      datasUnicas.add(`${ano}-${mes}-${dia}`);
+  });
+
+  const datasOrdenadas = Array.from(datasUnicas).sort();
+
+  datasOrdenadas.forEach(dataStr => {
+      const parts = dataStr.split('-');
+      const y = Number(parts[0]);
+      const m = Number(parts[1]);
+      const d = Number(parts[2]);
+      const dataRef = new Date(y, m - 1, d);
+      if (dataRef.getTime() < hoje.getTime()) return;
+
+      let label = '';
+      if (dataRef.getTime() === hoje.getTime()) label = 'HOJE';
+      else if (dataRef.getTime() === amanha.getTime()) label = 'AMANHÃ';
+      else label = `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}`;
+
+      lista.push({ label: label, value: dataStr });
+  });
+
+  return lista;
+});
+
+const selectedDateLabel = computed(() => {
+  const found = mobileDateOptions.value.find(opt => opt.value === props.selectedDate);
+  return found ? found.label : 'DATA: TODAS'; 
+});
+
+const selectDateOption = (value: string) => {
+  emit('update:selectedDate', value);
+  closeDateDropdown();
+};
+
 watch(availableSports, (newList) => {
     if (newList.length === 1 && newList[0]) {
         const uniqueSport = newList[0].key;
@@ -95,7 +167,7 @@ watch(availableSports, (newList) => {
     }
 }, { immediate: true });
 
-// --- INTERAÇÃO DE DRAG ---
+// --- DRAG ---
 const scrollContainer = ref<HTMLElement | null>(null);
 let isDown = false;
 let startX = 0;
@@ -128,13 +200,30 @@ const selectSport = (key: string) => {
 </script>
 
 <template>
-  <div class="w-full bg-[#0f172a]/50 backdrop-blur border-b border-white/5 relative z-30">
-    <div class="max-w-[1200px] mx-auto px-2 md:px-4 h-[72px] grid grid-cols-[1fr_auto_1fr] items-center gap-4">
+  <div class="w-full bg-[#0f172a]/50 backdrop-blur border-b border-white/5 relative z-30 transition-all duration-300">
+    
+    <div 
+        class="max-w-[1200px] mx-auto px-2 md:px-4 py-2 md:py-0 md:h-[72px]"
+        :class="[
+            // Desktop: Grid fixo
+            'md:grid md:grid-cols-[1fr_auto_1fr] md:items-center md:gap-4',
+            
+            // Mobile: Flexbox que muda direção baseado na quantidade de esportes
+            'flex', 
+            isMobileCompact ? 'flex-row items-center gap-2' : 'flex-col gap-3'
+        ]"
+    >
 
-        <div class="min-w-0 h-full flex items-center justify-start relative overflow-visible">
+        <div 
+            class="relative overflow-visible order-1"
+            :class="[
+                'md:w-full md:flex md:items-center md:justify-start', // Desktop reset
+                isMobileCompact ? 'flex-1 min-w-0' : 'w-full flex items-center justify-start' // Mobile logica
+            ]"
+        >
             <div 
                 ref="scrollContainer"
-                class="flex items-center gap-4 overflow-x-auto no-scrollbar scroll-smooth cursor-grab active:cursor-grabbing h-full px-2 mask-fade-right w-full py-2"
+                class="flex items-center gap-4 overflow-x-auto no-scrollbar scroll-smooth cursor-grab active:cursor-grabbing w-full px-2 mask-fade-right py-1"
                 @mousedown="startDrag"
                 @mouseleave="stopDrag"
                 @mouseup="stopDrag"
@@ -148,7 +237,7 @@ const selectSport = (key: string) => {
                     :class="[
                         { 'pointer-events-none': isDragging },
                         selectedSport === sport.key 
-                            ? 'scale-110 z-10'  // Aumenta e traz para frente
+                            ? 'scale-110 z-10' 
                             : 'hover:bg-white/5 opacity-60 hover:opacity-100'
                     ]"
                 >
@@ -181,7 +270,83 @@ const selectSport = (key: string) => {
             </div>
         </div>
 
-        <div class="flex justify-center">
+        <div 
+            class="md:hidden order-2 relative z-40 flex items-center gap-3"
+            :class="isMobileCompact ? 'flex-none justify-end pl-1' : 'w-full justify-between px-1'"
+        >
+            
+            <div class="flex items-center bg-[#020617] p-1 rounded-full border border-white/10 shadow-inner shrink-0">
+              <button 
+                @click="emit('update:activeMode', 'live')"
+                class="relative flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-full transition-all duration-300 text-[9px] font-bold uppercase tracking-wider border"
+                :class="activeMode === 'live' 
+                  ? 'bg-red-500/10 border-red-500/50 text-red-400 shadow-[0_0_10px_rgba(248,113,113,0.3)]' 
+                  : 'bg-transparent border-transparent text-slate-500 hover:text-slate-300 hover:bg-white/5'"
+              >
+                <div class="relative flex h-1.5 w-1.5">
+                   <span v-if="activeMode === 'live'" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                   <span class="relative inline-flex rounded-full h-1.5 w-1.5" :class="activeMode === 'live' ? 'bg-red-500' : 'bg-slate-600'"></span>
+                </div>
+                Ao Vivo
+              </button>
+
+              <button 
+                @click="emit('update:activeMode', 'prematch')"
+                class="relative flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-full transition-all duration-300 text-[9px] font-bold uppercase tracking-wider border"
+                :class="activeMode === 'prematch' 
+                  ? 'bg-blue-500/10 border-blue-500/50 text-blue-400 shadow-[0_0_10px_rgba(96,165,250,0.3)]' 
+                  : 'bg-transparent border-transparent text-slate-500 hover:text-slate-300 hover:bg-white/5'"
+              >
+                <CalendarDays class="w-3 h-3" :class="activeMode === 'prematch' ? 'drop-shadow-[0_0_5px_rgba(96,165,250,0.8)]' : ''" />
+                Pré
+              </button>
+            </div>
+
+            <div class="relative w-full" :class="isMobileCompact ? 'max-w-[130px]' : 'max-w-[150px]'">
+                
+                <button 
+                    @click="toggleDateDropdown"
+                    class="w-full flex items-center justify-between bg-[#020617] border rounded-lg py-2 pl-3 pr-2 transition-all duration-300 group shadow-lg shadow-black/20"
+                    :class="isDateDropdownOpen ? 'border-blue-500/50 ring-1 ring-blue-500/20 text-white' : 'border-white/10 text-slate-300 hover:border-white/20'"
+                >   
+                    <div class="flex items-center gap-2 overflow-hidden">
+                        <Calendar class="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                        <span class="text-[10px] font-bold uppercase truncate tracking-wide">
+                           {{ selectedDateLabel }}
+                        </span>
+                    </div>
+                    <ChevronDown 
+                        class="w-3.5 h-3.5 text-slate-500 transition-transform duration-300"
+                        :class="{ 'rotate-180 text-blue-400': isDateDropdownOpen }"
+                    />
+                </button>
+
+                <div v-if="isDateDropdownOpen" class="fixed inset-0 z-40 bg-transparent" @click="closeDateDropdown"></div>
+
+                <div 
+                    v-if="isDateDropdownOpen"
+                    class="absolute top-[calc(100%+8px)] right-0 w-[180px] bg-[#0f172a]/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200"
+                >
+                    <div class="max-h-[250px] overflow-y-auto py-1 custom-scrollbar">
+                        <button
+                            v-for="opt in mobileDateOptions"
+                            :key="opt.value"
+                            @click="selectDateOption(opt.value)"
+                            class="w-full flex items-center justify-between px-4 py-2.5 text-[11px] font-bold uppercase transition-colors border-b border-white/5 last:border-0"
+                            :class="props.selectedDate === opt.value 
+                                ? 'bg-blue-500/10 text-[#00FF7F]' 
+                                : 'text-slate-300 hover:bg-white/5 hover:text-white'"
+                        >
+                            <span>{{ opt.label }}</span>
+                            <Check v-if="props.selectedDate === opt.value" class="w-3 h-3 text-[#00FF7F]" />
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <div class="hidden md:flex justify-center order-2">
             <div class="flex items-center bg-[#020617] p-1 rounded-full border border-white/10 shadow-inner">
               <button 
                 @click="emit('update:activeMode', 'live')"
@@ -210,7 +375,7 @@ const selectSport = (key: string) => {
             </div>
         </div>
 
-        <div class="flex justify-end min-w-0">
+        <div class="hidden md:flex justify-end min-w-0 order-3">
             <FiltroDatas 
                 :games="props.games as any[]" 
                 :model-value="selectedDate"
@@ -226,9 +391,15 @@ const selectSport = (key: string) => {
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-/* ✅ MÁSCARA MENOS AGRESSIVA */
+.custom-scrollbar::-webkit-scrollbar { width: 4px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+
 .mask-fade-right {
     -webkit-mask-image: linear-gradient(to right, black 90%, transparent 100%);
     mask-image: linear-gradient(to right, black 90%, transparent 100%);
 }
+
+@keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+.animate-in { animation: fadeIn 0.15s ease-out forwards; }
 </style>

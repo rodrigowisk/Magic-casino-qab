@@ -1,30 +1,233 @@
+<script setup lang="ts">
+import { ref, onMounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { Check, X } from 'lucide-vue-next';
+import TournamentService from '../../services/Tournament/TournamentService';
+
+// ✅ Importação dos Componentes de Navegação
+import TournamentHeaderCarousel from '../../components/Tournament/TournamentHeaderCarousel.vue';
+import TournamentRanking from '../../components/Tournament/TournamentRanking.vue';
+
+const route = useRoute();
+const router = useRouter();
+const tournamentId = Number(route.params.id);
+
+// --- ESTADOS DO CABEÇALHO (CARROSSEL) ---
+const myTournaments = ref<any[]>([]);
+const fantasyBalance = ref(0);
+const userRank = ref(0);
+const showRanking = ref(false);
+const currentUser = ref('');
+
+// --- ESTADOS DAS APOSTAS ---
+interface BetSelection {
+  homeTeam: string;
+  awayTeam: string;
+  marketName: string;
+  selectionName: string;
+  odds: number;
+  status: string;
+}
+
+interface Bet {
+  id: number;
+  amount: number;
+  totalOdds: number;
+  potentialWin: number;
+  status: string;
+  placedAt: string;
+  selections: BetSelection[];
+  expanded?: boolean;
+}
+
+const bets = ref<Bet[]>([]);
+const loading = ref(true);
+
+onMounted(async () => {
+  loadCurrentUser();
+  
+  // Carrega tudo em paralelo para ser rápido
+  await Promise.all([
+    loadHeaderData(),      // Dados do Carrossel (Lista, Saldo, Rank)
+    loadMyBetsHistory()    // Dados da página (Histórico)
+  ]);
+});
+
+// --- LÓGICA DO CABEÇALHO ---
+const loadCurrentUser = () => {
+    try {
+        const stored = localStorage.getItem('user') || localStorage.getItem('user_data');
+        if (stored) {
+            const userData = JSON.parse(stored);
+            const rawId = userData.Code || userData.code || userData.id || '';
+            currentUser.value = String(rawId).replace(/\D/g, ''); 
+        }
+    } catch (e) { console.error("Erro user:", e); }
+};
+
+const loadHeaderData = async () => {
+    try {
+        // 1. Carrega dados do torneio atual (Saldo/Rank)
+        if (currentUser.value) {
+            const res = await TournamentService.getTournament(tournamentId, currentUser.value);
+            if (res.data) {
+                fantasyBalance.value = res.data.currentFantasyBalance ?? res.data.initialFantasyBalance ?? 0;
+                userRank.value = res.data.rank || 0;
+            }
+            
+            // 2. Carrega lista de torneios para o carrossel
+            const listRes = await TournamentService.listTournaments(currentUser.value);
+            if (listRes && listRes.data) {
+                const joined = listRes.data.filter((t: any) => t.isJoined === true);
+                myTournaments.value = joined.map((t: any) => ({
+                    id: t.id || t.Id,
+                    name: t.name || t.Name,
+                    endDate: t.endDate || t.EndDate,
+                    isJoined: true,
+                    userRank: t.rank || t.Rank || t.userRank
+                }));
+            }
+        }
+    } catch (e) { console.error("Erro header:", e); }
+};
+
+const handleCarouselSelect = (newId: number) => {
+    if (newId === tournamentId) return; // Já está aqui
+    // Ao trocar de torneio, volta para o PLAY daquele torneio
+    router.push(`/tournament/${newId}/play`);
+};
+
+// --- LÓGICA DE HISTÓRICO ---
+const loadMyBetsHistory = async () => {
+  try {
+    const response = await TournamentService.getMyBets(tournamentId);
+    bets.value = response.data.map((b: any) => ({
+        id: b.id || b.Id,
+        amount: b.amount || b.Amount,
+        totalOdds: b.totalOdds || b.TotalOdds,
+        potentialWin: b.potentialWin || b.PotentialWin,
+        status: b.status || b.Status,
+        placedAt: b.placedAt || b.PlacedAt,
+        selections: (b.selections || b.Selections || []).map((s: any) => ({
+            homeTeam: s.homeTeam || s.HomeTeam,
+            awayTeam: s.awayTeam || s.AwayTeam,
+            marketName: s.marketName || s.MarketName,
+            selectionName: s.selectionName || s.SelectionName,
+            odds: s.odds || s.Odds,
+            status: s.status || s.Status
+        })),
+        expanded: (b.selections || b.Selections || []).length === 1
+    }));
+  } catch (error) {
+    console.error("Erro bets:", error);
+  } finally {
+    loading.value = false;
+  }
+};
+
+// --- HELPERS VISUAIS ---
+const formatCurrency = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v).replace('R$', '🪙');
+
+const formatDate = (dateString: string) => {
+  if (!dateString || dateString.startsWith('0001')) return '--/--';
+  const date = new Date(dateString);
+  return date.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+};
+
+const formatMarketName = (name: string) => {
+  if (!name) return '';
+  const clean = name.toLowerCase().trim();
+  if (clean === '1x2' || clean === 'match winner') return 'Resultado Final';
+  return name;
+};
+
+const getSelectionDisplay = (sel: BetSelection) => {
+    const rawSel = (sel.selectionName || '').toLowerCase().trim();
+    if (rawSel === '1') return sel.homeTeam;
+    if (rawSel === '2') return sel.awayTeam;
+    if (rawSel === 'x' || rawSel === 'empate') return 'Empate';
+    return sel.selectionName;
+};
+
+const getSelectionStatusClasses = (status: string) => {
+    const s = (status || '').toLowerCase();
+    if (s === 'won') return 'text-green-400 border-green-500/20';
+    if (s === 'lost') return 'text-red-400 border-red-500/20';
+    return 'text-blue-400 border-blue-400/20';
+};
+
+const getRealStatus = (bet: Bet): string => bet.status?.toLowerCase() || '';
+
+const getBetStatusLabel = (bet: Bet) => {
+  const status = getRealStatus(bet);
+  if (status === 'won' || status === 'lost') return 'Finalizada';
+  return 'Confirmada';
+};
+
+const getStatusClasses = (bet: Bet) => {
+  const status = getRealStatus(bet);
+  if (status === 'won') return 'text-green-400 border-green-500/30 bg-green-500/10';
+  if (status === 'lost') return 'text-red-400 border-red-500/30 bg-red-500/10';
+  return 'text-blue-400 border-blue-500/30 bg-blue-500/10';
+};
+
+const getBorderClass = (bet: Bet) => {
+    const status = getRealStatus(bet);
+    if (status === 'won') return 'border-green-500 border-l-4';
+    if (status === 'lost') return 'border-red-500 border-l-4';
+    return 'border-blue-500 border-l-4'; 
+}
+
+const getReturnLabel = (bet: Bet) => {
+    const status = getRealStatus(bet);
+    if (status === 'won') return 'Retorno Pago';
+    if (status === 'lost') return 'Retorno';
+    return 'Retorno Potencial';
+}
+
+const formatReturnValue = (bet: Bet) => {
+    const status = getRealStatus(bet);
+    if (status === 'lost') return '🪙 0,00';
+    return formatCurrency(bet.potentialWin);
+}
+
+const getReturnValueClass = (bet: Bet) => {
+    const status = getRealStatus(bet);
+    if (status === 'won') return 'text-[#00ffb9] drop-shadow-[0_0_5px_rgba(0,255,185,0.3)]'; 
+    if (status === 'lost') return 'text-slate-500 line-through decoration-1';
+    return 'text-white';
+}
+</script>
+
 <template>
-  <div class="min-h-screen bg-[#0f172a] text-slate-200 font-sans pb-10">
+  <div class="min-h-screen bg-[#0f172a] text-slate-200 font-sans pb-10 flex flex-col">
     
-    <div class="sticky top-0 z-50 bg-[#0f172a] border-b border-slate-800/50 shadow-sm">
-      <div class="max-w-4xl mx-auto px-4 h-16 flex items-center gap-4">
-        
-        <router-link :to="`/tournament/${tournamentId}/play`" class="text-slate-400 hover:text-white transition p-2 hover:bg-white/5 rounded-full border border-slate-700/30 bg-[#1e293b]/50 backdrop-blur-sm">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-          </svg>
-        </router-link>
-        
-        <h1 class="text-lg font-bold text-white tracking-widest uppercase flex items-center gap-2.5">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/>
-            <path d="M13 5v2"/>
-            <path d="M13 17v2"/>
-            <path d="M13 11v2"/>
-          </svg>
-          Apostas do Torneio
-        </h1>
+    <TournamentHeaderCarousel 
+        :tournaments="myTournaments"
+        :active-tournament-id="tournamentId"
+        :fantasy-balance="fantasyBalance"
+        :user-rank="userRank"
+        @select="handleCarouselSelect"
+        @open-history="null" 
+        @open-ranking="showRanking = true"
+        class="!mb-0" 
+    />
 
-      </div>
-    </div>
-
-    <div class="max-w-4xl mx-auto px-4 mt-6">
+    <div class="max-w-4xl mx-auto px-4 mt-2 w-full flex-1">
       
+      <div class="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
+          <div class="flex items-center gap-2"> <button @click="router.push(`/tournament/${tournamentId}/play`)" class="p-1.5 rounded-full bg-slate-800 hover:bg-slate-700 transition-colors text-slate-400 hover:text-white">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+                  </svg>
+              </button>
+              <h1 class="text-sm md:text-xl font-bold text-white tracking-wide uppercase">Minhas Apostas</h1>
+          </div>
+          <div class="text-[10px] md:text-xs text-slate-500 uppercase font-bold tracking-widest hidden md:block">
+              Histórico Completo
+          </div>
+      </div>
+
       <div v-if="loading" class="flex flex-col items-center justify-center py-20 opacity-50">
         <div class="w-8 h-8 border-2 border-t-transparent border-blue-500 rounded-full animate-spin mb-3"></div>
         <span class="text-xs uppercase tracking-widest text-slate-500">Sincronizando...</span>
@@ -37,6 +240,9 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
           </svg>
           <p class="text-sm text-slate-400 font-medium">Você ainda não apostou neste torneio.</p>
+          <button @click="router.push(`/tournament/${tournamentId}/play`)" class="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase rounded shadow-lg transition-all">
+              Fazer uma aposta
+          </button>
         </div>
 
         <div v-for="bet in bets" :key="bet.id" 
@@ -95,7 +301,6 @@
                   </div>
                   
                   <div class="flex items-center flex-wrap gap-2 text-xs">
-                    
                     <span class="text-slate-500 font-bold uppercase text-[10px] tracking-wide bg-slate-800/50 px-1.5 py-0.5 rounded">
                         {{ formatMarketName(sel.marketName) }}
                     </span>
@@ -108,13 +313,10 @@
                     </div>
                     <span v-else class="text-slate-600">👉</span>
                     
-                    <span class="font-bold border-b pb-0.5"
-                          :class="getSelectionStatusClasses(sel.status)">
+                    <span class="font-bold border-b pb-0.5" :class="getSelectionStatusClasses(sel.status)">
                         {{ getSelectionDisplay(sel) }}
                     </span>
-
                   </div>
-
                 </div>
 
                 <div class="flex flex-col items-end justify-center h-full min-w-[60px]">
@@ -139,8 +341,7 @@
                     :class="bet.status?.toLowerCase() === 'lost' ? 'text-slate-500' : 'text-slate-400'">
                 {{ getReturnLabel(bet) }}
               </span>
-              <span class="text-base font-black tracking-wide" 
-                    :class="getReturnValueClass(bet)">
+              <span class="text-base font-black tracking-wide" :class="getReturnValueClass(bet)">
                 {{ formatReturnValue(bet) }}
               </span>
             </div>
@@ -149,150 +350,14 @@
         </div>
       </div>
     </div>
+
+    <TournamentRanking 
+        v-if="showRanking" 
+        :is-open="showRanking" 
+        :tournament-id="tournamentId" 
+        :current-user-id="currentUser" 
+        @close="showRanking = false" 
+    />
+
   </div>
 </template>
-
-<script setup lang="ts">
-import { ref, onMounted } from 'vue';
-import { useRoute } from 'vue-router'; // ✅ Adicionado router
-import { Check, X } from 'lucide-vue-next';
-import TournamentService from '../../services/Tournament/TournamentService'; // ✅ Mudado o Service
-
-const route = useRoute();
-const tournamentId = Number(route.params.id);
-
-// ✅ Interface ajustada para o que vem do backend do torneio (PascalCase mapeado)
-interface BetSelection {
-  homeTeam: string;
-  awayTeam: string;
-  marketName: string;
-  selectionName: string;
-  odds: number;
-  status: string;
-}
-
-interface Bet {
-  id: number;
-  amount: number;
-  totalOdds: number;
-  potentialWin: number;
-  status: string;
-  placedAt: string;
-  selections: BetSelection[];
-  expanded?: boolean;
-}
-
-const bets = ref<Bet[]>([]);
-const loading = ref(true);
-
-onMounted(async () => {
-  try {
-    // ✅ Chama o serviço do torneio
-    const response = await TournamentService.getMyBets(tournamentId);
-    
-    // Mapeia caso o backend retorne PascalCase (C# padrão)
-    bets.value = response.data.map((b: any) => ({
-        id: b.id || b.Id,
-        amount: b.amount || b.Amount,
-        totalOdds: b.totalOdds || b.TotalOdds,
-        potentialWin: b.potentialWin || b.PotentialWin,
-        status: b.status || b.Status,
-        placedAt: b.placedAt || b.PlacedAt,
-        selections: (b.selections || b.Selections || []).map((s: any) => ({
-            homeTeam: s.homeTeam || s.HomeTeam,
-            awayTeam: s.awayTeam || s.AwayTeam,
-            marketName: s.marketName || s.MarketName,
-            selectionName: s.selectionName || s.SelectionName,
-            odds: s.odds || s.Odds,
-            status: s.status || s.Status
-        })),
-        expanded: (b.selections || b.Selections || []).length === 1
-    }));
-
-  } catch (error) {
-    console.error("Erro ao carregar histórico do torneio:", error);
-  } finally {
-    loading.value = false;
-  }
-});
-
-// --- HELPERS (IDÊNTICOS AO ORIGINAL) ---
-
-const formatCurrency = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v).replace('R$', '🪙'); // Ícone de ficha opcional
-
-const formatDate = (dateString: string) => {
-  if (!dateString || dateString.startsWith('0001')) return '--/--';
-  const date = new Date(dateString);
-  return date.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-};
-
-const formatMarketName = (name: string) => {
-  if (!name) return '';
-  const clean = name.toLowerCase().trim();
-  if (clean === '1x2' || clean === 'match winner' || clean === 'moneyline') {
-    return 'Resultado Final';
-  }
-  return name;
-};
-
-const getSelectionDisplay = (sel: BetSelection) => {
-    // Lógica para mostrar nome do time em vez de '1' ou '2'
-    const rawSel = (sel.selectionName || '').toLowerCase().trim();
-    if (rawSel === '1') return sel.homeTeam;
-    if (rawSel === '2') return sel.awayTeam;
-    if (rawSel === 'x' || rawSel === 'empate') return 'Empate';
-    return sel.selectionName;
-};
-
-const getSelectionStatusClasses = (status: string) => {
-    const s = (status || '').toLowerCase();
-    if (s === 'won') return 'text-green-400 border-green-500/20';
-    if (s === 'lost') return 'text-red-400 border-red-500/20';
-    return 'text-blue-400 border-blue-400/20';
-};
-
-const getRealStatus = (bet: Bet): string => {
-    const mainStatus = bet.status?.toLowerCase() || '';
-    return mainStatus;
-};
-
-const getBetStatusLabel = (bet: Bet) => {
-  const status = getRealStatus(bet);
-  if (status === 'won' || status === 'lost') return 'Finalizada';
-  return 'Confirmada';
-};
-
-const getStatusClasses = (bet: Bet) => {
-  const status = getRealStatus(bet);
-  if (status === 'won') return 'text-green-400 border-green-500/30 bg-green-500/10';
-  if (status === 'lost') return 'text-red-400 border-red-500/30 bg-red-500/10';
-  return 'text-blue-400 border-blue-500/30 bg-blue-500/10';
-};
-
-const getBorderClass = (bet: Bet) => {
-    const status = getRealStatus(bet);
-    if (status === 'won') return 'border-green-500 border-l-4';
-    if (status === 'lost') return 'border-red-500 border-l-4';
-    return 'border-blue-500 border-l-4'; 
-}
-
-const getReturnLabel = (bet: Bet) => {
-    const status = getRealStatus(bet);
-    if (status === 'won') return 'Retorno Pago';
-    if (status === 'lost') return 'Retorno';
-    return 'Retorno Potencial';
-}
-
-const formatReturnValue = (bet: Bet) => {
-    const status = getRealStatus(bet);
-    if (status === 'lost') return '🪙 0,00';
-    return formatCurrency(bet.potentialWin);
-}
-
-const getReturnValueClass = (bet: Bet) => {
-    const status = getRealStatus(bet);
-    if (status === 'won') return 'text-[#00ffb9] drop-shadow-[0_0_5px_rgba(0,255,185,0.3)]'; 
-    if (status === 'lost') return 'text-slate-500 line-through decoration-1';
-    return 'text-white';
-}
-</script>

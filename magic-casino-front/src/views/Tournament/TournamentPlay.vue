@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import Swal from 'sweetalert2';
-import { Trophy, ChevronLeft, Calendar, ChevronDown, ChevronRight } from 'lucide-vue-next';
+import { Trophy, ChevronLeft, ChevronDown, ChevronRight, AlertCircle, Calendar } from 'lucide-vue-next';
 import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signalr';
 import { useBetStore, type BetType } from '../../stores/useBetStore'; 
 import tournamentService from '../../services/Tournament/TournamentService';
@@ -40,6 +40,11 @@ const showRanking = ref(false);
 const activeMode = ref<'prematch' | 'live'>('prematch');
 const selectedSport = ref<string>('all');
 const dataSelecionada = ref<string>('all');
+
+// ✅ Lógica para esconder o menu se não tiver jogos e não estiver carregando
+const showMenu = computed(() => {
+    return isLoadingGames.value || games.value.length > 0;
+});
 
 let connection: HubConnection | null = null;
 
@@ -272,9 +277,10 @@ const handleImageError = (event: Event) => { (event.target as HTMLImageElement).
             @select="handleCarouselSelect"
             @open-history="router.push(`/tournament/${tournamentId}/my-bets`)"
             @open-ranking="showRanking = true"
+            class="!mb-0" 
         />
 
-        <div class="sticky top-0 z-30 shadow-xl border-b border-white/5">
+        <div v-if="showMenu" class="sticky top-0 z-30 shadow-xl border-b border-white/5 -mt-8 md:-mt-10">
             <TournamentSportsMenu 
                 :games="games"
                 v-model:activeMode="activeMode"
@@ -283,14 +289,22 @@ const handleImageError = (event: Event) => { (event.target as HTMLImageElement).
             />
         </div>
 
-        <div class="max-w-[1200px] mx-auto px-2 md:px-4 space-y-3 w-full pb-20 pt-4">
+        <div class="max-w-[1200px] mx-auto px-2 md:px-4 space-y-3 w-full pb-20 pt-2">
              <div v-if="isLoadingGames" class="space-y-3 pt-2">
                  <div v-for="i in 5" :key="i" class="bg-[#1a2c38] h-20 rounded animate-pulse border border-white/5"></div>
              </div>
              
-             <div v-else-if="sortedGroups.length === 0" class="py-12 flex flex-col items-center justify-center text-gray-500 opacity-60 border border-dashed border-gray-700 rounded bg-[#1a2c38]">
-                  <Calendar class="w-10 h-10 mb-2 opacity-50"/>
-                  <p>Nenhum jogo encontrado para estes filtros.</p>
+             <div v-else-if="sortedGroups.length === 0" class="flex flex-col items-center justify-center min-h-[400px] text-center p-8">
+                  <div class="bg-[#1e293b] p-6 rounded-full mb-4 border border-white/5 shadow-2xl">
+                      <AlertCircle class="w-12 h-12 text-slate-500" />
+                  </div>
+                  <h3 class="text-xl font-bold text-white mb-2">Sem Jogos Disponíveis</h3>
+                  <p class="text-sm text-slate-400 max-w-md mx-auto">
+                      Não há jogos compatíveis com as regras deste torneio no momento ou o torneio já foi finalizado.
+                  </p>
+                  <button @click="router.push('/tournaments')" class="mt-6 px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg transition-all shadow-lg hover:shadow-blue-500/20 text-sm uppercase tracking-wide">
+                      Voltar para o Lobby
+                  </button>
              </div>
              
              <div v-else v-for="group in sortedGroups" :key="group.key" class="rounded overflow-hidden">
@@ -304,41 +318,89 @@ const handleImageError = (event: Event) => { (event.target as HTMLImageElement).
                  </div>
                  
                  <div v-show="openLeagues.has(group.key)" class="bg-[#0f172a] border-x border-b border-[#1a2c38]">
-                     <div v-for="game in group.games" :key="game.id" class="py-2 px-2 border-b border-white/5 flex flex-col md:flex-row items-center gap-2 transition-all hover:bg-white/[0.02]">
-                        <div class="flex flex-row md:flex-col items-center justify-start md:justify-center gap-2 md:gap-0.5 min-w-[60px] md:w-[60px] text-left md:text-center mr-2 md:mr-0 border-r md:border-r-0 md:border-b-0 border-white/10 pr-2 md:pr-0 h-full">
-                           <div class="text-[9px] font-bold text-blue-400 leading-none">{{ formatDate(game.commenceTime) }}</div>
-                           <div class="text-white text-[10px] font-bold leading-none">{{ formatTime(game.commenceTime) }}</div>
+                     <div v-for="game in group.games" :key="game.id">
+                        
+                        <div class="md:hidden flex flex-col gap-1 p-2 border-b border-white/5 hover:bg-white/[0.02]">
+                            <div class="flex items-center justify-center gap-1.5 text-[10px] font-bold text-yellow-400 uppercase tracking-wider">
+                                <Calendar class="w-3 h-3 text-yellow-400" />
+                                <span>{{ formatDate(game.commenceTime) }} - {{ formatTime(game.commenceTime) }}H</span>
+                            </div>
+
+                            <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                                <div class="flex items-center justify-end gap-2 text-right">
+                                    <span class="text-xs font-bold text-white truncate leading-tight">{{ game.homeTeam }}</span>
+                                    <TeamLogo :teamName="game.homeTeam" :remoteUrl="game.homeTeamLogo" size="w-6 h-6" />
+                                </div>
+
+                                <span class="text-[9px] font-bold text-blue-500 bg-blue-500/10 px-1.5 py-0.5 rounded">VS</span>
+
+                                <div class="flex items-center justify-start gap-2 text-left">
+                                    <TeamLogo :teamName="game.awayTeam" :remoteUrl="game.awayTeamLogo" size="w-6 h-6" />
+                                    <span class="text-xs font-bold text-white truncate leading-tight">{{ game.awayTeam }}</span>
+                                </div>
+                            </div>
+
+                            <div class="flex gap-1 w-full">
+                                <button @click="handleBetClick(game, '1')" :disabled="parseFloat(getOdd(game, '1')) <= 1.0"
+                                    :class="['flex-1 h-9 rounded-sm flex flex-col items-center justify-center transition-all group border border-transparent',
+                                    parseFloat(getOdd(game, '1')) <= 1.0 ? 'opacity-50 cursor-not-allowed bg-[#1a2c38]' : getSelectedType(String(game.externalId || game.id)) === '1' ? 'bg-blue-600 shadow-md' : 'bg-[#1a2c38] hover:bg-[#213746]']">
+                                    <span class="text-[9px] font-bold uppercase tracking-wide opacity-70" :class="getSelectedType(String(game.externalId || game.id)) === '1' ? 'text-white' : 'text-gray-400'">1</span>
+                                    <span class="text-xs font-bold leading-none" :class="getSelectedType(String(game.externalId || game.id)) === '1' ? 'text-white' : 'text-white group-hover:text-blue-400'">{{ getOdd(game, '1') }}</span>
+                                </button>
+
+                                <button v-if="parseFloat(getOdd(game, 'X')) > 1.01" @click="handleBetClick(game, 'X')" 
+                                    :class="['flex-1 h-9 rounded-sm flex flex-col items-center justify-center transition-all group border border-transparent',
+                                    getSelectedType(String(game.externalId || game.id)) === 'X' ? 'bg-blue-600 shadow-md' : 'bg-[#1a2c38] hover:bg-[#213746]']">
+                                    <span class="text-[9px] font-bold uppercase tracking-wide opacity-70" :class="getSelectedType(String(game.externalId || game.id)) === 'X' ? 'text-white' : 'text-gray-400'">X</span>
+                                    <span class="text-xs font-bold leading-none" :class="getSelectedType(String(game.externalId || game.id)) === 'X' ? 'text-white' : 'text-white group-hover:text-blue-400'">{{ getOdd(game, 'X') }}</span>
+                                </button>
+
+                                <button @click="handleBetClick(game, '2')" :disabled="parseFloat(getOdd(game, '2')) <= 1.0"
+                                    :class="['flex-1 h-9 rounded-sm flex flex-col items-center justify-center transition-all group border border-transparent',
+                                    parseFloat(getOdd(game, '2')) <= 1.0 ? 'opacity-50 cursor-not-allowed bg-[#1a2c38]' : getSelectedType(String(game.externalId || game.id)) === '2' ? 'bg-blue-600 shadow-md' : 'bg-[#1a2c38] hover:bg-[#213746]']">
+                                    <span class="text-[9px] font-bold uppercase tracking-wide opacity-70" :class="getSelectedType(String(game.externalId || game.id)) === '2' ? 'text-white' : 'text-gray-400'">2</span>
+                                    <span class="text-xs font-bold leading-none" :class="getSelectedType(String(game.externalId || game.id)) === '2' ? 'text-white' : 'text-white group-hover:text-blue-400'">{{ getOdd(game, '2') }}</span>
+                                </button>
+                            </div>
                         </div>
 
-                        <div class="flex-1 w-full text-white md:border-l md:border-white/5 md:pl-3">
-                           <div class="flex flex-col gap-1.5 justify-center h-full">
-                             <div class="flex items-center gap-2"><TeamLogo :teamName="game.homeTeam" :remoteUrl="game.homeTeamLogo" size="w-4 h-4" /><span class="font-medium text-xs text-white/90 truncate">{{ game.homeTeam }}</span></div>
-                             <div class="flex items-center gap-2"><TeamLogo :teamName="game.awayTeam" :remoteUrl="game.awayTeamLogo" size="w-4 h-4" /><span class="font-medium text-xs text-white/90 truncate">{{ game.awayTeam }}</span></div>
-                           </div>
+                        <div class="hidden md:flex py-2 px-2 border-b border-white/5 flex-row items-center gap-2 transition-all hover:bg-white/[0.02]">
+                            <div class="flex flex-col items-center justify-center gap-0.5 w-[60px] text-center">
+                                <div class="text-[9px] font-bold text-blue-400 leading-none">{{ formatDate(game.commenceTime) }}</div>
+                                <div class="text-white text-[10px] font-bold leading-none">{{ formatTime(game.commenceTime) }}</div>
+                            </div>
+
+                            <div class="flex-1 w-full text-white border-l border-white/5 pl-3">
+                                <div class="flex flex-col gap-1.5 justify-center h-full">
+                                    <div class="flex items-center gap-2"><TeamLogo :teamName="game.homeTeam" :remoteUrl="game.homeTeamLogo" size="w-4 h-4" /><span class="font-medium text-xs text-white/90 truncate">{{ game.homeTeam }}</span></div>
+                                    <div class="flex items-center gap-2"><TeamLogo :teamName="game.awayTeam" :remoteUrl="game.awayTeamLogo" size="w-4 h-4" /><span class="font-medium text-xs text-white/90 truncate">{{ game.awayTeam }}</span></div>
+                                </div>
+                            </div>
+
+                            <div class="flex gap-1 w-auto">
+                                <button @click="handleBetClick(game, '1')" :disabled="parseFloat(getOdd(game, '1')) <= 1.0"
+                                    :class="['w-[70px] h-auto py-1.5 rounded-sm flex flex-col items-center justify-center transition-all group border border-transparent',
+                                    parseFloat(getOdd(game, '1')) <= 1.0 ? 'opacity-50 cursor-not-allowed bg-[#1a2c38]' : getSelectedType(String(game.externalId || game.id)) === '1' ? 'bg-blue-600 shadow-md' : 'bg-[#1a2c38] hover:bg-[#213746]']">
+                                    <span class="text-[9px] font-bold uppercase mb-0.5 tracking-wide" :class="getSelectedType(String(game.externalId || game.id)) === '1' ? 'text-white' : 'text-gray-400'">1</span>
+                                    <span class="text-xs font-bold" :class="getSelectedType(String(game.externalId || game.id)) === '1' ? 'text-white' : 'text-white group-hover:text-blue-400'">{{ getOdd(game, '1') }}</span>
+                                </button>
+
+                                <button v-if="parseFloat(getOdd(game, 'X')) > 1.01" @click="handleBetClick(game, 'X')" 
+                                    :class="['w-[70px] h-auto py-1.5 rounded-sm flex flex-col items-center justify-center transition-all group border border-transparent',
+                                    getSelectedType(String(game.externalId || game.id)) === 'X' ? 'bg-blue-600 shadow-md' : 'bg-[#1a2c38] hover:bg-[#213746]']">
+                                    <span class="text-[9px] font-bold uppercase mb-0.5 tracking-wide" :class="getSelectedType(String(game.externalId || game.id)) === 'X' ? 'text-white' : 'text-gray-400'">X</span>
+                                    <span class="text-xs font-bold" :class="getSelectedType(String(game.externalId || game.id)) === 'X' ? 'text-white' : 'text-white group-hover:text-blue-400'">{{ getOdd(game, 'X') }}</span>
+                                </button>
+
+                                <button @click="handleBetClick(game, '2')" :disabled="parseFloat(getOdd(game, '2')) <= 1.0"
+                                    :class="['w-[70px] h-auto py-1.5 rounded-sm flex flex-col items-center justify-center transition-all group border border-transparent',
+                                    parseFloat(getOdd(game, '2')) <= 1.0 ? 'opacity-50 cursor-not-allowed bg-[#1a2c38]' : getSelectedType(String(game.externalId || game.id)) === '2' ? 'bg-blue-600 shadow-md' : 'bg-[#1a2c38] hover:bg-[#213746]']">
+                                    <span class="text-[9px] font-bold uppercase mb-0.5 tracking-wide" :class="getSelectedType(String(game.externalId || game.id)) === '2' ? 'text-white' : 'text-gray-400'">2</span>
+                                    <span class="text-xs font-bold" :class="getSelectedType(String(game.externalId || game.id)) === '2' ? 'text-white' : 'text-white group-hover:text-blue-400'">{{ getOdd(game, '2') }}</span>
+                                </button>
+                            </div>
                         </div>
 
-                        <div class="flex gap-1 w-full md:w-auto mt-2 md:mt-0">
-                           <button @click="handleBetClick(game, '1')" :disabled="parseFloat(getOdd(game, '1')) <= 1.0"
-                             :class="['flex-1 md:w-[70px] h-auto py-1.5 rounded-sm flex flex-col items-center justify-center transition-all group border border-transparent',
-                               parseFloat(getOdd(game, '1')) <= 1.0 ? 'opacity-50 cursor-not-allowed bg-[#1a2c38]' : getSelectedType(String(game.externalId || game.id)) === '1' ? 'bg-blue-600 shadow-md' : 'bg-[#1a2c38] hover:bg-[#213746]']">
-                             <span class="text-[9px] font-bold uppercase mb-0.5 tracking-wide" :class="getSelectedType(String(game.externalId || game.id)) === '1' ? 'text-white' : 'text-gray-400'">1</span>
-                             <span class="text-xs font-bold" :class="getSelectedType(String(game.externalId || game.id)) === '1' ? 'text-white' : 'text-white group-hover:text-blue-400'">{{ getOdd(game, '1') }}</span>
-                           </button>
-
-                           <button v-if="parseFloat(getOdd(game, 'X')) > 1.01" @click="handleBetClick(game, 'X')" 
-                             :class="['flex-1 md:w-[70px] h-auto py-1.5 rounded-sm flex flex-col items-center justify-center transition-all group border border-transparent',
-                               getSelectedType(String(game.externalId || game.id)) === 'X' ? 'bg-blue-600 shadow-md' : 'bg-[#1a2c38] hover:bg-[#213746]']">
-                             <span class="text-[9px] font-bold uppercase mb-0.5 tracking-wide" :class="getSelectedType(String(game.externalId || game.id)) === 'X' ? 'text-white' : 'text-gray-400'">X</span>
-                             <span class="text-xs font-bold" :class="getSelectedType(String(game.externalId || game.id)) === 'X' ? 'text-white' : 'text-white group-hover:text-blue-400'">{{ getOdd(game, 'X') }}</span>
-                           </button>
-
-                           <button @click="handleBetClick(game, '2')" :disabled="parseFloat(getOdd(game, '2')) <= 1.0"
-                             :class="['flex-1 md:w-[70px] h-auto py-1.5 rounded-sm flex flex-col items-center justify-center transition-all group border border-transparent',
-                               parseFloat(getOdd(game, '2')) <= 1.0 ? 'opacity-50 cursor-not-allowed bg-[#1a2c38]' : getSelectedType(String(game.externalId || game.id)) === '2' ? 'bg-blue-600 shadow-md' : 'bg-[#1a2c38] hover:bg-[#213746]']">
-                             <span class="text-[9px] font-bold uppercase mb-0.5 tracking-wide" :class="getSelectedType(String(game.externalId || game.id)) === '2' ? 'text-white' : 'text-gray-400'">2</span>
-                             <span class="text-xs font-bold" :class="getSelectedType(String(game.externalId || game.id)) === '2' ? 'text-white' : 'text-white group-hover:text-blue-400'">{{ getOdd(game, '2') }}</span>
-                           </button>
-                        </div>
                      </div>
                  </div>
              </div>
