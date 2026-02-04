@@ -17,6 +17,8 @@ namespace Magic_casino_tournament.Services
         // Método legado (1 aposta)
         Task<string> PlaceBetAsync(int tournamentId, string userId, TournamentBet bet);
 
+        Task<List<TournamentBet>> GetUserBetsAsync(int tournamentId, string userId);
+
         // ✅ Método de Lote (Batch) - Obrigatório para o novo Cupom
         Task<(bool Success, string Message)> PlaceBatchBetsAsync(int tournamentId, string userId, PlaceTournamentBetRequest request);
 

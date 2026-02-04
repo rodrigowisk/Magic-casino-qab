@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization; // <--- 1. ADICIONE ESTE IMPORT
 
 namespace Magic_casino_tournament.Models
 {
@@ -9,7 +10,11 @@ namespace Magic_casino_tournament.Models
         public int Id { get; set; }
 
         public int TournamentBetId { get; set; }
+
+        // <--- 2. ADICIONE O ATRIBUTO [JsonIgnore] AQUI
+        // Isso impede que o JSON tente voltar para a aposta pai e crie o loop
         [ForeignKey("TournamentBetId")]
+        [JsonIgnore]
         public virtual TournamentBet TournamentBet { get; set; }
 
         // Dados do Jogo
@@ -25,6 +30,6 @@ namespace Magic_casino_tournament.Models
         [Column(TypeName = "decimal(18,2)")]
         public decimal Odds { get; set; }
 
-        public string Status { get; set; } = "Pending"; // Pending, Won, Lost
+        public string Status { get; set; } = "Pending";
     }
 }

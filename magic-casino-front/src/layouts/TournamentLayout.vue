@@ -1,39 +1,276 @@
 <script setup lang="ts">
-import Sidebar from '../components/Sidebar.vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
+import { Menu, Search, Loader2, X } from 'lucide-vue-next';
+import SportsService from '../services/SportsService'; 
 
-// Não importamos o BetSlip.vue aqui!
-// O cupom do torneio é gerenciado internamente pelas páginas (Lobby/Play)
+import Sidebar from '../components/Sidebar.vue'; 
+import AuthModal from '../components/AuthModal.vue'; 
+import WalletDropdown from '../components/WalletDropdown.vue'; 
+import UserDropdown from '../components/UserDropdown.vue'; 
+
+import { useAuthStore } from '../stores/useAuthStore';
+
+const router = useRouter();
+const route = useRoute(); 
+const authStore = useAuthStore();
+
+// --- LÓGICA DE SCROLL DINÂMICO ---
+const isPlayPage = computed(() => route.name === 'TournamentPlay');
+
+// --- ESTADOS DE LAYOUT ---
+const isSidebarOpen = ref(true);
+const isMobile = ref(false); 
+
+// --- ESTADOS DE AUTH ---
+const showAuthModal = ref(false);
+const authModalTab = ref<'login' | 'register'>('login');
+
+const openAuthModal = (tab: 'login' | 'register') => {
+    authModalTab.value = tab;
+    showAuthModal.value = true;
+};
+
+const handleLoginSuccess = (data: any) => {
+    authStore.setLogin(data.user || data, localStorage.getItem('token') || '');
+    showAuthModal.value = false;
+};
+
+// --- LÓGICA DE BUSCA ---
+const searchQuery = ref('');
+const searchResults = ref<any[]>([]);
+const isSearching = ref(false);
+const showSearchResults = ref(false);
+let searchTimeout: any = null;
+const searchContainerRef = ref<HTMLElement | null>(null);
+
+const formatDate = (dateString: string) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ' + 
+           date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+};
+
+const getEventId = (item: any) => {
+    if (!item) return null;
+    return item.externalId || item.ExternalId || item.id || item.Id || item.eventId || item.gameId;
+};
+
+const handleInput = () => {
+    if (searchTimeout) clearTimeout(searchTimeout);
+    if (searchQuery.value.length < 2) {
+        searchResults.value = [];
+        showSearchResults.value = false;
+        return;
+    }
+    isSearching.value = true;
+    showSearchResults.value = true;
+
+    searchTimeout = setTimeout(async () => {
+        try {
+            const events = await SportsService.getEvents('soccer', 1, 300);
+            if (events && Array.isArray(events)) {
+                const term = searchQuery.value.toLowerCase();
+                searchResults.value = events.filter((e: any) => {
+                    const home = (e.homeTeam || e.HomeTeam || '').toLowerCase();
+                    const away = (e.awayTeam || e.AwayTeam || '').toLowerCase();
+                    const league = (e.league || e.League || '').toLowerCase();
+                    return home.includes(term) || away.includes(term) || league.includes(term);
+                }).slice(0, 8);
+            } else {
+                searchResults.value = [];
+            }
+        } catch (error) {
+            console.error("Erro na busca:", error);
+            searchResults.value = [];
+        } finally {
+            isSearching.value = false;
+        }
+    }, 600);
+};
+
+const clearSearch = () => {
+    searchQuery.value = '';
+    searchResults.value = [];
+    showSearchResults.value = false;
+};
+
+const goToEvent = (item: any) => {
+    const id = getEventId(item);
+    if (!id) { return; }
+    router.push(`/event/${id}`);
+    showSearchResults.value = false;
+    clearSearch(); 
+};
+
+const handleClickOutsideSearch = (event: MouseEvent) => {
+    if (searchContainerRef.value && !searchContainerRef.value.contains(event.target as Node)) {
+        showSearchResults.value = false;
+    }
+};
+
+// --- RESPONSIVIDADE ---
+let lastWidth = typeof window !== 'undefined' ? window.innerWidth : 0;
+
+const handleResize = () => {
+    if (typeof window === 'undefined') return;
+    
+    const currentWidth = window.innerWidth;
+    isMobile.value = currentWidth < 768;
+
+    if (currentWidth !== lastWidth) {
+        if (isMobile.value) {
+            isSidebarOpen.value = false;
+        } else {
+            isSidebarOpen.value = true;
+        }
+        lastWidth = currentWidth;
+    }
+};
+
+const checkScreenSize = () => {
+    if (typeof window !== 'undefined') {
+        const width = window.innerWidth;
+        isMobile.value = width < 768;
+        
+        if (isMobile.value) {
+            isSidebarOpen.value = false;
+        } else {
+            isSidebarOpen.value = true;
+        }
+    }
+};
+
+onMounted(() => {
+    checkScreenSize();
+    window.addEventListener('resize', handleResize);
+    document.addEventListener('click', handleClickOutsideSearch);
+});
+
+onUnmounted(() => {
+    window.removeEventListener('resize', handleResize);
+    document.removeEventListener('click', handleClickOutsideSearch);
+});
 </script>
 
 <template>
-  <div class="flex h-screen bg-[#0f172a] text-white overflow-hidden font-sans">
+  <div class="h-screen bg-stake-dark text-stake-text font-sans flex flex-col overflow-hidden">
     
-    <Sidebar />
+    <AuthModal 
+        v-if="showAuthModal" 
+        :initial-tab="authModalTab"
+        @close="showAuthModal = false" 
+        @login-success="handleLoginSuccess" 
+    />
 
-    <div class="flex-1 flex flex-col h-full relative overflow-y-auto custom-scrollbar">
+    <header class="h-16 bg-stake-card flex items-center justify-between px-4 shadow-lg sticky top-0 z-[100] flex-shrink-0 border-b border-white/5">
+      <div class="flex items-center">
+        <button @click="isSidebarOpen = !isSidebarOpen" class="hover:text-white transition-colors mr-2">
+            <Menu class="w-6 h-6" />
+        </button>
+        
+        <div 
+            @click="router.push('/')" 
+            class="w-56 flex justify-center cursor-pointer select-none hover:brightness-110 transition-all group"
+            style="font-family: 'Montserrat', sans-serif;"
+        >
+            <img src="/logo.png" alt="Logo" class="h-12 md:h-14 object-contain" />
+        </div>
+      </div>
       
-      <router-view v-slot="{ Component }">
-        <transition name="fade" mode="out-in">
-          <component :is="Component" />
+      <div class="hidden md:flex relative w-96 z-[101]" ref="searchContainerRef">
+        <div class="w-full flex items-center bg-stake-dark rounded-full border border-gray-700/50 hover:border-gray-500 transition-colors focus-within:border-stake-blue focus-within:ring-1 focus-within:ring-stake-blue">
+            <div class="pl-4 pr-2 py-2 text-stake-text">
+                <Search v-if="!isSearching" class="w-4 h-4" />
+                <Loader2 v-else class="w-4 h-4 animate-spin text-stake-blue" />
+            </div>
+            <input type="text" v-model="searchQuery" @input="handleInput" @focus="showSearchResults = true" placeholder="Buscar jogos..." class="bg-transparent outline-none text-white text-sm w-full py-2 placeholder-gray-500">
+            <button v-if="searchQuery" @click="clearSearch" class="mr-3 text-gray-500 hover:text-white transition-colors"><X class="w-4 h-4" /></button>
+        </div>
+
+        <transition enter-active-class="transition duration-100 ease-out" enter-from-class="transform scale-95 opacity-0 -translate-y-2" enter-to-class="transform scale-100 opacity-100 translate-y-0" leave-active-class="transition duration-75 ease-in" leave-from-class="transform scale-100 opacity-100 translate-y-0" leave-to-class="transform scale-95 opacity-0 -translate-y-2">
+            <div v-if="showSearchResults && (searchResults.length > 0 || isSearching || searchQuery.length >= 2)" class="absolute top-full left-0 w-full mt-2 bg-[#1e293b] border border-gray-700 rounded-xl shadow-2xl overflow-hidden max-h-[400px] overflow-y-auto custom-scrollbar z-[9999]">
+                <div v-if="isSearching" class="p-4 text-center text-sm text-gray-400 flex items-center justify-center gap-2"><Loader2 class="w-4 h-4 animate-spin" /> Buscando...</div>
+                <div v-else-if="searchResults.length === 0 && searchQuery.length >= 2" class="p-4 text-center text-sm text-gray-400">Nenhum jogo encontrado.</div>
+                <div v-else-if="searchResults.length > 0" class="flex flex-col">
+                    <div class="px-3 py-2 text-[10px] uppercase font-bold text-gray-500 bg-[#0f172a]/50 border-b border-white/5">Resultados Encontrados</div>
+                    <button v-for="result in searchResults" :key="getEventId(result)" @click="goToEvent(result)" class="flex flex-col gap-1 px-4 py-3 hover:bg-[#2f4553] transition-colors border-b border-white/5 last:border-0 text-left group">
+                        <div class="flex items-center gap-2 text-[10px] text-gray-400 mb-0.5"><span class="truncate max-w-[180px] font-medium">{{ result.league || result.League }}</span><span class="w-1 h-1 bg-gray-600 rounded-full"></span><span>{{ formatDate(result.commenceTime || result.commence_time) }}</span></div>
+                        <div class="flex items-center justify-between"><div class="text-sm font-bold text-white group-hover:text-stake-blue transition-colors">{{ result.homeTeam || result.HomeTeam }} <span class="text-gray-500 mx-1 font-normal">vs</span> {{ result.awayTeam || result.AwayTeam }}</div></div>
+                    </button>
+                </div>
+            </div>
         </transition>
-      </router-view>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <div v-if="authStore.user" class="flex items-center gap-4">
+            <button @click="router.push('/promocoes')" class="relative group transition-all duration-300 transform hover:scale-110" title="Bônus e Recompensas">
+                <div class="absolute inset-0 bg-green-500/40 blur-lg rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="relative z-10 drop-shadow-lg filter">
+                    <path d="M4 10H20V20C20 21.1046 19.1046 22 18 22H6C4.89543 22 4 21.1046 4 20V10Z" fill="#22c55e" stroke="#166534" stroke-width="1.5"/>
+                    <path d="M2 6H22V10H2V6Z" fill="#4ade80" stroke="#166534" stroke-width="1.5"/>
+                    <path d="M11 10H13V22H11V10Z" fill="#ef4444"/>
+                    <path d="M11 6H13V10H11V6Z" fill="#ef4444"/>
+                    <path d="M12 6C12 6 9 2 6 4C3 6 6 6 12 6Z" fill="#ef4444" stroke="#991b1b" stroke-width="1"/>
+                    <path d="M12 6C12 6 15 2 18 4C21 6 18 6 12 6Z" fill="#ef4444" stroke="#991b1b" stroke-width="1"/>
+                </svg>
+                <span class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-[#1e293b] z-20 animate-pulse shadow-md"></span>
+            </button>
+            <WalletDropdown :balance="authStore.user.balance || 0" />
+            <UserDropdown />
+        </div>
+        <div v-else class="flex items-center gap-3">
+            <button @click="openAuthModal('login')" class="font-bold text-gray-300 text-sm hover:text-white transition-colors px-2">Entrar</button>
+            <button @click="openAuthModal('register')" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-md font-bold text-sm shadow-lg shadow-blue-900/50 transition-all transform hover:-translate-y-0.5">Cadastre-se</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="flex flex-1 overflow-hidden relative">
+      <Sidebar v-show="isSidebarOpen" class="w-64 flex-shrink-0 transition-all duration-300 border-r border-white/5" />
+      
+      <main class="flex-1 bg-stake-dark relative transition-all duration-300 !p-0 flex flex-col h-full w-full"
+            :class="isPlayPage ? 'overflow-hidden' : 'overflow-y-auto custom-scrollbar'">
+        
+        <div class="w-full flex flex-col flex-1 relative"
+             :class="isPlayPage ? 'h-full overflow-hidden' : 'min-h-full'">
+            
+            <router-view v-slot="{ Component }">
+                <transition name="fade" mode="out-in">
+                    <component :is="Component" :class="isPlayPage ? 'h-full w-full flex-1' : 'w-full flex-1'" />
+                </transition>
+            </router-view>
+        </div>
+        
+      </main>
 
     </div>
-
-    </div>
+  </div>
 </template>
 
-<style scoped>
-.custom-scrollbar::-webkit-scrollbar { width: 6px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: #0f172a; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
-.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;900&display=swap');
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #0f172a; 
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #334155; 
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #475569; 
+}
 
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.2s ease;
 }
-
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;

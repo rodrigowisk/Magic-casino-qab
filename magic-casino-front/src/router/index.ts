@@ -10,7 +10,8 @@ import DepositView from '../views/DepositView.vue'
 
 // ✅ Views de Torneio
 import TournamentLobby from '../views/Tournament/TournamentLobby.vue'
-import TournamentPlay from '../views/Tournament/TournamentPlay.vue' 
+import TournamentPlay from '../views/Tournament/TournamentPlay.vue'
+import TournamentMyBets from '../views/Tournament/TournamentMyBets.vue' // ✅ Importação Adicionada
 
 // ✅ Admin Views
 import TournamentAdminList from '../views/Admin/Tournament/TournamentAdminList.vue'
@@ -84,14 +85,22 @@ const router = createRouter({
       path: '/tournaments', 
       name: 'TournamentLobby', 
       component: TournamentLobby,
-      meta: { layout: 'tournament', requiresAuth: true } // ✅ Segredo aqui
+      meta: { layout: 'tournament', requiresAuth: true }
     },
     { 
       path: '/tournament/:id/play', 
       name: 'TournamentPlay', 
       component: TournamentPlay,
       props: true,
-      meta: { layout: 'tournament', requiresAuth: true } // ✅ Segredo aqui
+      meta: { layout: 'tournament', requiresAuth: true }
+    },
+    // ✅ NOVA ROTA: MINHAS APOSTAS (TORNEIO)
+    { 
+      path: '/tournament/:id/my-bets', 
+      name: 'TournamentMyBets', 
+      component: TournamentMyBets,
+      props: true,
+      meta: { layout: 'tournament', requiresAuth: true }
     },
 
     // =======================================================

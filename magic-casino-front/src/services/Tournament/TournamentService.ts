@@ -71,6 +71,13 @@ class TournamentService {
     }
 
     /**
+     * Busca histórico de apostas do torneio
+     */
+    getMyBets(tournamentId: number): Promise<AxiosResponse<any>> {
+        return api.get(`${API_URL}/${tournamentId}/bets`, { baseURL: '/' });
+    }
+
+    /**
      * ✅ CORREÇÃO PRINCIPAL: Adicionado o método placeBet que o Cupom chama
      * Aceita o payload de lote { userId, amount, selections[] }
      */

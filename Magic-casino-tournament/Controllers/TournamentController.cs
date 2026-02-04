@@ -46,6 +46,18 @@ namespace Magic_casino_tournament.Controllers
             return Ok(ranking);
         }
 
+        [HttpGet("{id}/bets")]
+        [Authorize]
+        public async Task<ActionResult> GetMyBets(int id)
+        {
+            var userId = GetUserIdFromToken();
+            if (string.IsNullOrEmpty(userId)) return Unauthorized();
+
+            var bets = await _service.GetUserBetsAsync(id, userId);
+            return Ok(bets);
+        }
+
+
         // ===================================================================================
         // 🛠️ ADMIN
         // ===================================================================================

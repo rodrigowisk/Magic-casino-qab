@@ -214,6 +214,14 @@ namespace Magic_casino_tournament.Services
                 .FirstOrDefaultAsync(p => p.TournamentId == tournamentId && p.UserId == userId);
             return p?.FantasyBalance ?? 0;
         }
+        public async Task<List<TournamentBet>> GetUserBetsAsync(int tournamentId, string userId)
+        {
+            return await _context.TournamentBets
+                .Include(b => b.Selections) // Traz os jogos junto
+                .Where(b => b.TournamentId == tournamentId && b.UserId == userId)
+                .OrderByDescending(b => b.PlacedAt)
+                .ToListAsync();
+        }
 
         public async Task DeductFantasyBalance(int tournamentId, string userId, decimal amount)
         {
