@@ -31,5 +31,30 @@ namespace Magic_casino_tournament.Models
 
         public DateTime StartDate { get; set; }
         public DateTime EndDate { get; set; }
+
+        // ✅ CORREÇÃO CRÍTICA: Define que esta coluna é do tipo 'jsonb' no Postgres
+        // Isso resolve o erro: "column is of type jsonb but expression is of type text"
+        [Column(TypeName = "jsonb")]
+        public string? FilterRules { get; set; }
+
+        // =================================================================
+        // CAMPOS VIRTUAIS (DTO) - Não salvos na tabela de Torneios
+        // =================================================================
+
+        [NotMapped]
+        public int ParticipantsCount { get; set; }
+
+        [NotMapped]
+        public bool IsJoined { get; set; } = false;
+
+        // 🔥 CORREÇÃO PARA O ERRO DE BUILD CS1061 🔥
+        // Estes campos são preenchidos dinamicamente pelo Service
+        // com base nos dados da tabela TournamentParticipants
+
+        [NotMapped]
+        public decimal? CurrentFantasyBalance { get; set; }
+
+        [NotMapped]
+        public int? Rank { get; set; }
     }
 }

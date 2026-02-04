@@ -111,7 +111,37 @@ services:
     depends_on:
       - redis
 
-  # 🚦 GATEWAY (NGINX)
+
+# 🏆 TOURNAMENT (Novo Serviço)
+  tournament:
+    build:
+      context: .
+      dockerfile: Magic-casino-tournament/Dockerfile
+    image: magic-casino-tournament:prod
+    container_name: tournament
+    environment:
+      # Banco de dados (Você precisará criar essa variável no .env)
+      ConnectionStrings__DefaultConnection: "${DB_CONN_TOURNAMENT}"
+      
+      # Redis e RabbitMQ (Comunicação)
+      ConnectionStrings__Redis: "redis:6379"
+      RABBITMQ_HOST: "rabbitmq"
+      RABBITMQ_USER: "admin"
+      RABBITMQ_PASS: "admin"
+      
+      # Autenticação (Mesmas chaves dos outros)
+      Jwt__Key: "${JWT_SECRET}"
+      Jwt__Issuer: "${JWT_ISSUER}"
+      Jwt__Audience: "${JWT_AUDIENCE}"
+    expose:
+      - "8080"
+    restart: always
+    depends_on:
+      - redis
+      - rabbitmq
+      - core
+
+    # 🚦 GATEWAY (NGINX)
   nginx:
     image: nginx:alpine
     container_name: nginx_gateway

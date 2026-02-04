@@ -1,29 +1,51 @@
-using Magic_casino_tournament.Data;
-using Magic_casino_tournament.Services; // Necessário para registrar o Service
+ï»¿using Magic_casino_tournament.Data;
+using Magic_casino_tournament.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Configuração do Banco de Dados
+// 1. ConfiguraÃ§Ã£o do Banco de Dados
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
                        ?? Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection");
 
 builder.Services.AddDbContext<TournamentDbContext>(options =>
     options.UseNpgsql(connectionString));
 
-// 2. Registro de Serviços e Dependências
-// Permite fazer chamadas HTTP para o Core (cobrança)
-builder.Services.AddHttpClient();
+// 2. Registro de ServiÃ§os e DependÃªncias
+builder.Services.AddHttpClient(); // Cliente HTTP genÃ©rico
+builder.Services.AddHttpClient<ICoreGateway, CoreGateway>(); // âœ… Cliente especÃ­fico para o Core
 
-// Registra nosso serviço de lógica de torneio
 builder.Services.AddScoped<ITournamentService, TournamentService>();
 
-// 3. Controladores e Swagger
+// 3. ConfiguraÃ§Ã£o do JWT (Para proteger o endpoint /join)
+var key = Encoding.ASCII.GetBytes(builder.Configuration["Jwt:Key"] ?? Environment.GetEnvironmentVariable("Jwt__Key") ?? "Segredo_Padrao_Se_Nao_Tiver_Env");
+builder.Services.AddAuthentication(x =>
+{
+    x.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    x.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(x =>
+{
+    x.RequireHttpsMetadata = false;
+    x.SaveToken = true;
+    x.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(key),
+        ValidateIssuer = false,
+        ValidateAudience = false
+    };
+});
+
+// 4. Controladores e Swagger
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// 4. CORS (Para o Frontend acessar)
+// 5. CORS
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
@@ -34,7 +56,6 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// 5. Pipeline de Requisição
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -43,11 +64,13 @@ if (app.Environment.IsDevelopment())
 
 app.UseCors("AllowAll");
 
+// âœ… Ativa autenticaÃ§Ã£o e autorizaÃ§Ã£o
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
 
-// 6. Migração Automática (Cria as tabelas novas ao iniciar o container)
+// 6. MigraÃ§Ã£o AutomÃ¡tica
 using (var scope = app.Services.CreateScope())
 {
     try
@@ -57,7 +80,6 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex)
     {
-        // É bom logar o erro caso o banco falhe, mas o catch vazio evita crash imediato
         Console.WriteLine($"Erro ao criar banco: {ex.Message}");
     }
 }

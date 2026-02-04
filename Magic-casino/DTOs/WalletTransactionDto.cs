@@ -9,5 +9,7 @@
         public string? Source { get; set; }      // Ex: "Sportbook"
         public string? ReferenceId { get; set; } // UUID da aposta
         public string? Type { get; set; }        // Ex: "bet", "win", "refund"
+        // ✅ ADICIONE ESTAS PROPRIEDADES:
+        public string? Description { get; set; } // ex: "Inscrição Torneio"
     }
 }

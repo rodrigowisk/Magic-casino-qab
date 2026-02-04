@@ -1,19 +1,22 @@
 export interface Tournament {
-  id?: number;             // Backend envia int
-  name: string;
-  description?: string;
-  sport: string;           // "Futebol", etc
-  
-  entryFee: number;        // Valor da entrada (R$)
-  houseFeePercent: number; // % da casa (ex: 10)
-  
-  initialFantasyBalance: number; // Fichas iniciais
-  
-  prizePool?: number;      // Prêmio acumulado (calculado no back)
-  
-  startDate: string;
-  endDate: string;
-  
-  isActive?: boolean;
-  isFinished?: boolean;
+    id: number;
+    name: string;
+    description?: string;
+    sport?: string;
+    entryFee: number;
+    houseFeePercent?: number;
+    initialFantasyBalance?: number;
+    prizePool?: number;
+    isActive: boolean;
+    isFinished: boolean;
+    startDate: string;
+    endDate: string;
+    rank?: number;
+    
+    // Campos Extras
+    participantsCount?: number;
+    isJoined?: boolean;
+    
+    // ✅ CORREÇÃO: Adicione este campo para o TS parar de reclamar
+    filterRules?: string; 
 }

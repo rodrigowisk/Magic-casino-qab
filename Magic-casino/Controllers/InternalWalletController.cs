@@ -32,7 +32,7 @@ namespace Magic_Casino_Core.Controllers
         }
 
         // ============================================================
-        // 💸 DEDUÇÃO (Cobrar Aposta)
+        // 💸 DEDUÇÃO GENÉRICA (Serve para Aposta, Torneio, Slot...)
         // ============================================================
         [HttpPost("deduct")]
         public async Task<IActionResult> DeductBalance([FromBody] WalletTransactionDto request)
@@ -51,24 +51,33 @@ namespace Magic_Casino_Core.Controllers
             // 3. Atualiza Saldo (DÉBITO)
             wallet.BalanceQab -= request.Amount;
 
-            // 4. 🔥 CRIA O REGISTRO NA TABELA TRANSACTIONS (CORREÇÃO) 🔥
-            // Verifica duplicidade para evitar cobrar duas vezes a mesma aposta
+            // 4. 🔥 CRIA O REGISTRO NA TABELA TRANSACTIONS (CORREÇÃO DINÂMICA) 🔥
+
+            // Verifica duplicidade (Idempotência)
             var existingTx = await _context.Transactions
                 .AsNoTracking()
-                .FirstOrDefaultAsync(t => t.ExternalReference == request.ReferenceId && t.Type == "bet");
+                .FirstOrDefaultAsync(t => t.ExternalReference == request.ReferenceId); // Removi o filtro de Type para ser mais seguro
 
             if (existingTx == null)
             {
                 var transaction = new Transaction
                 {
                     UserCpf = request.UserCpf,
-                    Amount = request.Amount, // Valor da aposta
-                    Type = "bet",            // Tipo fixo para aposta
+                    Amount = request.Amount,
+
+                    // ✅ DINÂMICO: Usa o que veio no pedido (ex: "tournament", "slot"). 
+                    // Se vier nulo, assume "bet" (Sportbook).
+                    Type = request.Type?.ToLower() ?? "bet",
+
+                    // ✅ DINÂMICO: Usa a origem enviada.
                     Source = request.Source ?? "Sportbook",
+
                     Status = "COMPLETED",
                     ExternalReference = request.ReferenceId ?? Guid.NewGuid().ToString(),
                     CreatedAt = DateTime.UtcNow,
-                    Description = "Aposta Esportiva (Débito)"
+
+                    // ✅ DINÂMICO: Usa a descrição enviada (ex: "Inscrição Torneio").
+                    Description = request.Description ?? "Aposta Esportiva (Débito)"
                 };
 
                 _context.Transactions.Add(transaction);
@@ -81,7 +90,7 @@ namespace Magic_Casino_Core.Controllers
         }
 
         // ============================================================
-        // 💰 REEMBOLSO / PRÊMIO (Ganhou Aposta / Cancelamento)
+        // 💰 CRÉDITO GENÉRICO (Prêmio Aposta, Prêmio Torneio, Slot...)
         // ============================================================
         [HttpPost("credit")]
         public async Task<IActionResult> CreditBalance([FromBody] WalletTransactionDto request)
@@ -93,16 +102,26 @@ namespace Magic_Casino_Core.Controllers
             wallet.BalanceQab += request.Amount;
 
             // 2. 🔥 CRIA O REGISTRO DA TRANSAÇÃO 🔥
+
+            // Define descrição padrão se não vier nada
+            string defaultDesc = "Prêmio";
+            if (request.Type == "refund") defaultDesc = "Reembolso";
+            else if (request.Type == "tournament_prize") defaultDesc = "Prêmio de Torneio";
+            else if (request.Type == "slot_win") defaultDesc = "Prêmio Slot";
+
             var transaction = new Transaction
             {
                 UserCpf = request.UserCpf,
                 Amount = request.Amount,
-                Type = request.Type ?? "win", // "win" para prêmio, "refund" para estorno
+
+                // ✅ DINÂMICO
+                Type = request.Type?.ToLower() ?? "win",
                 Source = request.Source ?? "Sportbook",
+                Description = request.Description ?? defaultDesc,
+
                 Status = "COMPLETED",
                 ExternalReference = request.ReferenceId ?? Guid.NewGuid().ToString(),
-                CreatedAt = DateTime.UtcNow,
-                Description = request.Type == "refund" ? "Reembolso Aposta" : "Prêmio Aposta"
+                CreatedAt = DateTime.UtcNow
             };
 
             _context.Transactions.Add(transaction);

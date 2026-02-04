@@ -49,11 +49,41 @@ namespace Magic_casino_sportbook.Controllers
         [HttpGet("event/{id}")]
         public async Task<IActionResult> GetEventById(string id)
         {
-            var sportsEvent = await _context.SportsEvents.Include(e => e.Odds).AsNoTracking().FirstOrDefaultAsync(e => e.ExternalId == id);
-            if (sportsEvent == null) return NotFound(new { error = "Evento não encontrado." });
-            return Ok(sportsEvent);
+            var e = await _context.SportsEvents
+                .Include(x => x.Odds)
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.ExternalId == id);
+
+            if (e == null) return NotFound(new { error = "Evento não encontrado." });
+
+            // 🔥 CORREÇÃO: Aplica a mesma lógica de cálculo de odds do GetEvents
+            // Se as odds principais estiverem zeradas, tenta recuperar das odds detalhadas
+            if (e.RawOddsHome <= 0 || e.RawOddsDraw <= 0 || e.RawOddsAway <= 0)
+            {
+                decimal oddHome = 0, oddDraw = 0, oddAway = 0;
+
+                var mainMarkets = e.Odds.Where(o =>
+                    o.MarketName == "Resultado Final" ||
+                    o.MarketName == "Vencedor da Partida" ||
+                    o.MarketName == "Money Line" ||
+                    o.MarketName == "1X2" // Garantia extra
+                ).ToList();
+
+                foreach (var odd in mainMarkets)
+                {
+                    if (IsHome(odd.OutcomeName, e.HomeTeam)) oddHome = odd.Price;
+                    else if (IsDraw(odd.OutcomeName)) oddDraw = odd.Price;
+                    else if (IsAway(odd.OutcomeName, e.AwayTeam)) oddAway = odd.Price;
+                }
+
+                // Só sobrescreve se encontrou valor válido e o original estava zerado
+                if (e.RawOddsHome <= 0 && oddHome > 0) e.RawOddsHome = oddHome;
+                if (e.RawOddsDraw <= 0 && oddDraw > 0) e.RawOddsDraw = oddDraw;
+                if (e.RawOddsAway <= 0 && oddAway > 0) e.RawOddsAway = oddAway;
+            }
+
+            return Ok(e);
         }
-        // ... (Fim dos métodos auxiliares) ...
 
 
         // =================================================================================

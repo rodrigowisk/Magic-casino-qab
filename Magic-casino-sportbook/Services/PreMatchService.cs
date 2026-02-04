@@ -16,21 +16,18 @@ namespace Magic_casino_sportbook.Services
         private readonly string _token;
         private readonly List<IMarketParser> _parsers;
 
-        // Configurações de Resiliência
+        // Semáforo para impedir conflito com o Live e respeitar a API
+        private static readonly SemaphoreSlim _apiGate = new SemaphoreSlim(1, 1);
+
         private const int MAX_PAGES = 50;
         private const int MAX_RETRIES = 3;
 
-        // 🛑 LISTA NEGRA DE ESPORTES VIRTUAIS
         private readonly string[] _excludedTerms = new[]
         {
-            "ESOCCER", "E-SOCCER", "E SOCCER",
-            "EBASKETBALL", "E-BASKETBALL", "E BASKETBALL",
-            "EVOLLEYBALL", "E-VOLLEYBALL",
-            "E-HOCKEY", "EHOCKEY",
-            "E-CRICKET", "ECRICKET",
-            "VIRTUAL", "CYBER", "SIMULATED",
-            "GT LEAGUE", "BATTLE", "2X2", "4X4", "PENALTY",
-            "E-SPORT", "ESPORT", "FIFA", "NBA 2K"
+            "ESOCCER", "E-SOCCER", "E SOCCER", "EBASKETBALL", "E-BASKETBALL",
+            "E BASKETBALL", "EVOLLEYBALL", "E-VOLLEYBALL", "E-HOCKEY", "EHOCKEY",
+            "E-CRICKET", "ECRICKET", "VIRTUAL", "CYBER", "SIMULATED",
+            "GT LEAGUE", "BATTLE", "2X2", "4X4", "PENALTY", "E-SPORT", "ESPORT", "FIFA", "NBA 2K"
         };
 
         public PreMatchService(HttpClient httpClient, IServiceScopeFactory scopeFactory)
@@ -42,10 +39,7 @@ namespace Magic_casino_sportbook.Services
 
             _parsers = new List<IMarketParser>
             {
-                new MainParser(),
-                new AsianParser(),
-                new GoalsParser(),
-                new PropsParser()
+                new MainParser(), new AsianParser(), new GoalsParser(), new PropsParser()
             };
         }
 
@@ -53,7 +47,7 @@ namespace Magic_casino_sportbook.Services
         {
             if (string.IsNullOrEmpty(_token)) return;
 
-            Console.WriteLine("🚀 [PRE-MATCH] Iniciando Ingestão Filtrada (Sem Virtuais)...");
+            Console.WriteLine("🚀 [PRE-MATCH] Iniciando Ingestão Otimizada (Lotes de 50)...");
 
             List<SportConfiguration> activeConfigs;
             using (var scope = _scopeFactory.CreateScope())
@@ -68,13 +62,12 @@ namespace Magic_casino_sportbook.Services
             if (!activeConfigs.Any()) activeConfigs.Add(new SportConfiguration { Identifier = "soccer" });
 
             var limitDate = DateTime.UtcNow.AddDays(4);
-            var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = 3 };
 
-            await Parallel.ForEachAsync(activeConfigs, parallelOptions, async (config, ct) =>
+            foreach (var config in activeConfigs)
             {
                 string apiSportId = ConvertToApiId(config.Identifier);
                 await ProcessSport(apiSportId, config.Identifier, limitDate);
-            });
+            }
 
             Console.WriteLine("🏁 [PRE-MATCH] Ciclo finalizado.");
         }
@@ -83,21 +76,29 @@ namespace Magic_casino_sportbook.Services
         {
             int page = 1;
             bool keepFetching = true;
-            var eventIdsForOdds = new ConcurrentBag<string>();
+            var eventIdsForOdds = new List<string>();
             int consecutiveErrors = 0;
 
             while (keepFetching && page <= MAX_PAGES)
             {
                 var url = $"https://api.betsapi.com/v1/bet365/upcoming?sport_id={apiSportId}&token={_token}&page={page}";
 
+                await _apiGate.WaitAsync();
                 try
                 {
                     var response = await _httpClient.GetAsync(url);
 
+                    if ((int)response.StatusCode == 429)
+                    {
+                        Console.WriteLine($"⛔ [PRE-MATCH LIMIT] 429 na pág {page}. Pausando 5s...");
+                        await Task.Delay(5000);
+                        _apiGate.Release();
+                        continue;
+                    }
+
                     if (!response.IsSuccessStatusCode)
                     {
                         consecutiveErrors++;
-                        Console.WriteLine($"⚠️ Erro API ({response.StatusCode}) em {internalSportKey} pág {page}. Tentativa {consecutiveErrors}/{MAX_RETRIES}");
                         if (consecutiveErrors >= MAX_RETRIES) break;
                         await Task.Delay(2000);
                         continue;
@@ -128,14 +129,11 @@ namespace Magic_casino_sportbook.Services
                             string externalId = GetStr(item, "id");
                             if (string.IsNullOrEmpty(externalId)) continue;
 
-                            // Filtro de Virtuais
                             string leagueName = "Desconhecido";
                             if (item.TryGetProperty("league", out var lObj)) leagueName = GetStr(lObj, "name") ?? "Desconhecido";
 
-                            string homeName = "";
+                            string homeName = "", awayName = "";
                             if (item.TryGetProperty("home", out var h)) homeName = GetStr(h, "name");
-
-                            string awayName = "";
                             if (item.TryGetProperty("away", out var a)) awayName = GetStr(a, "name");
 
                             if (IsVirtualOrEsport(leagueName, homeName, awayName)) continue;
@@ -144,8 +142,7 @@ namespace Magic_casino_sportbook.Services
 
                             var existingEvent = await context.SportsEvents.FirstOrDefaultAsync(e => e.ExternalId == externalId);
 
-                            string leagueId = null;
-                            string cc = null;
+                            string leagueId = null, cc = null;
                             if (item.TryGetProperty("league", out var lObj2))
                             {
                                 leagueId = GetStr(lObj2, "image_id");
@@ -190,35 +187,50 @@ namespace Magic_casino_sportbook.Services
                 catch (Exception ex)
                 {
                     Console.WriteLine($"❌ Erro Grade {internalSportKey}: {ex.Message}");
-                    consecutiveErrors++;
-                    if (consecutiveErrors >= MAX_RETRIES) keepFetching = false;
                 }
+                finally
+                {
+                    if (_apiGate.CurrentCount == 0) _apiGate.Release();
+                }
+
+                await Task.Delay(1200);
             }
 
-            if (!eventIdsForOdds.IsEmpty)
+            if (eventIdsForOdds.Any())
             {
                 var distinctIds = eventIdsForOdds.Distinct().ToList();
                 Console.WriteLine($"💰 [ODDS] Buscando cotações para {distinctIds.Count} jogos de {internalSportKey}...");
-                await FetchOddsParallel(distinctIds, internalSportKey);
+                // ✅ VOLTAMOS PARA SEQUENCIAL (Mais seguro para API e com Retry)
+                await FetchOddsSequential(distinctIds, internalSportKey);
             }
         }
 
-        private async Task FetchOddsParallel(List<string> allIds, string sportKey)
+        private async Task FetchOddsSequential(List<string> allIds, string sportKey)
         {
-            var chunks = allIds.Chunk(10).ToList();
-            var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = 5 };
+            // ✅ LOTE DE 50 (Economiza chamadas à API)
+            var chunks = allIds.Chunk(50).ToList();
 
-            await Parallel.ForEachAsync(chunks, parallelOptions, async (chunk, ct) =>
+            foreach (var chunk in chunks)
             {
                 var idsStr = string.Join(",", chunk);
                 var url = $"https://api.betsapi.com/v1/bet365/prematch?token={_token}&FI={idsStr}";
 
+                await _apiGate.WaitAsync();
                 try
                 {
-                    var response = await _httpClient.GetAsync(url, ct);
+                    var response = await _httpClient.GetAsync(url);
+
+                    if ((int)response.StatusCode == 429)
+                    {
+                        Console.WriteLine($"⛔ [ODDS LIMIT] 429 Detectado. Esperando 5s para tentar novamente...");
+                        await Task.Delay(5000);
+                        _apiGate.Release();
+                        continue; // Tenta o MESMO lote de novo
+                    }
+
                     if (response.IsSuccessStatusCode)
                     {
-                        var json = await response.Content.ReadAsStringAsync(ct);
+                        var json = await response.Content.ReadAsStringAsync();
 
                         using (var scope = _scopeFactory.CreateScope())
                         {
@@ -241,14 +253,11 @@ namespace Magic_casino_sportbook.Services
                                     foreach (var parser in _parsers)
                                     {
                                         var parsedMarkets = parser.Parse(item, sportKey);
-
-                                        // --- NOVA LÓGICA: COLETA INTELIGENTE POR ORDEM ---
-                                        // CORREÇÃO AQUI: Lista deve ser de MarketDto, não EventMarket
                                         var moneyLineMarkets = new List<MarketDto>();
 
                                         foreach (var m in parsedMarkets)
                                         {
-                                            // 1. Salva no banco (Tabela de Apostas Detalhadas)
+                                            // Atualiza ou Insere na tabela de Odds
                                             var existing = dbEvent.Odds.FirstOrDefault(o => o.MarketName == m.MarketName && o.OutcomeName == m.OutcomeName);
 
                                             if (existing != null)
@@ -270,16 +279,18 @@ namespace Magic_casino_sportbook.Services
                                                 });
                                             }
 
-                                            // Filtra quem é Candidato a ser a Odd Principal (Capa do Site)
+                                            // Filtra candidatos a Odd Principal
                                             string mName = m.MarketName?.Trim().ToUpper() ?? "";
-                                            if (mName.Contains("MONEY LINE") || mName.Contains("WINNER") || mName.Contains("VENCEDOR") || mName == "1X2" || mName == "12")
+
+                                            // ✅ CORREÇÃO: ADICIONADO "RESULT", "FULL" E "1X2" (Isso conserta o bug de odds zeradas)
+                                            if (mName.Contains("MONEY LINE") || mName.Contains("WINNER") || mName.Contains("VENCEDOR") ||
+                                                mName.Contains("RESULT") || mName.Contains("FULL") || mName.Contains("1X2") || mName == "12")
                                             {
                                                 moneyLineMarkets.Add(m);
                                             }
                                         }
 
-                                        // 2. PREENCHE AS COLUNAS DA CAPA (RawOdds)
-                                        // Tenta primeiro por NOME (mais seguro)
+                                        // Atualiza as colunas principais (RawOdds)
                                         bool foundByLabel = false;
                                         foreach (var m in moneyLineMarkets)
                                         {
@@ -288,15 +299,12 @@ namespace Magic_casino_sportbook.Services
                                             else if (IsAway(m.OutcomeName, dbEvent.AwayTeam)) { dbEvent.RawOddsAway = m.Price; foundByLabel = true; }
                                         }
 
-                                        // 🚨 O PULO DO GATO: Se não achou pelo nome, usa a ORDEM (Para Basquete "Pelado")
+                                        // 🚨 O PULO DO GATO (Fallback por Ordem)
                                         if (!foundByLabel && moneyLineMarkets.Count >= 2)
                                         {
-                                            // Regra: Em MoneyLine, o primeiro é Casa, o segundo é Fora.
-                                            // (Isso resolve seu JSON onde o nome vem vazio)
                                             dbEvent.RawOddsHome = moneyLineMarkets[0].Price;
                                             dbEvent.RawOddsAway = moneyLineMarkets[1].Price;
 
-                                            // Se tiver 3, o do meio costuma ser empate, mas Moneyline de basquete geralmente são 2.
                                             if (moneyLineMarkets.Count == 3)
                                             {
                                                 dbEvent.RawOddsDraw = moneyLineMarkets[1].Price;
@@ -315,19 +323,20 @@ namespace Magic_casino_sportbook.Services
                 {
                     Console.WriteLine($"⚠️ Erro Chunk Odds: {ex.Message}");
                 }
-            });
+                finally
+                {
+                    if (_apiGate.CurrentCount == 0) _apiGate.Release();
+                }
+
+                await Task.Delay(1000);
+            }
         }
 
-
-        // =================================================================
-        // FUNÇÕES AUXILIARES PARA IDENTIFICAR QUEM É QUEM NAS ODDS
-        // =================================================================
         private bool IsHome(string outcome, string homeTeam)
         {
             if (string.IsNullOrEmpty(outcome)) return false;
             var o = outcome.ToLower().Trim();
             var h = homeTeam?.ToLower().Trim() ?? "xxx";
-            // Verifica "1", "Casa", "Home" ou se o nome do time está na aposta
             return o == "1" || o == "home" || o == "casa" || o == h || o.Contains(h) || h.Contains(o);
         }
 
@@ -336,7 +345,6 @@ namespace Magic_casino_sportbook.Services
             if (string.IsNullOrEmpty(outcome)) return false;
             var o = outcome.ToLower().Trim();
             var a = awayTeam?.ToLower().Trim() ?? "xxx";
-            // Verifica "2", "Fora", "Away" ou se o nome do time está na aposta
             return o == "2" || o == "away" || o == "fora" || o == a || o.Contains(a) || a.Contains(o);
         }
 

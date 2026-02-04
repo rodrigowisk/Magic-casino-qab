@@ -9,9 +9,12 @@ namespace Magic_casino_tournament.Data
 
         public DbSet<Tournament> Tournaments { get; set; }
         public DbSet<TournamentParticipant> TournamentParticipants { get; set; }
+        public DbSet<TournamentTemplate> TournamentTemplates { get; set; }
 
-        // ADICIONE ESTA LINHA:
+        public DbSet<TournamentTransaction> TournamentTransactions { get; set; }
         public DbSet<TournamentBet> TournamentBets { get; set; }
+
+        public DbSet<TournamentBetSelection> TournamentBetSelections { get; set; } // <--- ADICIONE ISSO
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

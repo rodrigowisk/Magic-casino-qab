@@ -8,29 +8,28 @@ namespace Magic_casino_tournament.Models
         [Key]
         public int Id { get; set; }
 
+        public int TournamentId { get; set; }
+        public string UserId { get; set; } = string.Empty;
+
         public int ParticipantId { get; set; }
         [ForeignKey("ParticipantId")]
         public virtual TournamentParticipant Participant { get; set; }
 
-        public string GameId { get; set; } = string.Empty;
-        public string SportKey { get; set; } = string.Empty;
-        public string HomeTeam { get; set; } = string.Empty;
-        public string AwayTeam { get; set; } = string.Empty;
-
-        public string MarketName { get; set; } = string.Empty;
-        public string SelectionName { get; set; } = string.Empty;
+        // Dados Financeiros do BILHETE INTEIRO
+        [Column(TypeName = "decimal(18,2)")]
+        public decimal Amount { get; set; } // Valor Apostado Total
 
         [Column(TypeName = "decimal(18,2)")]
-        public decimal Odds { get; set; }
+        public decimal TotalOdds { get; set; } // Odd Multiplicada
 
         [Column(TypeName = "decimal(18,2)")]
-        public decimal Amount { get; set; }
+        public decimal PotentialWin { get; set; } // Retorno Total
 
-        [Column(TypeName = "decimal(18,2)")]
-        public decimal PotentialWin { get; set; }
-
-        public string Status { get; set; } = "Pending";
+        public string Status { get; set; } = "Pending"; // Pending, Won, Lost
         public DateTime PlacedAt { get; set; } = DateTime.UtcNow;
         public DateTime? SettledAt { get; set; }
+
+        // ✅ RELACIONAMENTO: Um bilhete tem várias seleções
+        public virtual List<TournamentBetSelection> Selections { get; set; } = new();
     }
 }
