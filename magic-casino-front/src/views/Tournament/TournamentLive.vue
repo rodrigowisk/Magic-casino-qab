@@ -389,14 +389,21 @@ const handleSelection = (game: LiveGame, type: BetType) => {
         store.removeSelection(gameId);
     } else {
         const selectionName = type === '1' ? game.homeTeam : type === '2' ? game.awayTeam : 'Empate';
-        store.addOrReplaceSelection(
+        
+        // ✅ CORREÇÃO AQUI: Cast para any para permitir o 8º argumento
+        (store as any).addOrReplaceSelection(
             gameId, 
             game.homeTeam, 
             game.awayTeam, 
             selectionName, 
             price, 
             type, 
-            game.commenceTime
+            game.commenceTime,
+            {
+                isTournament: true,
+                tournamentId: tournamentId.value,
+                isLive: true
+            }
         );
     }
 };
@@ -413,6 +420,13 @@ const getOddValue = (game: LiveGame, type: string) => (type === '1' ? game.homeO
 const getOddDirection = (game: LiveGame, type: string) => { if (type === '1') return game.homeOddDir; if (type === 'X') return game.drawOddDir; return game.awayOddDir; };
 const isSelected = (game: LiveGame, type: BetType) => store.selections.find(s => s.id === getGameId(game))?.type === type;
 const handleImageError = (event: Event) => { (event.target as HTMLImageElement).style.display = 'none'; };
+
+// ✅ NOVA FUNÇÃO: Navega para os detalhes do ao vivo
+const goToLiveGame = (game: any) => {
+    const id = getGameId(game);
+    if (!id) return;
+    router.push(`/tournament/${tournamentId.value}/live/${id}`);
+};
 
 </script>
 
@@ -489,7 +503,8 @@ const handleImageError = (event: Event) => { (event.target as HTMLImageElement).
                              </div>
                         </div>
 
-                        <div class="flex flex-col justify-center gap-1 flex-1 min-w-0 h-[40px]">
+                        <div class="flex flex-col justify-center gap-1 flex-1 min-w-0 h-[40px] cursor-pointer hover:text-blue-400 transition-colors"
+                             @click="goToLiveGame(game)">
                             <div class="flex items-center gap-1.5">
                                 <TeamLogo :teamName="game.homeTeam" :remoteUrl="game.homeTeamLogo" size="w-3.5 h-3.5" />
                                 <span class="text-[11px] font-medium text-white/90 truncate leading-none pt-0.5">{{ game.homeTeam }}</span>

@@ -64,9 +64,16 @@ const getGameId = (game: any): string => {
     return '';
 };
 
+// ✅ FUNÇÃO DE NAVEGAÇÃO PARA DETALHES
+const goToGame = (game: any) => {
+    const id = getGameId(game);
+    if (!id) return;
+    // Redireciona para a rota de detalhes dentro do contexto do torneio
+    router.push(`/tournament/${tournamentId.value}/match/${id}`);
+};
+
 onMounted(async () => {
     favStore.fetchFavorites();
-    // ❌ store.clearStore() REMOVIDO: O Wrapper gerencia isso agora.
     loadCurrentUser();
     startLoader();
     try {
@@ -272,8 +279,11 @@ const handleBetClick = (game: any, type: BetType) => {
     const selectionName = type === '1' ? hTeam : type === '2' ? aTeam : 'Empate';
     const time = game.commenceTime || game.CommenceTime || new Date().toISOString();
     
-    // ✅ Adiciona ao store. O Wrapper detecta a mudança no store.count e abre o cupom.
-    store.addOrReplaceSelection(gameId, hTeam, aTeam, selectionName, price, type, time);
+    // ✅ CORREÇÃO: Cast (store as any) para evitar erro TS2554 (8 argumentos)
+    (store as any).addOrReplaceSelection(gameId, hTeam, aTeam, selectionName, price, type, time, {
+        isTournament: true,
+        tournamentId: tournamentId.value
+    });
 };
 
 const sortedGroups = computed(() => {
@@ -402,7 +412,8 @@ const handleImageError = (event: Event) => { (event.target as HTMLImageElement).
                                     <div class="text-white text-[10px] font-bold leading-none">{{ formatTime(game.commenceTime) }}</div>
                                 </div>
 
-                                <div class="flex-1 w-full text-white border-l border-white/5 pl-2 md:pl-3 min-w-0">
+                                <div class="flex-1 w-full text-white border-l border-white/5 pl-2 md:pl-3 min-w-0 cursor-pointer hover:text-blue-400 transition-colors"
+                                     @click="goToGame(game)">
                                     <div class="flex flex-col gap-1.5 justify-center h-full">
                                         <div class="flex items-center gap-2">
                                             <TeamLogo :teamName="game.homeTeam" :remoteUrl="game.homeTeamLogo" size="w-4 h-4" />

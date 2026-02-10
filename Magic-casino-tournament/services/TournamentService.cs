@@ -82,7 +82,6 @@ namespace Magic_casino_tournament.Services
                 tournament.InitialFantasyBalance,
                 tournament.FilterRules,
                 tournament.PrizeRuleId,
-                // ✅ NOVOS CAMPOS
                 tournament.FixedPrize,
                 tournament.MaxParticipants,
 

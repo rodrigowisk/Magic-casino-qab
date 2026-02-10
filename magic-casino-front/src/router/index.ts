@@ -10,12 +10,14 @@ import DepositView from '../views/DepositView.vue'
 
 // ✅ Views de Torneio
 import TournamentLobby from '../views/Tournament/TournamentLobby.vue'
-import TournamentWrapper from '../views/Tournament/TournamentWrapper.vue' // ✅ NOVO IMPORT (Wrapper Pai)
+import TournamentWrapper from '../views/Tournament/TournamentWrapper.vue'
 import TournamentPlay from '../views/Tournament/TournamentPlay.vue'
 import TournamentLive from '../views/Tournament/TournamentLive.vue' 
 import TournamentMyBets from '../views/Tournament/TournamentMyBets.vue'
 import TournamentRanking from '../views/Tournament/TournamentRanking.vue'
 import TournamentHistory from '../views/Tournament/TournamentHistory.vue'
+import TournamentMatchDetail from '../views/Tournament/TournamentMatchDetail.vue';
+import TournamentLiveMatchDetail from '../views/Tournament/TournamentLiveMatchDetail.vue';
 
 // ✅ Admin Views
 import TournamentAdminList from '../views/Admin/Tournament/TournamentAdminList.vue'
@@ -113,6 +115,13 @@ const router = createRouter({
           component: TournamentLive,
           props: true
         },
+        {
+          path: '/tournament/:id/live/:gameId',
+          name: 'TournamentLiveMatchDetail',
+          component: TournamentLiveMatchDetail,
+          meta: { layout: 'tournament', requiresAuth: true },
+          props: true
+        },
         { 
           path: 'my-bets', 
           name: 'TournamentMyBets', 
@@ -130,7 +139,14 @@ const router = createRouter({
           name: 'TournamentRanking', 
           component: TournamentRanking,
           props: true
+        },
+        {
+          path: 'match/:gameId', 
+          name: 'TournamentMatchDetail',
+          component: TournamentMatchDetail,
+          props: true
         }
+        
       ]
     },
 

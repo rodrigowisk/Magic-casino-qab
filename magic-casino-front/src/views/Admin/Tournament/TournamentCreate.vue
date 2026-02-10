@@ -336,7 +336,8 @@
 import { defineComponent } from 'vue';
 import tournamentService from "../../../services/Tournament/TournamentService";
 import tournamentTemplateService, { type TournamentTemplate } from "../../../services/Tournament/TournamentTemplateService";
-import apiSports from "../../../services/apiSports";
+// ✅ CORREÇÃO 1: Usar o SportsService em vez do apiSports direto
+import SportsService from "../../../services/SportsService"; 
 import Swal from 'sweetalert2';
 
 const coversModules = import.meta.glob('/src/assets/tournament_covers/*.{png,jpg,jpeg,svg,webp}', { eager: true });
@@ -353,14 +354,13 @@ export default defineComponent({
       selectedTemplateId: null as number | null,
       templates: [] as TournamentTemplate[],
       
-      existingCategories: ['Destaques', 'High Roller', 'Futebol', 'NBA', 'Relâmpago', 'Semana Top'],
+      existingCategories: ['Destaques', 'Todo os torneios', 'Torneios turbo', 'Top da semana'],
       isCreatingCategory: false,
 
       availableCovers: {} as Record<string, string>,
 
-      // ✅ DADOS PARA AS NOVAS FUNCIONALIDADES
-      prizeType: 'dynamic', // 'dynamic' ou 'fixed'
-      isUnlimitedParticipants: true, // Checkbox
+      prizeType: 'dynamic', 
+      isUnlimitedParticipants: true, 
 
       prizeOptions: [
         { id: "PREMIO_1", name: "🥇 Clássico Top 3 (50%, 30%, 20%)" },
@@ -380,7 +380,6 @@ export default defineComponent({
         isActive: true, 
         houseFeePercent: 10,
         
-        // ✅ NOVOS CAMPOS NO FORM
         fixedPrize: 0,
         maxParticipants: 0,
 
@@ -484,10 +483,14 @@ export default defineComponent({
             await this.loadFullConfiguration();
         }
     },
+    // ✅ CORREÇÃO 2: Método atualizado para usar SportsService.getAdminConfig()
     async loadFullConfiguration() {
         try {
-            const response = await apiSports.get('/sportbook/api/configuration');
-            const rawData = (response && response.data) ? response.data : [];
+            // Chama o serviço que já tem a baseURL correta (/sportbook/api/admin)
+            const data = await SportsService.getAdminConfig();
+            
+            // O serviço retorna response.data, então podemos usar direto
+            const rawData = Array.isArray(data) ? data : (data.data || []);
             const safeData = (Array.isArray(rawData) ? rawData : []) as any[];
 
             this.sportsData = safeData.map((s: any) => ({
@@ -513,7 +516,8 @@ export default defineComponent({
                 this.selectedSportKey = firstSport.key;
             }
         } catch (e) {
-            Swal.fire({ icon: 'error', title: 'Erro', text: 'Falha ao carregar esportes.', background: '#1e293b', color: '#fff' });
+            console.error("Erro config:", e);
+            Swal.fire({ icon: 'error', title: 'Erro', text: 'Falha ao carregar esportes. Verifique a conexão com o Admin API.', background: '#1e293b', color: '#fff' });
         }
     },
     selectSport(key: string) { 
@@ -960,7 +964,7 @@ input:focus, select:focus, textarea:focus {
 .sport-card:hover { border-color: #52525b; background: #202024; }
 .sport-card.active { border-color: #3b82f6; background: rgba(59, 130, 246, 0.1); }
 .sport-header { display: flex; justify-content: space-between; }
-.custom-checkbox { accent-color: #3b82f6; width: 14px; height: 14px; cursor: pointer; }
+.custom-checkbox { accent-color: #fbbf24; width: 14px; height: 14px; cursor: pointer; }
 .sport-name { font-size: 0.75rem; font-weight: 600; color: #e4e4e7; margin-top: auto; }
 
 .leagues-panel {
