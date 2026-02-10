@@ -1,56 +1,56 @@
 ﻿using System.Net.Http.Headers;
-using System.Net.Http.Json; // Certifique-se de que este using existe para os métodos de extensão Json
+using System.Net.Http.Json;
+using Microsoft.Extensions.Configuration;
 
 namespace Magic_casino_tournament.Services
 {
     public interface ICoreGateway
     {
         Task<CoreResponse> DeductFundsAsync(string userId, decimal amount, string token);
+        Task<CoreResponse> AddFundsAsync(string userId, decimal amount, string description = "Prêmio de Torneio");
     }
 
     public class CoreGateway : ICoreGateway
     {
         private readonly HttpClient _httpClient;
+        private readonly string _systemMasterToken;
 
-        // O nome do serviço no Docker é "core", porta 8080
-        // Rota interna correta
-        private const string CORE_URL = "http://core:8080/api/internal/wallet/deduct";
+        // Rotas do Core
+        private const string CORE_DEDUCT_URL = "http://core:8080/api/internal/wallet/deduct";
+        private const string CORE_CREDIT_URL = "http://core:8080/api/internal/wallet/credit";
 
-        public CoreGateway(HttpClient httpClient)
+        public CoreGateway(HttpClient httpClient, IConfiguration config)
         {
             _httpClient = httpClient;
+            // Pega o token do appsettings.json ou Variável de Ambiente, ou usa um default para dev
+            _systemMasterToken = config["SYSTEM_MASTER_TOKEN"] ?? "SEU_TOKEN_INTERNO_SECRETO";
         }
 
         public async Task<CoreResponse> DeductFundsAsync(string userId, decimal amount, string token)
         {
             try
             {
-                // Configura o Token JWT para o Core autorizar
+                // Usa o token do usuário que veio na requisição
                 _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Replace("Bearer ", ""));
 
-                // ✅ CORREÇÃO AQUI: Adicionado Type e Source para o filtro dinâmico
                 var payload = new
                 {
                     UserCpf = userId,
                     Amount = amount,
                     Description = "Inscrição em Torneio",
-                    ReferenceId = Guid.NewGuid().ToString(), // Idempotência
-
-                    // Campos novos para o Core identificar corretamente
-                    Type = "tournament",   // Para cair no filtro "Torneio"
-                    Source = "Tournament"  // Origem da transação
+                    ReferenceId = Guid.NewGuid().ToString(),
+                    Type = "tournament",
+                    Source = "Tournament"
                 };
 
-                var response = await _httpClient.PostAsJsonAsync(CORE_URL, payload);
+                var response = await _httpClient.PostAsJsonAsync(CORE_DEDUCT_URL, payload);
 
                 if (response.IsSuccessStatusCode)
                 {
-                    // Lê o ID da transação que o Core gerou
                     var result = await response.Content.ReadFromJsonAsync<CoreTransactionResult>();
                     return new CoreResponse { Success = true, TransactionId = result?.TransactionId };
                 }
 
-                // Tenta ler o erro retornado pelo Core se houver
                 var errorContent = await response.Content.ReadAsStringAsync();
                 return new CoreResponse { Success = false, Message = $"Falha no Core: {response.StatusCode} - {errorContent}" };
             }
@@ -59,9 +59,42 @@ namespace Magic_casino_tournament.Services
                 return new CoreResponse { Success = false, Message = $"Erro de comunicação: {ex.Message}" };
             }
         }
+
+        public async Task<CoreResponse> AddFundsAsync(string userId, decimal amount, string description)
+        {
+            try
+            {
+                // Usa o token MESTRE do sistema, pois o robô não tem sessão de usuário
+                _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _systemMasterToken);
+
+                var payload = new
+                {
+                    UserCpf = userId,
+                    Amount = amount,
+                    Description = description,
+                    ReferenceId = Guid.NewGuid().ToString(),
+                    Type = "tournament_prize", // Tag para extrato
+                    Source = "Tournament"
+                };
+
+                var response = await _httpClient.PostAsJsonAsync(CORE_CREDIT_URL, payload);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var result = await response.Content.ReadFromJsonAsync<CoreTransactionResult>();
+                    return new CoreResponse { Success = true, TransactionId = result?.TransactionId };
+                }
+
+                var errorContent = await response.Content.ReadAsStringAsync();
+                return new CoreResponse { Success = false, Message = $"Core Error: {response.StatusCode} - {errorContent}" };
+            }
+            catch (Exception ex)
+            {
+                return new CoreResponse { Success = false, Message = ex.Message };
+            }
+        }
     }
 
-    // DTOs auxiliares
     public class CoreResponse
     {
         public bool Success { get; set; }

@@ -9,15 +9,20 @@ namespace Magic_casino_tournament.Models
         public int Id { get; set; }
 
         public int TournamentId { get; set; }
-        // Se quiser navegação:
-        // [ForeignKey("TournamentId")]
-        // public virtual Tournament Tournament { get; set; }
 
         public string UserId { get; set; } = string.Empty;
+
+        // ✅ 1. Adicionamos o UserName para salvar o nome do jogador
+        public string UserName { get; set; } = "Jogador";
+
+        // ✅ 2. Removemos o [NotMapped] do Avatar para ele ser salvo no banco
+        public string? Avatar { get; set; }
 
         [Column(TypeName = "decimal(18,2)")]
         public decimal FantasyBalance { get; set; }
 
         public int Rank { get; set; } = 0;
+
+        public virtual List<TournamentBet> Bets { get; set; } = new();
     }
 }

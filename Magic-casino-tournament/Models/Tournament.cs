@@ -15,6 +15,9 @@ namespace Magic_casino_tournament.Models
 
         public string Sport { get; set; } = "Futebol";
 
+        public string? Category { get; set; } = "Destaques"; 
+        public string? CoverImage { get; set; } 
+
         [Column(TypeName = "decimal(18,2)")]
         public decimal EntryFee { get; set; }
 
@@ -26,6 +29,11 @@ namespace Magic_casino_tournament.Models
         [Column(TypeName = "decimal(18,2)")]
         public decimal PrizePool { get; set; } = 0m;
 
+        [Column(TypeName = "decimal(18,2)")]
+        public decimal? FixedPrize { get; set; }
+
+        public int? MaxParticipants { get; set; }
+
         public bool IsActive { get; set; } = true;
         public bool IsFinished { get; set; } = false;
 
@@ -36,6 +44,8 @@ namespace Magic_casino_tournament.Models
         // Isso resolve o erro: "column is of type jsonb but expression is of type text"
         [Column(TypeName = "jsonb")]
         public string? FilterRules { get; set; }
+
+        public string PrizeRuleId { get; set; } = "PREMIO_1";
 
         // =================================================================
         // CAMPOS VIRTUAIS (DTO) - Não salvos na tabela de Torneios

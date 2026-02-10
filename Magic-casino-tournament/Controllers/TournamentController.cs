@@ -7,6 +7,13 @@ using System.Text.RegularExpressions;
 
 namespace Magic_casino_tournament.Controllers
 {
+    // ✅ DTO para receber Nome e Avatar do Front
+    public class JoinTournamentRequest
+    {
+        public string UserName { get; set; }
+        public string Avatar { get; set; }
+    }
+
     [Route("api/[controller]")]
     [ApiController]
     public class TournamentsController : ControllerBase
@@ -46,6 +53,9 @@ namespace Magic_casino_tournament.Controllers
             return Ok(ranking);
         }
 
+        // -----------------------------------------------------------
+        // ✅ bets users
+        // -----------------------------------------------------------
         [HttpGet("{id}/bets")]
         [Authorize]
         public async Task<ActionResult> GetMyBets(int id)
@@ -57,6 +67,31 @@ namespace Magic_casino_tournament.Controllers
             return Ok(bets);
         }
 
+
+        // -----------------------------------------------------------
+        // ✅ bets outros users
+        // -----------------------------------------------------------
+        [HttpGet("{id}/participants/{targetUserId}/bets")]
+        public async Task<ActionResult> GetPlayerBets(int id, string targetUserId)
+        {
+            // Reutilizamos o mesmo serviço, pois ele busca pelo ID passado
+            // Nota: Não colocamos [Authorize] obrigatório se quiser que seja público, 
+            // ou coloque se apenas logados podem ver.
+
+            var bets = await _service.GetUserBetsAsync(id, targetUserId);
+
+            // Se quiser privacidade extra, você pode filtrar os dados aqui antes de retornar,
+            // mas como o Front já aplica o Blur, retornar os dados crus está ok.
+            return Ok(bets);
+        }
+
+
+        [HttpGet("prize-rules")]
+        public ActionResult<List<PrizeRuleDefinition>> GetPrizeRules()
+        {
+            var rules = PrizeCalculator.GetAvailableRules();
+            return Ok(rules);
+        }
 
         // ===================================================================================
         // 🛠️ ADMIN
@@ -71,22 +106,23 @@ namespace Magic_casino_tournament.Controllers
 
         // ===================================================================================
         // 🎮 AÇÕES DO JOGADOR (INSCRIÇÃO E APOSTA)
-        // ===================================================================================
-
-        // ✅ INSCRIÇÃO PAGA (COM TOKEN DO CORE)
         [HttpPost("{id}/join")]
-        [Authorize] // Protege a rota
-        public async Task<IActionResult> Join(int id)
+        [Authorize]
+        public async Task<IActionResult> Join(int id, [FromBody] JoinTournamentRequest request)
         {
             // 1. Extrai CPF/User do Token
             var userId = GetUserIdFromToken();
             if (string.IsNullOrEmpty(userId)) return Unauthorized("Usuário não identificado.");
 
-            // 2. Pega o Token puro para repassar ao Core (para validar o débito lá)
+            // 2. Pega o Token puro para repassar ao Core
             string token = Request.Headers["Authorization"].ToString().Replace("Bearer ", "");
 
-            // 3. Chama o serviço
-            var result = await _service.JoinTournamentAsync(id, userId, token);
+            // 3. Garante valores padrão caso venha vazio
+            string name = string.IsNullOrEmpty(request.UserName) ? "Jogador" : request.UserName;
+            string avatar = string.IsNullOrEmpty(request.Avatar) ? "" : request.Avatar;
+
+            // 4. Chama o serviço passando os dados
+            var result = await _service.JoinTournamentAsync(id, userId, token, name, avatar);
 
             if (result == "Success")
                 return Ok(new { message = "Inscrição realizada com sucesso!" });
@@ -94,21 +130,17 @@ namespace Magic_casino_tournament.Controllers
             return BadRequest(new { error = result });
         }
 
-        // ✅ APOSTA EM LOTE (CORRIGIDO PARA RECEBER LISTA)
+        // ✅ APOSTA EM LOTE
         [HttpPost("{id}/bet")]
-        [Authorize] // Protege a rota
+        [Authorize]
         public async Task<IActionResult> PlaceBet(int id, [FromBody] PlaceTournamentBetRequest request)
         {
-            // 1. Extrai CPF/User do Token
             var userId = GetUserIdFromToken();
             if (string.IsNullOrEmpty(userId)) return Unauthorized("Usuário não identificado.");
 
-            // 2. Validações Básicas
             if (request.Selections == null || !request.Selections.Any())
                 return BadRequest(new { error = "Nenhuma aposta enviada." });
 
-            // 3. Chama o serviço de Lote (Batch)
-            // OBS: Certifique-se de ter atualizado a Interface ITournamentService para ter este método
             var result = await _service.PlaceBatchBetsAsync(id, userId, request);
 
             if (result.Success)
@@ -134,16 +166,13 @@ namespace Magic_casino_tournament.Controllers
     }
 
     // ===================================================================================
-    // 📦 DTOs (Data Transfer Objects) para o Controller
+    // 📦 DTOs (Data Transfer Objects)
     // ===================================================================================
 
     public class PlaceTournamentBetRequest
     {
-        // O UserId vem do Token, mas se o frontend mandar no body, ignoramos ou usamos para validação cruzada
         public string? UserId { get; set; }
-
-        public decimal Amount { get; set; } // Valor base da aposta (se for fixa) ou total
-
+        public decimal Amount { get; set; }
         public List<TournamentBetSelection> Selections { get; set; } = new();
     }
 
@@ -152,7 +181,7 @@ namespace Magic_casino_tournament.Controllers
         public string GameId { get; set; }
         public string HomeTeam { get; set; }
         public string AwayTeam { get; set; }
-        public string SelectionName { get; set; } // "1", "X", "2"
+        public string SelectionName { get; set; }
         public string MarketName { get; set; }
         public decimal Odds { get; set; }
     }

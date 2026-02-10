@@ -9,6 +9,9 @@ namespace Magic_casino_tournament.Models
         [JsonPropertyName("status")]
         public string Status { get; set; } = string.Empty;
 
+        [JsonPropertyName("score")]
+        public string Score { get; set; } = string.Empty; // Ex: "2-1"
+
         [JsonPropertyName("homeTeam")]
         public string HomeTeam { get; set; } = string.Empty;
 

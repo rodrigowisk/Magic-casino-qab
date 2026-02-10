@@ -49,18 +49,36 @@ services:
       dockerfile: Magic-casino/Dockerfile
     image: magic-casino-core:prod
     container_name: core
+    
+    # Adicione esta linha para garantir que o Docker leia o arquivo .env
+    env_file:
+      - .env
+
     environment:
+      # Banco de Dados e Cache
       ConnectionStrings__Redis: "redis:6379"
       ConnectionStrings__DefaultConnection: "${DB_CONN_CORE}"
+      
+      # JWT e Segurança
       Jwt__Key: "${JWT_SECRET}"
       Jwt__Issuer: "${JWT_ISSUER}"
       Jwt__Audience: "${JWT_AUDIENCE}"
+      
+      # APIs Externas
       VELANA_API_KEY: "${VELANA_API_KEY}"
       MY_API_URL: "${MY_API_URL}"
-      # Configuração para conectar no RabbitMQ
+      
+      # RabbitMQ
       RABBITMQ_HOST: "rabbitmq"
       RABBITMQ_USER: "admin"
       RABBITMQ_PASS: "admin"
+
+      # CONFIGURAÇÕES DE E-MAIL (SMTP)
+      SmtpSettings__Host: "smtpout.secureserver.net"
+      SmtpSettings__Port: "587"
+      SmtpSettings__User: "contato@quebrandoabanca.bet"
+      SmtpSettings__Password: "${SMTP_PASSWORD}" 
+
     expose:
       - "8080"
     restart: always

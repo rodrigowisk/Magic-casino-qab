@@ -48,10 +48,11 @@ export default {
             const userFormatted = {
                 name: userName,
                 balance: finalBalance,
-                code: response.data.code, 
-                email: response.data.email
+                code: response.data.code,
+                cpf: response.data.cpf || response.data.Cpf, 
+                email: response.data.email,
+                avatar: response.data.avatar || response.data.Avatar || ''
             };
-            
             localStorage.setItem('user', JSON.stringify(userFormatted));
 
             return {
@@ -67,9 +68,16 @@ export default {
             name: userData.name,
             email: userData.email,
             password: userData.password,
-            cpf: userData.cpf,
-            phone: userData.phone
+            cpf: userData.cpf,      
+            phone: userData.phone,
+            userName: userData.userName
         });
+        return response.data;
+    },
+
+    // ✅ Novo método para verificar disponibilidade em tempo real
+    async checkUserAvailability(username: string) {
+        const response = await authApi.get(`/check-availability/${username}`);
         return response.data;
     },
 

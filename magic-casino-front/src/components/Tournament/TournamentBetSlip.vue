@@ -197,8 +197,10 @@ const submitBetToApi = async () => {
       const stored = localStorage.getItem('user') || localStorage.getItem('user_data') || localStorage.getItem('session');
       if (stored) {
           const u = JSON.parse(stored);
-          const raw = u.Code || u.code || u.Cpf || u.cpf || u.id || '';
-          currentUserId = String(raw).replace(/\D/g, '');
+          //const raw = u.Code || u.code || u.Cpf || u.cpf || u.id || '';
+          const raw = u.id || u.Id || u.userId || u.userName || u.user_name || u.Code || u.code || u.Cpf || u.cpf || '';
+          currentUserId = String(raw).trim();
+
       }
   } catch {}
 

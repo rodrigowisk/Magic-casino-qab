@@ -229,10 +229,13 @@ builder.Services.AddHttpClient<CoreWalletService>(client =>
 // 🤖 BACKGROUND SERVICES
 // =============================================================
 
-builder.Services.AddHostedService<PreMatchWorker>();
+builder.Services.AddHostedService<OddsBackgroundService>(); 
+builder.Services.AddHostedService<PrematchOddsWorker>();
+
 builder.Services.AddHostedService<LiveOddsWorker>();
 builder.Services.AddHostedService<GameStatusWorker>();
 builder.Services.AddHostedService<LiveScoreWorker>();
+builder.Services.AddHttpClient<BetsApiService>();
 
 var app = builder.Build();
 

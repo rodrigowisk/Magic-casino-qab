@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// ✅ CORREÇÃO: Removido 'ref' que não estava sendo usado
 import { Play } from 'lucide-vue-next';
 
 // Imagens REAIS e mais estáveis (Links diretos)

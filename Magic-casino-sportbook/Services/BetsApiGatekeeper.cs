@@ -1,58 +1,34 @@
-﻿using System.Threading.RateLimiting;
+﻿using System.Collections.Concurrent;
 
 namespace Magic_casino_sportbook.Services
 {
-    public class BetsApiGatekeeper : IDisposable
+    public class BetsApiGatekeeper
     {
-        private readonly TokenBucketRateLimiter _limiter;
-        private readonly HttpClient _httpClient; // O campo correto é este
+        private readonly SemaphoreSlim _semaphore = new SemaphoreSlim(1, 1);
 
-        public BetsApiGatekeeper(IHttpClientFactory httpClientFactory)
+        // ⚡ ACELERADO PARA 200ms (5 requisições por segundo)
+        private readonly TimeSpan _minInterval = TimeSpan.FromMilliseconds(200);
+
+        private DateTime _nextAllowedExecution = DateTime.MinValue;
+
+        public async Task<T> ExecuteAsync<T>(Func<Task<T>> action)
         {
-            // CORREÇÃO: Atribuindo à variável _httpClient declarada acima
-            _httpClient = httpClientFactory.CreateClient();
-            _httpClient.Timeout = TimeSpan.FromSeconds(10);
-
-            _limiter = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
+            await _semaphore.WaitAsync();
+            try
             {
-                TokenLimit = 1,
-                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-                QueueLimit = 100,
-                ReplenishmentPeriod = TimeSpan.FromSeconds(1.1),
-                TokensPerPeriod = 1,
-                AutoReplenishment = true
-            });
-        }
-
-        public async Task<string?> SafeGetAsync(string url)
-        {
-            using RateLimitLease lease = await _limiter.AcquireAsync(permitCount: 1);
-
-            if (lease.IsAcquired)
-            {
-                try
+                var now = DateTime.UtcNow;
+                if (now < _nextAllowedExecution)
                 {
-                    var response = await _httpClient.GetAsync(url);
-                    if (response.IsSuccessStatusCode)
-                    {
-                        return await response.Content.ReadAsStringAsync();
-                    }
-                    else if ((int)response.StatusCode == 429)
-                    {
-                        Console.WriteLine("⛔ [GATEKEEPER] 429 recebido. Pausando.");
-                    }
+                    await Task.Delay(_nextAllowedExecution - now);
                 }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"❌ [GATEKEEPER] Erro HTTP: {ex.Message}");
-                }
+                var result = await action();
+                _nextAllowedExecution = DateTime.UtcNow.Add(_minInterval);
+                return result;
             }
-            return null;
-        }
-
-        public void Dispose()
-        {
-            _limiter.Dispose();
+            finally
+            {
+                _semaphore.Release();
+            }
         }
     }
 }

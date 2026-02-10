@@ -10,8 +10,12 @@ import DepositView from '../views/DepositView.vue'
 
 // ✅ Views de Torneio
 import TournamentLobby from '../views/Tournament/TournamentLobby.vue'
+import TournamentWrapper from '../views/Tournament/TournamentWrapper.vue' // ✅ NOVO IMPORT (Wrapper Pai)
 import TournamentPlay from '../views/Tournament/TournamentPlay.vue'
-import TournamentMyBets from '../views/Tournament/TournamentMyBets.vue' // ✅ Importação Adicionada
+import TournamentLive from '../views/Tournament/TournamentLive.vue' 
+import TournamentMyBets from '../views/Tournament/TournamentMyBets.vue'
+import TournamentRanking from '../views/Tournament/TournamentRanking.vue'
+import TournamentHistory from '../views/Tournament/TournamentHistory.vue'
 
 // ✅ Admin Views
 import TournamentAdminList from '../views/Admin/Tournament/TournamentAdminList.vue'
@@ -87,20 +91,47 @@ const router = createRouter({
       component: TournamentLobby,
       meta: { layout: 'tournament', requiresAuth: true }
     },
+    
+    // ✅ ROTA PAI DO TORNEIO (WRAPPER)
+    // As sub-rotas agora renderizam dentro do <router-view> do TournamentWrapper
     { 
-      path: '/tournament/:id/play', 
-      name: 'TournamentPlay', 
-      component: TournamentPlay,
-      props: true,
-      meta: { layout: 'tournament', requiresAuth: true }
-    },
-    // ✅ NOVA ROTA: MINHAS APOSTAS (TORNEIO)
-    { 
-      path: '/tournament/:id/my-bets', 
-      name: 'TournamentMyBets', 
-      component: TournamentMyBets,
-      props: true,
-      meta: { layout: 'tournament', requiresAuth: true }
+      path: '/tournament/:id',
+      component: TournamentWrapper, // O Wrapper segura o Carrossel
+      meta: { layout: 'tournament', requiresAuth: true },
+      // Redireciona para 'play' se acessar apenas /tournament/123
+      redirect: to => { return { path: `/tournament/${to.params.id}/play` }}, 
+      children: [
+        { 
+          path: 'play', // Nota: Sem a barra '/' na frente (caminho relativo)
+          name: 'TournamentPlay', 
+          component: TournamentPlay,
+          props: true
+        },
+        { 
+          path: 'live', 
+          name: 'TournamentLive', 
+          component: TournamentLive,
+          props: true
+        },
+        { 
+          path: 'my-bets', 
+          name: 'TournamentMyBets', 
+          component: TournamentMyBets,
+          props: true
+        },
+        { 
+          path: 'history', 
+          name: 'TournamentHistory', 
+          component: TournamentHistory,
+          props: true
+        },
+        { 
+          path: 'ranking', 
+          name: 'TournamentRanking', 
+          component: TournamentRanking,
+          props: true
+        }
+      ]
     },
 
     // =======================================================
@@ -108,7 +139,7 @@ const router = createRouter({
     // =======================================================
     {
       path: '/admin',
-      component: RouterView, // Wrapper simples para manter os filhos
+      component: RouterView,
       meta: { layout: 'admin', requiresAuth: true, isAdmin: true },
       children: [
         { path: '', redirect: '/admin/tournaments' },

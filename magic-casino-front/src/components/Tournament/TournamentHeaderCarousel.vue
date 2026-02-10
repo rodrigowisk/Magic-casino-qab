@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { ChevronLeft, ChevronRight, Trophy, Ticket, Coins, Medal, Info } from 'lucide-vue-next';
+import { useRouter } from 'vue-router';
+import { ChevronLeft, ChevronRight, Trophy, Ticket, Medal, Info, Play } from 'lucide-vue-next';
 
 export interface Tournament {
   id: number;
@@ -23,9 +24,10 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'select', tournamentId: number): void;
   (e: 'open-history'): void;
-  (e: 'open-ranking'): void;
   (e: 'open-details', id: number): void;
 }>();
+
+const router = useRouter();
 
 // --- DETECÇÃO MOBILE ---
 const isMobile = ref(false);
@@ -61,7 +63,6 @@ const visibleItems = computed(() => {
   const len = props.tournaments.length;
   if (len === 0) return [];
 
-  // Range reduzido no mobile para evitar repetição visual
   const range = isMobile.value ? 1 : 2;
 
   for (let i = -range; i <= range; i++) {
@@ -78,30 +79,29 @@ const getCardStyle = (item: any) => {
     const absOffset = Math.abs(item.offset);
     
     let scale = 1;
-    if (absOffset === 1) scale = isMobile.value ? 0.8 : 0.85; 
-    if (absOffset === 2) scale = isMobile.value ? 0.7 : 0.75; 
+    // Ajuste de escala para dar destaque total ao centro
+    if (absOffset === 1) scale = isMobile.value ? 0.85 : 0.80; 
+    if (absOffset === 2) scale = isMobile.value ? 0.75 : 0.70; 
 
     let translateX = 0;
     
     if (isMobile.value) {
-        // MOBILE: Ajuste de espaçamento para card de 215px
-        if (absOffset === 1) translateX = 120 * Math.sign(item.offset); 
-        if (absOffset === 2) translateX = 210 * Math.sign(item.offset); 
+        if (absOffset === 1) translateX = 115 * Math.sign(item.offset); 
+        if (absOffset === 2) translateX = 200 * Math.sign(item.offset); 
     } else {
-        // DESKTOP: Ajuste padrão
-        if (absOffset === 1) translateX = 135 * Math.sign(item.offset); 
-        if (absOffset === 2) translateX = 235 * Math.sign(item.offset); 
+        if (absOffset === 1) translateX = 140 * Math.sign(item.offset); 
+        if (absOffset === 2) translateX = 240 * Math.sign(item.offset); 
     }
 
     const zIndex = 30 - absOffset * 10;
-    const opacity = absOffset === 2 ? 0.5 : (absOffset === 1 ? 0.85 : 1);
-    const brightness = 1 - (absOffset * (isMobile.value ? 0.3 : 0.15)); 
+    const opacity = absOffset === 2 ? 0.4 : (absOffset === 1 ? 0.7 : 1);
+    const brightness = 1 - (absOffset * 0.3); 
 
     return {
         transform: `translateX(${translateX}%) scale(${scale}) translateZ(${-absOffset * 50}px)`, 
         zIndex: zIndex,
         opacity: opacity,
-        filter: item.isCenter ? 'none' : `brightness(${brightness})`
+        filter: item.isCenter ? 'none' : `brightness(${brightness}) grayscale(${absOffset * 50}%)`
     };
 };
 
@@ -121,96 +121,115 @@ const selectItem = (item: any) => {
 </script>
 
 <template>
-  <div class="flex flex-col w-full relative z-20 pb-2 overflow-hidden min-h-[160px] border-b border-white/5 transition-all duration-300 bg-[#0f172a]">
+  <div class="flex flex-col w-full relative z-20 pb-2 overflow-hidden min-h-[180px] border-b border-white/5 transition-all duration-300 bg-[#0f172a]">
     
     <div class="absolute inset-0 z-0 pointer-events-none overflow-hidden">
         <div class="absolute inset-0 bg-[#020617]"></div>
-        <div class="absolute -top-[150px] left-1/2 -translate-x-1/2 w-[1000px] h-[500px] 
-                    bg-[radial-gradient(circle,rgba(59,130,246,0.12)_0%,rgba(79,70,229,0.08)_40%,rgba(2,6,23,0)_70%)] 
+        <div class="absolute -top-[120px] left-1/2 -translate-x-1/2 w-[800px] h-[400px] 
+                    bg-[radial-gradient(circle,rgba(37,99,235,0.15)_0%,rgba(15,23,42,0)_60%)] 
                     blur-3xl"></div>
     </div>
 
-    <div class="relative w-full py-4 select-none h-[120px] flex items-center justify-center z-10">
+    <div class="relative w-full py-4 select-none h-[160px] flex items-center justify-center z-10">
         <div class="w-full max-w-[1050px] relative h-full flex items-center justify-center px-2">
             
-            <button v-if="tournaments.length > 1" @click.stop="navigate('prev')" class="hidden md:flex absolute left-0 md:-left-4 top-1/2 -translate-y-1/2 z-50 p-1.5 bg-slate-800/80 hover:bg-blue-600 rounded-full text-white transition-all backdrop-blur-md border border-white/10 hover:scale-110 shadow-lg cursor-pointer items-center justify-center">
-              <ChevronLeft class="w-5 h-5" />
+            <button v-if="tournaments.length > 1" @click.stop="navigate('prev')" class="hidden md:flex absolute left-0 md:-left-4 top-1/2 -translate-y-1/2 z-50 p-2 bg-slate-800/50 hover:bg-blue-600 rounded-full text-white transition-all backdrop-blur-md border border-white/5 hover:border-blue-400 shadow-lg cursor-pointer items-center justify-center group">
+              <ChevronLeft class="w-5 h-5 text-slate-400 group-hover:text-white" />
             </button>
 
-            <button v-if="tournaments.length > 1" @click.stop="navigate('next')" class="hidden md:flex absolute right-0 md:-right-4 top-1/2 -translate-y-1/2 z-50 p-1.5 bg-slate-800/80 hover:bg-blue-600 rounded-full text-white transition-all backdrop-blur-md border border-white/10 hover:scale-110 shadow-lg cursor-pointer items-center justify-center">
-              <ChevronRight class="w-5 h-5" />
+            <button v-if="tournaments.length > 1" @click.stop="navigate('next')" class="hidden md:flex absolute right-0 md:-right-4 top-1/2 -translate-y-1/2 z-50 p-2 bg-slate-800/50 hover:bg-blue-600 rounded-full text-white transition-all backdrop-blur-md border border-white/5 hover:border-blue-400 shadow-lg cursor-pointer items-center justify-center group">
+              <ChevronRight class="w-5 h-5 text-slate-400 group-hover:text-white" />
             </button>
 
             <div class="w-full h-full flex items-center justify-center perspective-container relative">
+                
                 <div v-if="tournaments.length === 0" class="flex flex-col items-center justify-center text-gray-500 animate-pulse scale-90">
                     <Trophy class="w-8 h-8 mb-2 opacity-50" />
-                    <span class="text-[10px] uppercase tracking-widest font-bold">Carregando Torneios...</span>
+                    <span class="text-[10px] uppercase tracking-widest font-bold">Carregando...</span>
                 </div>
 
                 <div v-else class="flex items-center justify-center w-full h-full relative">
                     <transition-group name="list" tag="div" class="flex items-center justify-center relative w-full h-full">
                       <div v-for="item in visibleItems" :key="`${item.id}_${item.offset}`" @click="selectItem(item)"
-                        class="absolute transition-all duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] cursor-pointer flex flex-col items-center justify-center"
+                        class="absolute transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)] cursor-pointer flex flex-col items-center justify-center"
                         :style="getCardStyle(item)"
                         :class="[
-                           /* Removemos overflow-hidden daqui para as setas poderem sair */
                           item.isCenter 
-                            ? 'w-[215px] h-[95px] md:w-[300px] md:h-[100px] z-50' 
-                            : 'w-[140px] h-[65px] md:w-[200px] md:h-[70px] rounded-xl overflow-hidden bg-[#1e293b] border border-white/20 hover:border-white/40 shadow-lg'
+                            ? 'w-[280px] h-[135px] md:w-[340px] md:h-[145px] z-50' 
+                            : 'w-[150px] h-[80px] md:w-[220px] md:h-[90px] rounded-xl overflow-hidden bg-[#1e293b] border border-white/10 hover:border-white/30 shadow-lg'
                         ]"
                       >
                           <div v-if="item.isCenter" class="relative w-full h-full">
-                              
-                              <div class="w-full h-full bg-gradient-to-br from-[#1e293b] to-[#0f172a] border border-blue-500/50 shadow-[0_0_30px_rgba(59,130,246,0.25)] ring-1 ring-blue-400/30 rounded-xl overflow-hidden p-2.5 flex flex-col justify-between">
-                                  <div>
-                                    <div class="flex items-start justify-between w-full">
-                                        <h2 class="text-white font-black italic text-sm uppercase truncate w-[70%] leading-none drop-shadow-md">
-                                            {{ item.name }}
-                                        </h2>
-                                        <div class="bg-blue-600 text-white text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider">ATIVO</div>
-                                    </div>
-                                    <span class="text-[8px] font-mono text-slate-400 block mt-0.5">ID: #{{ item.id }}</span>
+                              <div class="w-full h-full bg-[#1e293b] border border-blue-500/30 shadow-[0_10px_40px_-10px_rgba(59,130,246,0.3)] ring-1 ring-white/5 rounded-2xl overflow-hidden p-3.5 flex flex-col justify-between relative">
+                                  
+                                  <div class="absolute -top-10 -right-10 w-32 h-32 bg-blue-500/10 blur-2xl rounded-full pointer-events-none"></div>
+
+                                  <div class="w-full flex items-center justify-center relative z-10">
+                                      <h2 class="text-white font-black italic text-lg md:text-xl uppercase tracking-wide truncate drop-shadow-md text-center">
+                                          {{ item.name }}
+                                      </h2>
+                                      <span class="absolute right-0 top-0.5 text-[8px] font-mono text-slate-500 opacity-60">#{{ item.id }}</span>
                                   </div>
 
-                                  <div class="flex items-center justify-center gap-2 mt-auto pt-2 border-t border-white/5">
-                                      <div class="flex items-center gap-1">
-                                          <button @click.stop="emit('open-history')" class="p-1.5 rounded bg-white/5 border border-white/10 hover:bg-blue-600/20 hover:border-blue-500/50 transition-all">
-                                              <Ticket class="w-3 h-3 md:w-3.5 md:h-3.5 text-blue-400" />
-                                          </button>
-                                          <button @click.stop="emit('open-ranking')" class="p-1.5 rounded bg-white/5 border border-white/10 hover:bg-yellow-600/20 hover:border-yellow-500/50 transition-all">
-                                              <Trophy class="w-3 h-3 md:w-3.5 md:h-3.5 text-yellow-400" />
-                                          </button>
-                                          <button @click.stop="emit('open-details', item.id)" class="p-1.5 rounded bg-white/5 border border-white/10 hover:bg-emerald-600/20 hover:border-emerald-500/50 transition-all">
-                                              <Info class="w-3 h-3 md:w-3.5 md:h-3.5 text-emerald-400" />
-                                          </button>
-                                      </div>
-
-                                      <div class="flex flex-col items-end">
-                                          <div class="flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20">
-                                              <Coins class="w-3 h-3 text-emerald-400" />
-                                              <span class="text-white font-mono font-bold text-[10px] md:text-[11px]">{{ fantasyBalance.toFixed(2) }}</span>
+                                  <div class="w-full flex justify-center z-10 my-1">
+                                      <div class="w-full max-w-[200px] bg-[#020617] border border-white/10 rounded-lg px-4 py-1.5 shadow-inner flex flex-col items-center justify-center transition-colors group/input hover:border-blue-500/30">
+                                          
+                                          <div class="flex items-center gap-1.5 mb-[-2px]">
+                                              <span class="text-[8px] font-bold text-slate-400 uppercase tracking-[0.15em] group-hover/input:text-slate-300 transition-colors">
+                                                  Saldo Torneio
+                                              </span>
                                           </div>
+
+                                          <div class="flex items-baseline gap-1">
+                                              <span class="text-emerald-400 text-sm opacity-80">🪙</span>
+                                              <span class="text-white font-mono font-bold text-lg md:text-xl tracking-tight leading-none group-hover/input:text-emerald-300 transition-colors shadow-emerald-500/10 drop-shadow-sm">
+                                                  {{ fantasyBalance.toFixed(2) }}
+                                              </span>
+                                          </div>
+
                                       </div>
+                                  </div>
+
+                                  <div class="w-full grid grid-cols-4 gap-2 z-10">
+                                      
+                                      <button @click.stop="emit('open-history')" class="h-8 md:h-9 flex items-center justify-center rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-blue-400/30 transition-all group" title="Histórico">
+                                          <Ticket class="w-4 h-4 text-blue-400/80 group-hover:text-blue-400 group-hover:scale-110 transition-transform" />
+                                      </button>
+                                      
+                                      <button @click.stop="router.push(`/tournament/${item.id}/ranking`)" class="h-8 md:h-9 flex items-center justify-center rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-yellow-400/30 transition-all group" title="Ranking">
+                                          <Trophy class="w-4 h-4 text-yellow-400/80 group-hover:text-yellow-400 group-hover:scale-110 transition-transform" />
+                                      </button>
+                                      
+                                      <button @click.stop="emit('open-details', item.id)" class="h-8 md:h-9 flex items-center justify-center rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-emerald-400/30 transition-all group" title="Detalhes">
+                                          <Info class="w-4 h-4 text-slate-400 group-hover:text-emerald-400 group-hover:scale-110 transition-transform" />
+                                      </button>
+
+                                      <button @click.stop="router.push(`/tournament/${item.id}/play`)" 
+                                              class="h-8 md:h-9 flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-500 border border-blue-400/50 shadow-lg shadow-blue-900/30 transition-all hover:scale-[1.03] active:scale-95 group relative overflow-hidden" title="Jogar">
+                                          <div class="absolute inset-0 bg-gradient-to-tr from-transparent via-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                                          <Play class="w-4 h-4 text-white fill-current" />
+                                      </button>
+
                                   </div>
                               </div>
 
-                              <button v-if="tournaments.length > 1" @click.stop="navigate('prev')" class="flex md:hidden absolute -left-4 bottom-4 z-[60] p-1 bg-slate-800/90 hover:bg-blue-600 rounded-full text-white transition-all border border-white/20 shadow-lg cursor-pointer items-center justify-center">
-                                  <ChevronLeft class="w-3.5 h-3.5" />
+                              <button v-if="tournaments.length > 1" @click.stop="navigate('prev')" class="flex md:hidden absolute -left-3 bottom-1/2 translate-y-1/2 z-[60] p-1.5 bg-slate-900/80 hover:bg-blue-600 rounded-full text-white transition-all border border-white/10 shadow-lg cursor-pointer backdrop-blur-sm">
+                                  <ChevronLeft class="w-4 h-4" />
                               </button>
                               
-                              <button v-if="tournaments.length > 1" @click.stop="navigate('next')" class="flex md:hidden absolute -right-4 bottom-4 z-[60] p-1 bg-slate-800/90 hover:bg-blue-600 rounded-full text-white transition-all border border-white/20 shadow-lg cursor-pointer items-center justify-center">
-                                  <ChevronRight class="w-3.5 h-3.5" />
+                              <button v-if="tournaments.length > 1" @click.stop="navigate('next')" class="flex md:hidden absolute -right-3 bottom-1/2 translate-y-1/2 z-[60] p-1.5 bg-slate-900/80 hover:bg-blue-600 rounded-full text-white transition-all border border-white/10 shadow-lg cursor-pointer backdrop-blur-sm">
+                                  <ChevronRight class="w-4 h-4" />
                               </button>
 
                           </div>
 
-                          <div v-else class="w-full h-full p-2.5 flex flex-row items-center gap-2 md:gap-3 relative transition-all">
-                              <div class="w-8 h-8 md:w-9 md:h-9 rounded-full bg-slate-900 border border-yellow-500/30 flex items-center justify-center shrink-0 shadow-[0_0_10px_rgba(234,179,8,0.1)]">
-                                  <Trophy class="w-3.5 h-3.5 md:w-4 md:h-4 text-yellow-400" />
+                          <div v-else class="w-full h-full bg-[#1e293b] rounded-xl border border-white/5 flex flex-row items-center gap-3 p-3 opacity-60 hover:opacity-100 transition-opacity">
+                              <div class="w-8 h-8 md:w-10 md:h-10 rounded-full bg-slate-900 border border-white/10 flex items-center justify-center shrink-0">
+                                  <Trophy class="w-4 h-4 md:w-5 md:h-5 text-slate-500" />
                               </div>
                               <div class="flex flex-col min-w-0">
-                                  <span class="text-[9px] md:text-[10px] font-black text-gray-100 uppercase truncate drop-shadow-md">{{ item.name }}</span>
-                                  <span class="text-[7px] md:text-[8px] text-slate-400 font-mono font-bold">ID: #{{ item.id }}</span>
+                                  <span class="text-[10px] md:text-xs font-bold text-gray-300 uppercase truncate">{{ item.name }}</span>
+                                  <span class="text-[8px] text-slate-500 font-mono">ID: #{{ item.id }}</span>
                               </div>
                           </div>
                       </div>
@@ -221,8 +240,9 @@ const selectItem = (item: any) => {
     </div>
 
     <div v-if="userRank > 0" class="relative z-20 flex justify-center mt-1">
-        <div class="text-[8px] md:text-[9px] font-bold text-yellow-600 bg-yellow-500/5 border border-yellow-500/10 px-3 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
-            <Medal class="w-2.5 h-2.5 md:w-3 md:h-3" /> Sua Posição: #{{ userRank }}
+        <div class="text-[9px] md:text-[10px] font-bold text-yellow-500/90 bg-[#0f172a] border border-yellow-500/20 px-4 py-1 rounded-full flex items-center gap-1.5 shadow-sm backdrop-blur-md">
+            <Medal class="w-3 h-3" /> 
+            <span>Sua Posição: <span class="text-white">#{{ userRank }}</span></span>
         </div>
     </div>
 
@@ -230,6 +250,6 @@ const selectItem = (item: any) => {
 </template>
 
 <style scoped>
-.perspective-container { perspective: 1200px; }
-.list-move { transition: transform 0.5s ease; }
+.perspective-container { perspective: 1000px; }
+.list-move { transition: transform 0.5s cubic-bezier(0.25, 1, 0.5, 1); }
 </style>

@@ -31,6 +31,7 @@
         public string Msg { get; set; } = string.Empty;
         public string Code { get; set; } = string.Empty;
         public string? Name { get; set; }
+        public string? Avatar { get; set; }
         public bool Is_admin { get; set; }
         public bool Is_affiliate { get; set; }
         public string Token { get; set; } = string.Empty;

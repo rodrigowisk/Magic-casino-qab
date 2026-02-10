@@ -11,8 +11,6 @@
           </h1>
           <p class="text-[11px] text-gray-400 relative z-10">Histórico de movimentações.</p>
         </div>
-        
-
       </div>
 
       <div class="bg-[#1a2c38] rounded-xl border border-gray-700/50 shadow-2xl overflow-hidden animate-fade-in-up flex flex-col h-[calc(100vh-120px)] md:h-auto">
@@ -80,22 +78,27 @@
                     <div 
                       class="w-7 h-7 rounded-[6px] flex items-center justify-center border border-white/5 shadow-sm shrink-0"
                       :class="{
-                        'bg-green-500/10 text-green-500': tx.type === 'deposit' || tx.type === 'win',
-                        'bg-red-500/10 text-red-500': tx.type === 'withdraw' || tx.type === 'bet',
-                        'bg-yellow-500/10 text-yellow-500': tx.type === 'tournament',
-                        'bg-gray-700/30 text-gray-400': !['deposit','withdraw','win','bet','tournament'].includes(tx.type)
+                        'bg-green-500/10 text-green-500': tx.type === 'deposit' || tx.type === 'win' || tx.type === 'tournament_prize',
+                        'bg-red-500/10 text-red-500': tx.type === 'withdraw' || tx.type === 'bet' || tx.type === 'tournament',
+                        'bg-gray-700/30 text-gray-400': !['deposit','withdraw','win','bet','tournament','tournament_prize'].includes(tx.type)
                       }"
                     >
                       <ArrowUpRight v-if="tx.type === 'deposit'" class="w-3.5 h-3.5" />
                       <ArrowDownLeft v-else-if="tx.type === 'withdraw'" class="w-3.5 h-3.5" />
-                      <Trophy v-else-if="tx.type === 'win'" class="w-3.5 h-3.5" />
+                      <Trophy v-else-if="tx.type === 'win' || tx.type === 'tournament_prize'" class="w-3.5 h-3.5" />
                       <Dices v-else-if="tx.type === 'bet'" class="w-3.5 h-3.5" />
                       <Medal v-else-if="tx.type === 'tournament'" class="w-3.5 h-3.5" />
                       <FileText v-else class="w-3.5 h-3.5" />
                     </div>
                     <div class="min-w-0">
                       <p class="text-[11px] font-semibold text-gray-200 leading-tight">{{ getLabel(tx.type) }}</p>
-                      <p class="text-[9px] text-gray-500 truncate max-w-[120px]">{{ tx.method }}</p>
+                      
+                      <p class="hidden md:block text-[9px] text-gray-500 truncate max-w-[120px]">
+                        {{ formatDescription(tx.method) }}
+                      </p>
+                      <p class="md:hidden text-[9px] text-gray-500 truncate">
+                        {{ getMobileDescription(tx) }}
+                      </p>
                     </div>
                   </div>
                 </td>
@@ -113,12 +116,12 @@
                   </div>
                 </td>
 
-                <td class="py-1.5 px-3 text-right">
+                <td class="py-1.5 px-3 text-right whitespace-nowrap">
                   <span 
                     class="font-mono text-[11px] font-bold tabular-nums tracking-tight" 
                     :class="getAmountColor(tx)"
                   >
-                    {{ (tx.type === 'withdraw' || tx.type === 'bet') ? '-' : '+' }} {{ formatCurrency(tx.amount) }}
+                    {{ isDebit(tx.type) ? '-' : '+' }} {{ formatCurrency(tx.amount) }}
                   </span>
                 </td>
 
@@ -175,21 +178,26 @@ const filters = [
   { id: 'all', label: 'Todas' },
   { id: 'deposit', label: 'Depósitos' },
   { id: 'withdraw', label: 'Saques' },
-  { id: 'sportbook', label: 'Sportbook' },
   { id: 'tournament', label: 'Torneio' }
 ];
 
+// Helper para identificar débitos
+const isDebit = (type: string) => {
+    return ['withdraw', 'bet', 'tournament'].includes(type);
+};
+
 const filteredTransactions = computed(() => {
   if (activeFilter.value === 'all') return transactions.value;
-  if (activeFilter.value === 'sportbook') {
-    return transactions.value.filter(t => t.type === 'bet' || t.type === 'win' || t.type === 'sportbook');
+  if (activeFilter.value === 'tournament') {
+      return transactions.value.filter(t => t.type === 'tournament' || t.type === 'tournament_prize');
   }
   return transactions.value.filter(t => t.type === activeFilter.value);
 });
 
+// ✅ CÁLCULO TOTAL CORRIGIDO (Subtrai inscrições)
 const numericTotal = computed(() => {
   return filteredTransactions.value.reduce((acc, curr) => {
-    if (curr.type === 'withdraw' || curr.type === 'bet') {
+    if (isDebit(curr.type)) {
       return acc - curr.amount;
     }
     return acc + curr.amount;
@@ -200,10 +208,31 @@ const totalAmount = computed(() => {
   return formatCurrency(numericTotal.value);
 });
 
-// Helpers de Formatação
 const formatCurrency = (val: number) => val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }).replace('R$', '').trim();
-const formatDate = (d: string) => new Date(d).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+const formatDate = (d: string) => new Date(d).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 const formatTime = (d: string) => new Date(d).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+// Formatação Padrão (Desktop)
+const formatDescription = (desc: string) => {
+  if (!desc) return '';
+  let clean = desc.replace('Inscrição em Torneio', 'Inscrição');
+  clean = clean.replace('Prêmio Torneio', 'Prêmio');
+  return clean;
+};
+
+// ✅ FORMATAÇÃO MOBILE (Resumida)
+const getMobileDescription = (tx: Transaction) => {
+    // Se for prêmio de torneio, retorna apenas "Prêmio"
+    if (tx.type === 'tournament_prize' || tx.method.includes('Prêmio')) {
+        return 'Prêmio';
+    }
+    // Se for inscrição de torneio, retorna apenas "Inscrição"
+    if (tx.type === 'tournament' || tx.method.includes('Inscrição')) {
+        return 'Inscrição';
+    }
+    // Para outros tipos, mantém o padrão formatado
+    return formatDescription(tx.method);
+};
 
 const getLabel = (type: string) => {
   const map: Record<string, string> = {
@@ -212,12 +241,12 @@ const getLabel = (type: string) => {
     'bet': 'Aposta',
     'win': 'Prêmio',
     'tournament': 'Torneio',
+    'tournament_prize': 'Torneio',
     'sportbook': 'Sportbook'
   };
   return map[type] || type;
 };
 
-// ✅ Correção das Labels de Status
 const getStatusLabel = (status: string) => {
   const map: Record<string, string> = {
     'completed': 'Finalizada',
@@ -228,10 +257,10 @@ const getStatusLabel = (status: string) => {
   return map[status] || status;
 };
 
-// ✅ Correção da Cor do Valor (Amarelo se pendente)
+// ✅ COR DO VALOR CORRIGIDA (Vermelho para Inscrição)
 const getAmountColor = (tx: Transaction) => {
   if (tx.status === 'pending') return 'text-yellow-500';
-  if (tx.type === 'withdraw' || tx.type === 'bet') return 'text-red-400';
+  if (isDebit(tx.type)) return 'text-red-400';
   return 'text-green-400';
 };
 

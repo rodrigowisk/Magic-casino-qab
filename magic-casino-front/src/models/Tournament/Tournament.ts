@@ -13,6 +13,7 @@ export interface Tournament {
     endDate: string;
     rank?: number;
     
+    prizeRuleId?: string;
     // Campos Extras
     participantsCount?: number;
     isJoined?: boolean;

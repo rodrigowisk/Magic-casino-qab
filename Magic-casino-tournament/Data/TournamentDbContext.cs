@@ -14,7 +14,7 @@ namespace Magic_casino_tournament.Data
         public DbSet<TournamentTransaction> TournamentTransactions { get; set; }
         public DbSet<TournamentBet> TournamentBets { get; set; }
 
-        public DbSet<TournamentBetSelection> TournamentBetSelections { get; set; } // <--- ADICIONE ISSO
+        public DbSet<TournamentBetSelection> TournamentBetSelections { get; set; } 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

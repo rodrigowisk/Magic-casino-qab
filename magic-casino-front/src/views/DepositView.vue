@@ -18,7 +18,7 @@ const pixResult = ref<{ qrCode: string, qrCodeUrl: string | null } | null>(null)
 const copied = ref(false);
 
 const form = ref({
-  amount: '20,00', 
+  amount: '100,00', 
   name: '',
   cpf: '',
   email: ''

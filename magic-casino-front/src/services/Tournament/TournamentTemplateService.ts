@@ -7,7 +7,7 @@ export interface TournamentTemplate {
     filterRules: string; // JSON String
 }
 
-const API_URL = "/tournament/api/TournamentTemplates";
+const API_URL = "/api/tournament/templates";
 
 class TournamentTemplateService {
     

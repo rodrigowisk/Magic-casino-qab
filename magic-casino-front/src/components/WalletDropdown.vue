@@ -2,11 +2,11 @@
 import { ref, nextTick, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { 
-  Wallet, 
   ArrowDownToLine, 
   ArrowUpFromLine, 
   History,
-  ChevronDown 
+  ChevronDown,
+  Wallet // Certifique-se de que Wallet está importado
 } from 'lucide-vue-next';
 
 defineProps<{
@@ -27,9 +27,12 @@ const menuStyle = ref({
 const calculatePosition = () => {
   if (triggerRef.value) {
     const rect = triggerRef.value.getBoundingClientRect();
+    // Ajuste para não estourar a tela no mobile (alinha à direita do botão)
+    const leftPos = Math.max(10, rect.right - 208); 
+    
     menuStyle.value = {
       top: `${rect.bottom + 8}px`,
-      left: `${rect.right - 208}px`,
+      left: `${leftPos}px`,
       width: '208px'
     };
   }
@@ -53,14 +56,12 @@ const navigateTo = (path: string) => {
 };
 
 const handleClickOutside = (event: MouseEvent) => {
-  // Se não estiver aberto, ignora
   if (!isOpen.value) return;
 
   const target = event.target as Node;
   const clickedInsideMenu = dropdownRef.value?.contains(target);
   const clickedInsideTrigger = triggerRef.value?.contains(target);
   
-  // Só fecha se o clique foi FORA do menu E FORA do botão da carteira
   if (!clickedInsideMenu && !clickedInsideTrigger) {
     closeMenu();
   }
@@ -88,17 +89,17 @@ onUnmounted(() => {
     <button 
       ref="triggerRef"
       @click="toggleMenu"
-      class="hidden md:flex items-center gap-2 bg-[#0f172a] hover:bg-[#1e293b] px-4 py-1.5 rounded-full text-sm text-white border border-gray-700 shadow-inner transition-all duration-200 group"
+      class="flex items-center gap-1.5 md:gap-2 bg-[#0f172a] hover:bg-[#1e293b] px-3 md:px-4 py-1.5 rounded-full text-xs md:text-sm text-white border border-gray-700 shadow-inner transition-all duration-200 group"
       :class="{ 'border-blue-500/50 bg-[#1e293b]': isOpen }"
     >
-      <Wallet class="w-4 h-4 text-green-400 group-hover:text-green-300 transition-colors" />
+      <Wallet class="w-3.5 h-3.5 md:w-4 md:h-4 text-green-400 group-hover:text-green-300 transition-colors" />
       
-      <span class="font-bold tracking-wide">
+      <span class="font-bold tracking-wide whitespace-nowrap">
         R$ {{ Number(balance).toFixed(2) }}
       </span>
 
       <ChevronDown 
-        class="w-3 h-3 text-gray-500 group-hover:text-white transition-transform duration-200 ml-1"
+        class="w-3 h-3 text-gray-500 group-hover:text-white transition-transform duration-200 ml-0.5"
         :class="{ 'rotate-180': isOpen }" 
       />
     </button>

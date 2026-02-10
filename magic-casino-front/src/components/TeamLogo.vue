@@ -1,82 +1,95 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue';
-import { getTeamLogo } from '../utils/imageUtils';
+import { computed } from 'vue';
 
 const props = defineProps<{
   teamName: string;
-  remoteUrl?: string | null;
   size?: string;
 }>();
 
-type ImageSource = 'local' | 'remote' | 'text';
-
-// Valida URL
-const isValidRemoteUrl = (url?: string | null): boolean => {
-    if (!url) return false;
-    if (url.includes('/0.png') || url === '0.png') return false;
-    return true;
-};
-
-const currentSource = ref<ImageSource>('local');
-const isLoading = ref(true);
-
-// Reinicia quando muda o time
-watch(() => props.teamName, () => {
-    currentSource.value = 'local';
-    isLoading.value = true;
+// 1. CARREGA TODAS AS IMAGENS (EAGER = JÁ CARREGA O CAMINHO)
+const teamLogos = import.meta.glob('/src/assets/teams/*.png', { 
+    eager: true, 
+    import: 'default' 
 });
 
+// 2. FUNÇÃO DE LIMPEZA (NORMALIZAÇÃO)
+// Transforma "GKS Tychy" em "gkstychy" e "1093_Colon.png" em "colon"
+const normalize = (str: string) => {
+    return str
+        .toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Remove acentos
+        .replace(/^\d+_/, '') // 🔥 REMOVE O ID DO INÍCIO (ex: "1093_")
+        .replace(/_/g, '')    // Remove underscores
+        .replace(/[^a-z0-9]/g, ''); // Remove espaços e caracteres especiais
+};
+
+// 3. CRIA UM MAPA OTIMIZADO: { "nomedotime": "caminho_da_imagem" }
+// Isso roda apenas uma vez quando o componente é montado, muito rápido.
+const logoMap: Record<string, string> = {};
+
+for (const path in teamLogos) {
+    // path é algo como "/src/assets/teams/1093_Colon.png"
+    
+    // Pega só o nome do arquivo: "1093_Colon.png"
+    const filename = path.split('/').pop() || '';
+    
+    // Remove a extensão: "1093_Colon"
+    const nameWithoutExt = filename.replace(/\.[^/.]+$/, "");
+    
+    // Normaliza para chave de busca: "colon"
+    const key = normalize(nameWithoutExt);
+    
+    logoMap[key] = teamLogos[path] as string;
+}
+
+// 4. BUSCA INTELIGENTE
 const finalSrc = computed(() => {
-    if (currentSource.value === 'local') return getTeamLogo(props.teamName);
-    if (currentSource.value === 'remote') return props.remoteUrl ?? undefined;
-    return undefined;
+    if (!props.teamName) return undefined;
+
+    // Normaliza o nome que veio da prop (ex: "Colón" -> "colon")
+    const searchKey = normalize(props.teamName);
+
+    // 1ª Tentativa: Busca exata
+    if (logoMap[searchKey]) {
+        return logoMap[searchKey];
+    }
+
+    // 2ª Tentativa (Fallback): Tenta encontrar se o nome do arquivo CONTÉM o nome do time
+    // Útil para casos como "1097_GKS_Tychy_71" vs "GKS Tychy"
+    const foundKey = Object.keys(logoMap).find(key => key.includes(searchKey) || searchKey.includes(key));
+    
+    return foundKey ? logoMap[foundKey] : undefined;
 });
 
-// Helper para saber se estamos no modo "Texto/Bolinha"
-const isFallbackMode = computed(() => currentSource.value === 'text');
-
-const onLoad = () => { isLoading.value = false; };
-
-const onError = () => {
-    if (currentSource.value === 'local') {
-        if (isValidRemoteUrl(props.remoteUrl)) {
-            currentSource.value = 'remote';
-        } else {
-            currentSource.value = 'text';
-            isLoading.value = false;
-        }
-    } else if (currentSource.value === 'remote') {
-        currentSource.value = 'text';
-        isLoading.value = false; 
-    }
-};
+// Helper de tamanho de fonte para o Placeholder
+const fontSizeClass = computed(() => {
+    const sizeStr = props.size || '32';
+    const sizeNum = parseInt(sizeStr.replace(/\D/g, '')) || 32;
+    return sizeNum > 30 ? 'text-xs' : 'text-[9px]';
+});
 </script>
 
 <template>
   <div 
-    class="relative shrink-0 flex items-center justify-center transition-all duration-300"
+    class="relative shrink-0 flex items-center justify-center transition-all duration-300 select-none"
     :class="[
       size || 'w-8 h-8', 
-      isFallbackMode ? 'rounded-full bg-gray-800 border border-white/10 overflow-hidden' : ''
+      !finalSrc ? 'rounded-full bg-[#1a2c38] border border-white/10 overflow-hidden' : ''
     ]"
   >
-    <div v-if="isLoading && !isFallbackMode" class="absolute inset-0 bg-white/5 animate-pulse rounded-md"></div>
-
     <img 
-      v-if="!isFallbackMode"
+      v-if="finalSrc"
       :src="finalSrc" 
-      @load="onLoad"
-      @error="onError" 
       loading="lazy" 
-      class="w-full h-full object-contain filter drop-shadow-sm transition-opacity duration-300"
-      :class="{ 'opacity-0': isLoading, 'opacity-100': !isLoading }"
+      class="w-full h-full object-contain filter drop-shadow-md"
       :alt="teamName"
+      @error="(e) => (e.target as HTMLImageElement).style.display = 'none'"
     />
 
     <div 
         v-else 
-        class="w-full h-full flex items-center justify-center font-bold text-white/50 select-none"
-        :class="parseInt(size?.replace(/\D/g,'') || '32') > 30 ? 'text-xs' : 'text-[9px]'"
+        class="w-full h-full flex items-center justify-center font-bold text-gray-500"
+        :class="fontSizeClass"
     >
         {{ teamName ? teamName.charAt(0).toUpperCase() : '?' }}
     </div>

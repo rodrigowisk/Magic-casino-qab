@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import axios from 'axios'; 
-// ❌ A linha "import AuthService..." foi removida daqui
 
 export const useAuthStore = defineStore('auth', () => {
     // 1. Carrega o que está na memória do navegador
@@ -35,6 +34,17 @@ export const useAuthStore = defineStore('auth', () => {
 
         // 3. 🚀 Redireciona para a HOME (/) em vez de /login
         window.location.href = '/'; 
+    }
+
+    // ✅ NOVA AÇÃO: Atualiza dados do usuário (Avatar, Nome) sem deslogar
+    function updateUser(updatedData: any) {
+        if (user.value) {
+            // Mescla os dados atuais com os novos (ex: mantém o saldo, muda só o avatar)
+            user.value = { ...user.value, ...updatedData };
+            
+            // Atualiza no localStorage para não perder ao dar F5
+            localStorage.setItem('user', JSON.stringify(user.value));
+        }
     }
 
     function updateBalance(newBalance: number) {
@@ -79,6 +89,7 @@ export const useAuthStore = defineStore('auth', () => {
         isAuthenticated, 
         setLogin, 
         logout, 
+        updateUser,    // <--- ✅ Não esqueça de exportar aqui!
         updateBalance,
         fetchBalance 
     };

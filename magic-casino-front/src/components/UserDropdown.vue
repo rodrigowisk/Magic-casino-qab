@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import { 
   User, 
   Lock, 
   LogOut, 
   FileText, 
   MoreVertical,
-  Dices
+  Trophy 
 } from 'lucide-vue-next';
 import { useAuthStore } from '../stores/useAuthStore';
 
 const router = useRouter();
+const route = useRoute();
 const authStore = useAuthStore();
 const isOpen = ref(false);
 const triggerRef = ref<HTMLElement | null>(null);
@@ -23,8 +24,17 @@ const menuStyle = ref({
   width: '240px'
 });
 
+// ✅ CORREÇÃO 1: Monitora avatar e Avatar (Maiúsculo/Minúsculo)
+const userAvatar = computed(() => {
+  if (!authStore.user) return null;
+  return authStore.user.avatar || authStore.user.Avatar || null;
+});
+
+// ✅ CORREÇÃO 2: Monitora name e Name
 const userInitials = computed(() => {
-  const name = authStore.user?.name || '';
+  const user = authStore.user;
+  const name = user?.name || user?.Name || '';
+  
   if (!name) return 'U';
   
   const parts = name.trim().split(/\s+/);
@@ -32,6 +42,11 @@ const userInitials = computed(() => {
     return parts[0].charAt(0).toUpperCase();
   }
   return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+});
+
+// ✅ CORREÇÃO 3: Exibição do nome no menu
+const userName = computed(() => {
+    return authStore.user?.name || authStore.user?.Name || 'Visitante';
 });
 
 const calculatePosition = () => {
@@ -60,6 +75,15 @@ const closeMenu = () => {
 const navigateTo = (path: string) => {
   router.push(path);
   closeMenu();
+};
+
+const navigateToMyTournaments = () => {
+    let currentTournamentId = route.params.id;
+    if (!currentTournamentId) {
+        currentTournamentId = '0';
+    }
+    router.push(`/tournament/${currentTournamentId}/history`);
+    closeMenu();
 };
 
 const handleLogout = () => {
@@ -105,9 +129,21 @@ onUnmounted(() => {
       class="flex items-center gap-2 p-1 pr-2 rounded-full hover:bg-[#1e293b] transition-colors group select-none"
       :class="{ 'bg-[#1e293b]': isOpen }"
     >
-      <div class="w-9 h-9 bg-gradient-to-br from-blue-600 to-blue-800 rounded-full flex items-center justify-center text-white font-bold shadow-lg border border-blue-400/30">
+      
+      <img 
+        v-if="userAvatar" 
+        :src="userAvatar" 
+        class="w-9 h-9 rounded-full object-cover shadow-lg border border-blue-400/30 bg-[#0f171f]"
+        alt="Avatar"
+      />
+      
+      <div 
+        v-else 
+        class="w-9 h-9 bg-gradient-to-br from-blue-600 to-blue-800 rounded-full flex items-center justify-center text-white font-bold shadow-lg border border-blue-400/30"
+      >
         {{ userInitials }}
       </div>
+
       <MoreVertical class="w-4 h-4 text-gray-400 group-hover:text-white transition-colors" />
     </button>
 
@@ -128,7 +164,7 @@ onUnmounted(() => {
         >
           
           <div class="px-4 py-3 bg-[#15222b] border-b border-gray-700/50">
-            <p class="text-[12px] text-gray-500 font-bold tracking-wider mb-0.5">Bem-vindo {{ authStore.user?.name || 'Visitante' }}!</p>
+            <p class="text-[12px] text-gray-500 font-bold tracking-wider mb-0.5">Bem-vindo {{ userName }}!</p>
           </div>
 
           <div class="p-1.5 space-y-1">
@@ -140,16 +176,21 @@ onUnmounted(() => {
               <Lock class="w-4 h-4 text-gray-500 group-hover:text-yellow-400" />
               Alterar Senha
             </button>
+            
             <div class="h-px bg-gray-700/50 mx-2 my-1"></div>
-            <button @click="navigateTo('/minhas-apostas')" class="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-gray-300 hover:text-white hover:bg-[#0f172a] rounded-lg group transition-all">
-              <Dices class="w-4 h-4 text-gray-500 group-hover:text-purple-400" />
-              Minhas Apostas
+            
+            <button @click="navigateToMyTournaments" class="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-gray-300 hover:text-white hover:bg-[#0f172a] rounded-lg group transition-all">
+              <Trophy class="w-4 h-4 text-gray-500 group-hover:text-purple-400" />
+              Meus Torneios
             </button>
+            
             <button @click="navigateTo('/transactions')" class="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-gray-300 hover:text-white hover:bg-[#0f172a] rounded-lg group transition-all">
               <FileText class="w-4 h-4 text-gray-500 group-hover:text-green-400" />
               Histórico de Transações
             </button>
+            
             <div class="h-px bg-gray-700/50 mx-2 my-1"></div>
+            
             <button @click="handleLogout" class="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-bold text-red-400 hover:bg-[#0f172a] rounded-lg group transition-all">
               <LogOut class="w-4 h-4 group-hover:text-red-500" />
               Sair
