@@ -1,5 +1,7 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+// Adicione este using para evitar erro com List<> se não tiver
+using System.Collections.Generic;
 
 namespace Magic_casino_tournament.Models
 {
@@ -15,8 +17,8 @@ namespace Magic_casino_tournament.Models
 
         public string Sport { get; set; } = "Futebol";
 
-        public string? Category { get; set; } = "Destaques"; 
-        public string? CoverImage { get; set; } 
+        public string? Category { get; set; } = "Destaques";
+        public string? CoverImage { get; set; }
 
         [Column(TypeName = "decimal(18,2)")]
         public decimal EntryFee { get; set; }
@@ -40,12 +42,15 @@ namespace Magic_casino_tournament.Models
         public DateTime StartDate { get; set; }
         public DateTime EndDate { get; set; }
 
-        // ✅ CORREÇÃO CRÍTICA: Define que esta coluna é do tipo 'jsonb' no Postgres
-        // Isso resolve o erro: "column is of type jsonb but expression is of type text"
         [Column(TypeName = "jsonb")]
         public string? FilterRules { get; set; }
 
         public string PrizeRuleId { get; set; } = "PREMIO_1";
+
+        // =================================================================
+        // ✅ ADICIONADO: Propriedade de Navegação (Essencial para Performance)
+        // =================================================================
+        public virtual ICollection<TournamentParticipant> Participants { get; set; } = new List<TournamentParticipant>();
 
         // =================================================================
         // CAMPOS VIRTUAIS (DTO) - Não salvos na tabela de Torneios
@@ -56,10 +61,6 @@ namespace Magic_casino_tournament.Models
 
         [NotMapped]
         public bool IsJoined { get; set; } = false;
-
-        // 🔥 CORREÇÃO PARA O ERRO DE BUILD CS1061 🔥
-        // Estes campos são preenchidos dinamicamente pelo Service
-        // com base nos dados da tabela TournamentParticipants
 
         [NotMapped]
         public decimal? CurrentFantasyBalance { get; set; }

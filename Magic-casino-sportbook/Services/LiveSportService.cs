@@ -23,16 +23,18 @@ namespace Magic_casino_sportbook.Services
         // SignalR para enviar updates ao frontend
         private readonly IHubContext<GameHub> _hubContext;
 
-        // Semáforo para controlar requisições na API (Rate Limit)
-        private static readonly SemaphoreSlim _apiGate = new SemaphoreSlim(1, 1);
+        // ✅ Gatekeeper global usando Redis para evitar conflito de rate limit no cluster
+        private readonly BetsApiGatekeeper _gatekeeper;
 
         public LiveSportService(
             IHttpClientFactory httpClientFactory,
             IConnectionMultiplexer redis,
-            IHubContext<GameHub> hubContext)
+            IHubContext<GameHub> hubContext,
+            BetsApiGatekeeper gatekeeper)
         {
             _httpClientFactory = httpClientFactory;
             _hubContext = hubContext;
+            _gatekeeper = gatekeeper;
             _apiToken = Environment.GetEnvironmentVariable("BETSAPI_TOKEN") ?? "";
 
             // Conexão Redis
@@ -49,7 +51,7 @@ namespace Magic_casino_sportbook.Services
         }
 
         // ==========================================================================================
-        // 🧹 LIMPEZA DE ZUMBIS (VACUUM CLEANER) - NOVO MÉTODO
+        // 🧹 LIMPEZA DE ZUMBIS (VACUUM CLEANER)
         // ==========================================================================================
         public async Task CleanupZombiesAsync(List<SportsEvent> endedGames)
         {
@@ -77,7 +79,7 @@ namespace Magic_casino_sportbook.Services
         }
 
         // ==========================================================================================
-        // 🚀 ATUALIZAR LIVE (Jogos que já estão rolando - Atualiza Placar/Odds)
+        // 🚀 ATUALIZAR LIVE (COM DIVIDE & CONQUER E PROTEÇÃO 429)
         // ==========================================================================================
         public async Task<List<string>> UpdateLiveGamesAsync(List<SportsEvent> liveGames, AppDbContext context)
         {
@@ -95,28 +97,37 @@ namespace Magic_casino_sportbook.Services
                 foreach (var game in batch)
                 {
                     game.LastUpdate = DateTime.UtcNow;
-                    if (context.Entry(game).State != EntityState.Detached)
-                    {
-                        context.Entry(game).Property(x => x.LastUpdate).IsModified = true;
-                    }
                 }
 
                 var gameIds = string.Join(",", batch.Select(g => g.ExternalId.Trim()));
                 var url = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={gameIds}";
 
-                await _apiGate.WaitAsync();
+                bool needsDivideAndConquer = false;
+
+                // ✅ Usa o Gatekeeper Distribuído
+                await _gatekeeper.WaitAsync(isLivePriority: true);
+
                 try
                 {
                     var response = await client.GetAsync(url);
-                    if (response.IsSuccessStatusCode)
+
+                    // 🚨 PROTEÇÃO ANTI-429 (RATE LIMIT)
+                    if ((int)response.StatusCode == 429)
+                    {
+                        Console.WriteLine($"⛔ [LIMIT] 429 Detectado! Pausando 5s para acalmar a API...");
+                        await Task.Delay(5000);
+                        // Não ativamos o Divide & Conquer aqui para não piorar o bloqueio
+                        needsDivideAndConquer = false;
+                    }
+                    else if (response.IsSuccessStatusCode)
                     {
                         var jsonString = await response.Content.ReadAsStringAsync();
 
                         // SE A API DE ODDS REJEITAR O LOTE, TEMOS UM JOGO ZUMBI NO MEIO
                         if (jsonString.Contains("PARAM_INVALID") || jsonString.Contains("failure"))
                         {
-                            Console.WriteLine($"⚠️ [RESGATE] Lote contaminado ou falha na API de Odds. Iniciando verificação profunda...");
-                            await ProcessIndividualFallbackAsync(client, batch, context, endedGameIds);
+                            Console.WriteLine($"⚠️ [ECONOMIA] Lote contaminado. Iniciando Divisão Inteligente (Divide & Conquer)...");
+                            needsDivideAndConquer = true;
                         }
                         else if (!string.IsNullOrWhiteSpace(jsonString))
                         {
@@ -125,24 +136,16 @@ namespace Magic_casino_sportbook.Services
                             await DispatchUpdates(data?.Results, batch.ToList(), context, endedGameIds);
                         }
                     }
-                    else if ((int)response.StatusCode == 429)
-                    {
-                        Console.WriteLine($"⛔ [LIMIT] 429 Detectado. Pausando 2s...");
-                        await Task.Delay(2000);
-                    }
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"❌ Erro Update API: {ex.Message}");
                 }
-                finally
-                {
-                    _apiGate.Release();
-                }
 
-                if (context.ChangeTracker.HasChanges())
+                // Se falhou (e não foi 429), usamos a estratégia econômica
+                if (needsDivideAndConquer)
                 {
-                    await context.SaveChangesAsync();
+                    await ProcessBatchWithDivideAndConquer(client, batch.ToList(), context, endedGameIds);
                 }
 
                 await Task.Delay(500); // Delay curto entre lotes
@@ -150,85 +153,96 @@ namespace Magic_casino_sportbook.Services
             return endedGameIds;
         }
 
-        // --- LÓGICA DE FALLBACK INTELIGENTE (BRIDGE PATTERN) ---
-        private async Task ProcessIndividualFallbackAsync(HttpClient client, SportsEvent[] batch, AppDbContext context, List<string> endedGameIds)
+        // ==========================================================================================
+        // 🧠 ALGORITMO DIVIDIR E CONQUISTAR (NOVA ESTRATÉGIA ECONÔMICA)
+        // Substitui o antigo ProcessIndividualFallbackAsync
+        // ==========================================================================================
+        private async Task ProcessBatchWithDivideAndConquer(HttpClient client, List<SportsEvent> games, AppDbContext context, List<string> endedGameIds)
         {
-            foreach (var game in batch)
+            if (games.Count == 0) return;
+
+            // CASO BASE: Se for apenas 1 jogo e falhou, ele é o culpado.
+            if (games.Count == 1)
             {
-                bool oddApiFailed = false;
+                var game = games.First();
+                Console.WriteLine($"🗑️ [CULPADO ENCONTRADO] Removendo ID inválido: {game.ExternalId}");
 
-                // 1. TENTA API DE ODDS (/event)
-                try
-                {
-                    var url = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={game.ExternalId.Trim()}";
-                    var response = await client.GetAsync(url);
-                    var jsonString = await response.Content.ReadAsStringAsync();
+                // Marca como encerrado para sair do loop
+                game.Status = "Ended";
+                endedGameIds.Add(game.ExternalId);
 
-                    if (!jsonString.Contains("PARAM_INVALID") && !jsonString.Contains("failure"))
-                    {
-                        var data = JsonSerializer.Deserialize<B365LiveResponse>(jsonString, _jsonOptions);
-                        if (data != null && data.Results != null)
-                        {
-                            await DispatchUpdates(data.Results, new List<SportsEvent> { game }, context, endedGameIds);
-                        }
-                    }
-                    else
-                    {
-                        oddApiFailed = true; // API recusou o ID
-                    }
-                }
-                catch { oddApiFailed = true; }
+                // Salva e remove imediatamente
+                context.Entry(game).State = EntityState.Modified;
+                await context.SaveChangesAsync();
+                await ForceRemoveGameAsync(game.ExternalId);
+                await _hubContext.Clients.All.SendAsync("RemoveGames", new List<string> { game.ExternalId });
 
-                // 2. SE A API DE ODDS FALHOU, CONSULTA A API DE RESULTADOS (/result)
-                // Isso tira a dúvida se foi erro de rede ou se o jogo realmente acabou
-                if (oddApiFailed)
-                {
-                    try
-                    {
-                        // Console.WriteLine($"🔍 [CHECK FINAL] Verificando resultado para: {game.ExternalId}");
-                        var urlResult = $"{BASE_URL}/v1/bet365/result?token={_apiToken}&event_id={game.ExternalId.Trim()}";
-                        var resResponse = await client.GetAsync(urlResult);
-                        var resJson = await resResponse.Content.ReadAsStringAsync();
+                return;
+            }
 
-                        // Verifica se retornou status 3 (Ended)
-                        if (resJson.Contains("\"time_status\":\"3\"") || resJson.Contains("\"time_status\": \"3\""))
-                        {
-                            Console.WriteLine($"🏁 [CONFIRMADO VIA RESULT] Jogo Encerrado: {game.HomeTeam}");
+            // DIVISÃO: Quebra a lista no meio
+            int mid = games.Count / 2;
+            var leftBatch = games.Take(mid).ToList();
+            var rightBatch = games.Skip(mid).ToList();
 
-                            game.Status = "Ended";
-                            game.GameTime = "FT";
-                            endedGameIds.Add(game.ExternalId); // ✅ Adiciona à lista de retorno
+            // Tenta processar a METADE ESQUERDA
+            bool leftSuccess = await TryProcessBatch(client, leftBatch, context, endedGameIds);
 
-                            // Ação imediata de limpeza
-                            await ForceRemoveGameAsync(game.ExternalId);
-                            context.Entry(game).State = EntityState.Modified;
-                            await _hubContext.Clients.All.SendAsync("RemoveGames", new List<string> { game.ExternalId });
-                        }
-                        else
-                        {
-                            // Se nem a API de resultado achou e o jogo já está velho, mata por timeout
-                            if (game.LastUpdate < DateTime.UtcNow.AddMinutes(-10))
-                            {
-                                Console.WriteLine($"🗑️ [TIMEOUT ABSOLUTO] Removendo jogo fantasma: {game.HomeTeam}");
-                                game.Status = "Ended";
-                                endedGameIds.Add(game.ExternalId); // ✅ Adiciona à lista de retorno
-                                await ForceRemoveGameAsync(game.ExternalId);
-                                await _hubContext.Clients.All.SendAsync("RemoveGames", new List<string> { game.ExternalId });
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"❌ Erro ao checar Result API: {ex.Message}");
-                    }
-                }
+            // Se falhou, recorre (divide a esquerda novamente)
+            if (!leftSuccess)
+            {
+                await ProcessBatchWithDivideAndConquer(client, leftBatch, context, endedGameIds);
+            }
 
-                await Task.Delay(1000); // Pausa para não estourar rate limit no loop individual
+            // Tenta processar a METADE DIREITA
+            bool rightSuccess = await TryProcessBatch(client, rightBatch, context, endedGameIds);
+
+            // Se falhou, recorre (divide a direita novamente)
+            if (!rightSuccess)
+            {
+                await ProcessBatchWithDivideAndConquer(client, rightBatch, context, endedGameIds);
             }
         }
 
+        // Helper para tentar processar um sub-lote
+        private async Task<bool> TryProcessBatch(HttpClient client, List<SportsEvent> batch, AppDbContext context, List<string> endedGameIds)
+        {
+            if (!batch.Any()) return true;
+
+            var ids = string.Join(",", batch.Select(g => g.ExternalId.Trim()));
+            var url = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={ids}";
+
+            try
+            {
+                // Pequeno delay para não estourar rate limit na recursão
+                await Task.Delay(250);
+
+                var response = await client.GetAsync(url);
+
+                // SE DER 429 AQUI, PARAMOS IMEDIATAMENTE (MENTIMOS SUCESSO PARA PARAR A RECURSÃO)
+                if ((int)response.StatusCode == 429)
+                {
+                    Console.WriteLine("⛔ [LIMIT RECURSIVO] 429 na divisão. Abortando para proteger a conta...");
+                    await Task.Delay(2000);
+                    return true;
+                }
+
+                var jsonString = await response.Content.ReadAsStringAsync();
+
+                if (response.IsSuccessStatusCode && !jsonString.Contains("failure") && !jsonString.Contains("PARAM_INVALID"))
+                {
+                    var data = JsonSerializer.Deserialize<B365LiveResponse>(jsonString, _jsonOptions);
+                    await DispatchUpdates(data?.Results, batch, context, endedGameIds);
+                    return true; // SUCESSO! Não precisa dividir mais.
+                }
+            }
+            catch { }
+
+            return false; // FALHOU! Precisa dividir mais.
+        }
+
         // ==========================================================================================
-        // 🚦 DISPATCHER HÍBRIDO BLINDADO
+        // 🚦 DISPATCHER HÍBRIDO BLINDADO (REDIS-FIRST)
         // ==========================================================================================
         private async Task DispatchUpdates(List<List<B365Packet>>? results, List<SportsEvent> batchGames, AppDbContext context, List<string> endedGameIds)
         {
@@ -246,26 +260,28 @@ namespace Magic_casino_sportbook.Services
                 }
             }
 
-            // ITERA SOBRE OS JOGOS DO BANCO (GARANTIA DE PROCESSAMENTO)
+            // ITERA SOBRE OS JOGOS DO BANCO
             foreach (var gameDb in batchGames)
             {
-                // 1. RECARREGA STATUS DO BANCO (CRÍTICO!)
-                // Impede que um Worker processe um jogo que outro Worker já finalizou
-                try { await context.Entry(gameDb).ReloadAsync(); } catch { continue; }
+                // 1. Recarrega status do banco (para evitar conflitos de concorrência)
+                try
+                {
+                    if (context.Entry(gameDb).State == EntityState.Detached) context.Attach(gameDb);
+                }
+                catch { continue; }
 
                 // 2. ZOMBIE GUARD 1: Se já acabou, limpa e pula
                 if (gameDb.Status == "Ended" || gameDb.Status == "Completed" || endedGameIds.Contains(gameDb.ExternalId))
                 {
                     await ForceRemoveGameAsync(gameDb.ExternalId);
                     idsToRemoveNow.Add(gameDb.ExternalId);
-                    endedGameIds.Add(gameDb.ExternalId); // ✅ CRÍTICO: Avisa o Worker que acabou
+                    endedGameIds.Add(gameDb.ExternalId);
                     continue;
                 }
 
                 // 3. Tenta pegar dados da API
                 if (!packetsMap.TryGetValue(gameDb.ExternalId, out var packets))
                 {
-                    // Se não veio dado da API, não faz nada agora (o fallback cuidará se for erro persistente)
                     continue;
                 }
 
@@ -293,34 +309,43 @@ namespace Magic_casino_sportbook.Services
                         endedGameIds.Add(gameDb.ExternalId);
                         idsToRemoveNow.Add(gameDb.ExternalId);
 
+                        // 💾 SALVA NO SQL IMEDIATAMENTE (CRÍTICO - JOGO ACABOU)
                         context.Entry(gameDb).State = EntityState.Modified;
+                        await context.SaveChangesAsync();
+
                         await ForceRemoveGameAsync(gameDb.ExternalId);
                     }
                     else
                     {
                         // 5. ATUALIZAÇÃO NORMAL (JOGO VIVO)
 
-                        // ZOMBIE GUARD 2 (Dupla checagem)
-                        if (gameDb.Status == "Ended")
-                        {
-                            await ForceRemoveGameAsync(gameDb.ExternalId);
-                            idsToRemoveNow.Add(gameDb.ExternalId);
-                            endedGameIds.Add(gameDb.ExternalId);
-                            continue;
-                        }
-
                         string sportKey = (gameDb.SportKey ?? "").ToLower();
-                        if (sportKey.Contains("soccer") || sportKey.Contains("futebol")) UpdateSoccer(gameDb, ev, logs);
-                        else if (sportKey.Contains("basket")) UpdateBasketball(gameDb, ev);
-                        else if (sportKey.Contains("tennis")) UpdateTennis(gameDb, ev);
-                        else if (sportKey.Contains("volley")) UpdateVolleyball(gameDb, ev);
-                        else UpdateGenericSport(gameDb, ev);
+                        bool changed = false;
+
+                        if (sportKey.Contains("soccer") || sportKey.Contains("futebol")) changed = UpdateSoccer(gameDb, ev, logs);
+                        else if (sportKey.Contains("basket")) changed = UpdateBasketball(gameDb, ev);
+                        else if (sportKey.Contains("tennis")) changed = UpdateTennis(gameDb, ev);
+                        else if (sportKey.Contains("volley")) changed = UpdateVolleyball(gameDb, ev);
+                        else changed = UpdateGenericSport(gameDb, ev);
 
                         ProcessOddsSequential(gameDb, packets);
 
-                        // Atualiza Cache (Live) - TTL 1 Hora
-                        var cacheKey = $"live_game:{gameDb.ExternalId.Trim()}"; // ✅ Trim na chave
+                        // =========================================================================
+                        // 🚀 REDIS-FIRST IMPLEMENTATION
+                        // =========================================================================
+
+                        // A. Salva no Redis (Verdade Absoluta para o Frontend)
+                        var cacheKey = $"live_game:{gameDb.ExternalId.Trim()}";
                         await _redisDb.StringSetAsync(cacheKey, JsonSerializer.Serialize(gameDb, _jsonOptions), TimeSpan.FromHours(1));
+
+                        // B. Marca como "Sujo" para o PersistenceWorker salvar no SQL depois
+                        // Isso remove a pressão do banco de dados!
+                        if (changed || gameDb.LastUpdate > DateTime.UtcNow.AddSeconds(-30))
+                        {
+                            await _redisDb.SetAddAsync("dirty_live_games", gameDb.ExternalId.Trim());
+                        }
+
+                        var statDb = await context.Set<LiveGameStat>().FirstOrDefaultAsync(s => s.GameId == gameDb.ExternalId);
 
                         updatesToSend.Add(new
                         {
@@ -330,7 +355,11 @@ namespace Magic_casino_sportbook.Services
                             status = gameDb.Status ?? "Live",
                             homeOdd = gameDb.RawOddsHome,
                             drawOdd = gameDb.RawOddsDraw,
-                            awayOdd = gameDb.RawOddsAway
+                            awayOdd = gameDb.RawOddsAway,
+                            homeYellowCards = statDb?.HomeYellowCards ?? 0,
+                            awayYellowCards = statDb?.AwayYellowCards ?? 0,
+                            homeRedCards = statDb?.HomeRedCards ?? 0,
+                            awayRedCards = statDb?.AwayRedCards ?? 0
                         });
                     }
                 }
@@ -341,7 +370,6 @@ namespace Magic_casino_sportbook.Services
             {
                 var uniqueIds = idsToRemoveNow.ToList();
                 await _hubContext.Clients.All.SendAsync("RemoveGames", uniqueIds);
-                // Console.WriteLine($"🗑️ [SIGNALR] Enviado comando RemoveGames para {uniqueIds.Count} jogos.");
             }
 
             if (updatesToSend.Any())
@@ -352,8 +380,12 @@ namespace Magic_casino_sportbook.Services
 
         private async Task ForceRemoveGameAsync(string gameId)
         {
-            // ✅ Limpeza blindada com Trim
-            await _redisDb.KeyDeleteAsync($"live_game:{gameId.Trim()}");
+            // Limpeza blindada com Trim
+            var cleanId = gameId.Trim();
+            await _redisDb.KeyDeleteAsync($"live_game:{cleanId}");
+
+            // Remove da lista de sujos também, pois se acabou já salvamos ou removemos
+            await _redisDb.SetRemoveAsync("dirty_live_games", cleanId);
         }
 
         // ==========================================================================================
@@ -528,6 +560,9 @@ namespace Magic_casino_sportbook.Services
             catch { return 0m; }
         }
 
+        // ==========================================================================================
+        // HOTZONE (CLIENT UNIFICADO PARA EVITAR SOCKET EXHAUSTION)
+        // ==========================================================================================
         public async Task<List<string>> CheckForKickoffAsync(List<SportsEvent> games, AppDbContext context)
         {
             return await Task.FromResult(new List<string>());
@@ -541,7 +576,6 @@ namespace Magic_casino_sportbook.Services
             using var scope = sp.CreateScope();
             var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-            // Garante que as entidades estão anexadas
             foreach (var c in candidates)
             {
                 if (context.Entry(c).State == EntityState.Detached)
@@ -557,17 +591,27 @@ namespace Magic_casino_sportbook.Services
             {
                 var gameIds = string.Join(",", batch.Select(g => g.ExternalId.Trim()));
                 var url = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={gameIds}";
-                bool batchFailed = false; // Flag para controlar se precisamos do resgate
+                bool batchFailed = false;
 
-                await _apiGate.WaitAsync();
+                // ✅ Usa o Gatekeeper Distribuído
+                await _gatekeeper.WaitAsync(isLivePriority: true);
+
                 try
                 {
                     var response = await client.GetAsync(url);
+
+                    // 🚨 PROTEÇÃO ANTI-429 NA HOTZONE
+                    if ((int)response.StatusCode == 429)
+                    {
+                        Console.WriteLine($"⛔ [HOTZONE] 429 Detectado! Pausando 5s...");
+                        await Task.Delay(5000);
+                        continue; // Pula este lote para não agravar
+                    }
+
                     var jsonString = await response.Content.ReadAsStringAsync();
 
-                    if (!response.IsSuccessStatusCode || jsonString.Contains("PARAM_INVALID") || jsonString.Contains("failure"))
+                    if (jsonString.Contains("PARAM_INVALID") || jsonString.Contains("failure"))
                     {
-                        // Marcou que falhou, vamos processar individualmente abaixo
                         batchFailed = true;
                         Console.WriteLine($"⚠️ [HOTZONE] Lote contaminado. Iniciando verificação individual...");
                     }
@@ -581,25 +625,18 @@ namespace Magic_casino_sportbook.Services
                     Console.WriteLine($"⚠️ HotZone Check Erro: {ex.Message}");
                     batchFailed = true;
                 }
-                finally
-                {
-                    _apiGate.Release();
-                }
 
-                // ✅ A CORREÇÃO ESTÁ AQUI: O "RESGATE" AGORA EXISTE NA HOTZONE
                 if (batchFailed)
                 {
-                    // Reutiliza uma lógica similar ao ProcessIndividualFallbackAsync mas adaptada para HotZone
                     await ProcessHotZoneIndividualAsync(client, batch.ToList(), context, idsToRemoveFromPreMatch);
                 }
 
                 await context.SaveChangesAsync();
-                await Task.Delay(1100);
+                await Task.Delay(1000);
             }
 
             return idsToRemoveFromPreMatch;
         }
-
 
         private async Task ProcessHotZoneIndividualAsync(HttpClient client, List<SportsEvent> batch, AppDbContext context, List<string> idsToRemoveFromPreMatch)
         {
@@ -607,26 +644,30 @@ namespace Magic_casino_sportbook.Services
             {
                 try
                 {
-                    // Tenta UM POR UM
                     var url = $"{BASE_URL}/v1/bet365/event?token={_apiToken}&FI={game.ExternalId.Trim()}";
-                    await Task.Delay(200); // Respeito à API
+                    await Task.Delay(200);
 
                     var response = await client.GetAsync(url);
+
+                    // Se der 429 aqui, aborta o loop individual
+                    if ((int)response.StatusCode == 429)
+                    {
+                        await Task.Delay(2000);
+                        return;
+                    }
+
                     var jsonString = await response.Content.ReadAsStringAsync();
 
                     if (jsonString.Contains("PARAM_INVALID") || jsonString.Contains("failure"))
                     {
-                        // Achamos o culpado! Removemos ele.
                         Console.WriteLine($"🗑️ [HOTZONE RESGATE] Removendo jogo inválido: {game.ExternalId}");
                         game.Status = "Ended";
                         idsToRemoveFromPreMatch.Add(game.ExternalId);
                         context.Entry(game).State = EntityState.Modified;
-                        // Força limpeza do cache também
                         await ForceRemoveGameAsync(game.ExternalId);
                     }
                     else
                     {
-                        // O jogo é válido (seu tênis!), processa ele.
                         await ProcessHotZonePacket(jsonString, new List<SportsEvent> { game }, context, idsToRemoveFromPreMatch);
                     }
                 }
@@ -636,7 +677,6 @@ namespace Magic_casino_sportbook.Services
                 }
             }
         }
-
 
         private async Task ProcessHotZonePacket(string jsonString, List<SportsEvent> games, AppDbContext context, List<string> idsToRemoveFromPreMatch)
         {
@@ -674,6 +714,7 @@ namespace Magic_casino_sportbook.Services
                         context.Entry(gameDb).State = EntityState.Modified;
                         idsToRemoveFromPreMatch.Add(gameDb.ExternalId);
 
+                        // 🚀 ATUALIZA REDIS IMEDIATAMENTE AO VIRAR LIVE
                         var cacheKey = $"live_game:{gameDb.ExternalId.Trim()}";
                         await _redisDb.StringSetAsync(cacheKey, JsonSerializer.Serialize(gameDb, _jsonOptions), TimeSpan.FromHours(24));
                     }

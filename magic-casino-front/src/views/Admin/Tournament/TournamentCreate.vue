@@ -170,7 +170,7 @@
                     <label>Participantes</label>
                     <div class="flex items-center gap-2">
                         <span class="text-[10px] text-gray-400 uppercase font-bold tracking-wide">Ilimitado</span>
-                        <input type="checkbox" v-model="isUnlimitedParticipants" class="accent-blue-500 w-4 h-4 cursor-pointer" />
+                        <input type="checkbox" v-model="isUnlimitedParticipants" class="custom-checkbox w-4 h-4" />
                     </div>
                 </div>
                 <input 
@@ -336,7 +336,6 @@
 import { defineComponent } from 'vue';
 import tournamentService from "../../../services/Tournament/TournamentService";
 import tournamentTemplateService, { type TournamentTemplate } from "../../../services/Tournament/TournamentTemplateService";
-// ✅ CORREÇÃO 1: Usar o SportsService em vez do apiSports direto
 import SportsService from "../../../services/SportsService"; 
 import Swal from 'sweetalert2';
 
@@ -483,29 +482,31 @@ export default defineComponent({
             await this.loadFullConfiguration();
         }
     },
-    // ✅ CORREÇÃO 2: Método atualizado para usar SportsService.getAdminConfig()
+    // ✅ CORREÇÃO CRÍTICA 1: Captura Inteligente do ID (PascalCase, camelCase ou fallback)
     async loadFullConfiguration() {
         try {
-            // Chama o serviço que já tem a baseURL correta (/sportbook/api/admin)
             const data = await SportsService.getAdminConfig();
-            
-            // O serviço retorna response.data, então podemos usar direto
             const rawData = Array.isArray(data) ? data : (data.data || []);
             const safeData = (Array.isArray(rawData) ? rawData : []) as any[];
 
             this.sportsData = safeData.map((s: any) => ({
-                key: s.key || 'unknown',
-                name: s.name || 'Unknown',
-                icon: s.icon || '',
+                key: s.key || s.Key || 'unknown',
+                name: s.name || s.Name || 'Unknown',
+                icon: s.icon || s.Icon || '',
                 isActive: true, 
-                leagues: (Array.isArray(s.leagues) ? s.leagues : []).map((l: any) => ({
-                    id: String(l.league_id || l.id || l.name),
-                    name: l.name || '',
+                leagues: (Array.isArray(s.leagues || s.Leagues) ? (s.leagues || s.Leagues) : []).map((l: any) => ({
+                    // 🔥 AQUI ESTÁ A CORREÇÃO:
+                    // Prioriza o 'Id' ou 'id' que vem da API corrigida. 
+                    // Se não existir, tenta 'LeagueId'.
+                    // Último caso: 'name' (mas o backend já foi corrigido)
+                    id: String(l.Id || l.id || l.LeagueId || l.league_id || l.name),
+                    name: l.name || l.Name || '',
                     isActive: true, 
                     isExpanded: false,
-                    teams: (Array.isArray(l.teams) ? l.teams : []).map((t: any) => ({
-                        id: String(t.team_id || t.id || t.name), 
-                        name: t.name || '',
+                    teams: (Array.isArray(l.teams || l.Teams) ? (l.teams || l.Teams) : []).map((t: any) => ({
+                        // Mesma lógica para os times
+                        id: String(t.Id || t.id || t.TeamId || t.team_id || t.name), 
+                        name: t.name || t.Name || '',
                         isActive: true 
                     }))
                 }))
@@ -547,10 +548,13 @@ export default defineComponent({
                             const teams = Array.isArray(l.teams) ? l.teams : [];
                             const activeTeams = teams.filter((t: any) => t.isActive);
                             const selectedIds = activeTeams.map((t: any) => {
+                                // Garante que pega o ID se existir
                                 const val = (t.id && String(t.id).trim() !== '') ? t.id : t.name;
                                 return String(val);
                             });
-                            return { id: String(l.id || l.name), name: l.name, teams: activeTeams.length === teams.length ? [] : selectedIds };
+                            // Garante que pega o ID da liga
+                            const lgId = (l.id && String(l.id).trim() !== '') ? l.id : l.name;
+                            return { id: String(lgId), name: l.name, teams: activeTeams.length === teams.length ? [] : selectedIds };
                         });
                     return { key: s.key, leagues: activeLeagues };
                 }).filter((s: any) => s.leagues.length > 0)
@@ -600,12 +604,8 @@ export default defineComponent({
             prizeRuleId: this.form.prizeRuleId,
             category: this.form.category,
             coverImage: this.form.coverImage,
-
-            // ✅ LÓGICA DE NEGÓCIO DO FRONTEND PARA OS NOVOS CAMPOS
-            // Se for Fixo, a taxa é 0 (ou irrelevante) e passamos o valor fixo
             houseFeePercent: this.prizeType === 'fixed' ? 0 : this.form.houseFeePercent,
             fixedPrize: this.prizeType === 'fixed' ? this.form.fixedPrize : null,
-            // Se Ilimitado, manda 0
             maxParticipants: this.isUnlimitedParticipants ? 0 : this.form.maxParticipants,
         };
         
@@ -964,7 +964,17 @@ input:focus, select:focus, textarea:focus {
 .sport-card:hover { border-color: #52525b; background: #202024; }
 .sport-card.active { border-color: #3b82f6; background: rgba(59, 130, 246, 0.1); }
 .sport-header { display: flex; justify-content: space-between; }
-.custom-checkbox { accent-color: #fbbf24; width: 14px; height: 14px; cursor: pointer; }
+
+/* ✅ CORREÇÃO VISUAL 1: Checkbox Amarelo e Visível */
+.custom-checkbox { 
+    accent-color: #fbbf24; 
+    width: 18px; 
+    height: 18px; 
+    cursor: pointer;
+    /* Adiciona contraste caso o navegador não suporte accent-color bem */
+    filter: drop-shadow(0 0 2px rgba(251, 191, 36, 0.5));
+}
+
 .sport-name { font-size: 0.75rem; font-weight: 600; color: #e4e4e7; margin-top: auto; }
 
 .leagues-panel {
@@ -1004,6 +1014,7 @@ input:focus, select:focus, textarea:focus {
 .league-name.highlight { color: #fbbf24; }
 .count-badge { font-size: 0.7rem; background: #27272a; color: #a1a1aa; padding: 1px 5px; border-radius: 4px; }
 
+/* ✅ CORREÇÃO VISUAL 2: Toggle Switch com cor destaque */
 .switch { position: relative; display: inline-block; width: 34px; height: 18px; }
 .switch input { opacity: 0; width: 0; height: 0; }
 .slider {
@@ -1014,7 +1025,7 @@ input:focus, select:focus, textarea:focus {
   position: absolute; content: ""; height: 16px; width: 16px; left: 2px; bottom: 2px;
   background-color: white; transition: .4s; border-radius: 50%;
 }
-input:checked + .slider { background-color: #10b981; }
+input:checked + .slider { background-color: #10b981; } /* Mantido verde pois é padrão para ON/OFF */
 input:checked + .slider:before { transform: translateX(16px); }
 
 .teams-grid {
@@ -1028,12 +1039,25 @@ input:checked + .slider:before { transform: translateX(16px); }
   cursor: pointer; transition: all 0.2s; user-select: none;
 }
 .team-chip:hover { background: #3f3f46; color: #fff; }
-.team-chip.selected { background: rgba(37, 99, 235, 0.15); border-color: #2563eb; }
-.team-chip.selected .tname { color: #60a5fa; font-weight: 600; }
+
+/* ✅ CORREÇÃO VISUAL 3: Seleção Dourada/Amarela (Gold Theme) */
+.team-chip.selected { 
+    background: rgba(251, 191, 36, 0.15); /* Fundo Dourado Translúcido */
+    border-color: #fbbf24; /* Borda Dourada */
+}
+.team-chip.selected .tname { 
+    color: #fbbf24; /* Texto Dourado */
+    font-weight: 600; 
+}
+
 .tname { font-size: 0.8rem; color: #a1a1aa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 85%; }
 .tname.highlight { text-decoration: underline; text-decoration-color: #fbbf24; }
+
 .status-indicator { width: 6px; height: 6px; border-radius: 50%; background: #52525b; }
-.status-indicator.on { background: #10b981; box-shadow: 0 0 4px #10b981; }
+.status-indicator.on { 
+    background: #fbbf24; /* Indicador Dourado */
+    box-shadow: 0 0 6px #fbbf24; 
+}
 
 .modal-footer {
   padding: 1rem 1.5rem; background: #18181b; border-top: 1px solid #27272a;

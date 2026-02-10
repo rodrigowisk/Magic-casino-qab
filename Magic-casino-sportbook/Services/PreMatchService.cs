@@ -16,8 +16,8 @@ namespace Magic_casino_sportbook.Services
         private readonly string _token;
         private readonly List<IMarketParser> _parsers;
 
-        // Semáforo para impedir conflito com o Live e respeitar a API
-        private static readonly SemaphoreSlim _apiGate = new SemaphoreSlim(1, 1);
+        // ✅ Substituímos o semáforo local pelo Gatekeeper Distribuído
+        private readonly BetsApiGatekeeper _gatekeeper;
 
         private const int MAX_PAGES = 50;
         private const int MAX_RETRIES = 3;
@@ -30,11 +30,13 @@ namespace Magic_casino_sportbook.Services
             "GT LEAGUE", "BATTLE", "2X2", "4X4", "PENALTY", "E-SPORT", "ESPORT", "FIFA", "NBA 2K"
         };
 
-        public PreMatchService(HttpClient httpClient, IServiceScopeFactory scopeFactory)
+        // ✅ Gatekeeper injetado no construtor
+        public PreMatchService(HttpClient httpClient, IServiceScopeFactory scopeFactory, BetsApiGatekeeper gatekeeper)
         {
             _httpClient = httpClient;
             _httpClient.Timeout = TimeSpan.FromSeconds(30);
             _scopeFactory = scopeFactory;
+            _gatekeeper = gatekeeper;
             _token = Environment.GetEnvironmentVariable("BETSAPI_TOKEN") ?? "";
 
             _parsers = new List<IMarketParser>
@@ -83,7 +85,9 @@ namespace Magic_casino_sportbook.Services
             {
                 var url = $"https://api.betsapi.com/v1/bet365/upcoming?sport_id={apiSportId}&token={_token}&page={page}";
 
-                await _apiGate.WaitAsync();
+                // ✅ Usa o Gatekeeper Global
+                await _gatekeeper.WaitAsync();
+
                 try
                 {
                     var response = await _httpClient.GetAsync(url);
@@ -92,7 +96,6 @@ namespace Magic_casino_sportbook.Services
                     {
                         Console.WriteLine($"⛔ [PRE-MATCH LIMIT] 429 na pág {page}. Pausando 5s...");
                         await Task.Delay(5000);
-                        _apiGate.Release();
                         continue;
                     }
 
@@ -188,10 +191,6 @@ namespace Magic_casino_sportbook.Services
                 {
                     Console.WriteLine($"❌ Erro Grade {internalSportKey}: {ex.Message}");
                 }
-                finally
-                {
-                    if (_apiGate.CurrentCount == 0) _apiGate.Release();
-                }
 
                 await Task.Delay(1200);
             }
@@ -215,7 +214,9 @@ namespace Magic_casino_sportbook.Services
                 var idsStr = string.Join(",", chunk);
                 var url = $"https://api.betsapi.com/v1/bet365/prematch?token={_token}&FI={idsStr}";
 
-                await _apiGate.WaitAsync();
+                // ✅ Usa o Gatekeeper Global
+                await _gatekeeper.WaitAsync();
+
                 try
                 {
                     var response = await _httpClient.GetAsync(url);
@@ -224,7 +225,6 @@ namespace Magic_casino_sportbook.Services
                     {
                         Console.WriteLine($"⛔ [ODDS LIMIT] 429 Detectado. Esperando 5s para tentar novamente...");
                         await Task.Delay(5000);
-                        _apiGate.Release();
                         continue; // Tenta o MESMO lote de novo
                     }
 
@@ -322,10 +322,6 @@ namespace Magic_casino_sportbook.Services
                 catch (Exception ex)
                 {
                     Console.WriteLine($"⚠️ Erro Chunk Odds: {ex.Message}");
-                }
-                finally
-                {
-                    if (_apiGate.CurrentCount == 0) _apiGate.Release();
                 }
 
                 await Task.Delay(1000);

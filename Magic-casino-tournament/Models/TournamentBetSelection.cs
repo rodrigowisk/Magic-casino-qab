@@ -24,6 +24,7 @@ namespace Magic_casino_tournament.Models
         public string AwayTeam { get; set; } = string.Empty;
 
         // Dados da Aposta Específica
+
         public string MarketName { get; set; } = string.Empty;
         public string SelectionName { get; set; } = string.Empty;
 

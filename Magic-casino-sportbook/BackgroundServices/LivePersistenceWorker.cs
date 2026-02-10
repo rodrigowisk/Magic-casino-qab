@@ -2,7 +2,9 @@
 using Magic_casino_sportbook.Models;
 using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Magic_casino_sportbook.BackgroundServices
 {
@@ -11,25 +13,35 @@ namespace Magic_casino_sportbook.BackgroundServices
         private readonly IServiceProvider _serviceProvider;
         private readonly IConnectionMultiplexer _redis;
         private readonly ILogger<LivePersistenceWorker> _logger;
+        private readonly JsonSerializerOptions _jsonOptions;
 
         public LivePersistenceWorker(IServiceProvider serviceProvider, IConnectionMultiplexer redis, ILogger<LivePersistenceWorker> logger)
         {
             _serviceProvider = serviceProvider;
             _redis = redis;
             _logger = logger;
+
+            _jsonOptions = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                NumberHandling = JsonNumberHandling.AllowReadingFromString,
+                ReadCommentHandling = JsonCommentHandling.Skip,
+                AllowTrailingCommas = true,
+                ReferenceHandler = ReferenceHandler.IgnoreCycles
+            };
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("💾 [PERSISTENCE] Worker de Sincronização Redis->SQL iniciado.");
+            _logger.LogInformation("🚀 [PERSISTENCE] Worker Bulk-Update (SQL Puro) iniciado.");
 
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
                 {
-                    // Roda a cada 45 segundos (tempo suficiente para não gargalar o banco)
+                    // Roda a cada 45 segundos
                     await Task.Delay(TimeSpan.FromSeconds(45), stoppingToken);
-                    await SyncRedisToSql();
+                    await SyncRedisToSqlBulkAsync();
                 }
                 catch (Exception ex)
                 {
@@ -38,54 +50,110 @@ namespace Magic_casino_sportbook.BackgroundServices
             }
         }
 
-        private async Task SyncRedisToSql()
+        private async Task SyncRedisToSqlBulkAsync()
         {
             var db = _redis.GetDatabase();
 
-            // 1. Pega a lista de IDs "sujos" (que mudaram desde a última gravação)
-            // Vamos implementar a lógica de adicionar nesse Set no LiveSportService
-            var dirtyIds = await db.SetMembersAsync("dirty_live_games");
+            // 1. Pega lista de IDs que mudaram
+            var dirtyIdsRedis = await db.SetMembersAsync("dirty_live_games");
+            if (dirtyIdsRedis.Length == 0) return;
 
-            if (dirtyIds.Length == 0) return;
+            var gamesToUpdate = new List<SportsEvent>();
+            var processedIds = new List<RedisValue>();
 
-            using (var scope = _serviceProvider.CreateScope())
+            // 2. Coleta dados do Redis (Sem ir no banco ainda!)
+            foreach (var redisValue in dirtyIdsRedis)
             {
-                var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var gameId = redisValue.ToString();
+                var json = await db.StringGetAsync($"live_game:{gameId}");
 
-                foreach (var redisValue in dirtyIds)
+                if (json.HasValue)
                 {
-                    string gameId = redisValue.ToString();
-
-                    // 2. Busca o dado fresquinho no Redis
-                    var json = await db.StringGetAsync($"live_game:{gameId}");
-                    if (!json.HasValue) continue;
-
-                    var gameRedis = JsonSerializer.Deserialize<SportsEvent>(json!);
-
-                    // 3. Busca o dado no Banco (apenas para anexar ao contexto)
-                    var gameDb = await context.SportsEvents.FirstOrDefaultAsync(g => g.ExternalId == gameId);
-
-                    if (gameDb != null && gameRedis != null)
+                    try
                     {
-                        // 4. Atualiza apenas o essencial
-                        gameDb.Score = gameRedis.Score;
-                        gameDb.GameTime = gameRedis.GameTime;
-                        gameDb.Status = gameRedis.Status;
-                        gameDb.RawOddsHome = gameRedis.RawOddsHome;
-                        gameDb.RawOddsDraw = gameRedis.RawOddsDraw;
-                        gameDb.RawOddsAway = gameRedis.RawOddsAway;
-                        gameDb.LastUpdate = DateTime.UtcNow;
+                        var game = JsonSerializer.Deserialize<SportsEvent>(json!, _jsonOptions);
+                        if (game != null)
+                        {
+                            gamesToUpdate.Add(game);
+                            processedIds.Add(redisValue);
+                        }
                     }
+                    catch { /* Ignora JSON corrompido */ }
+                }
+                else
+                {
+                    // Se não tá no Redis mas tá na lista de sujos, removemos da lista de sujos depois
+                    processedIds.Add(redisValue);
+                }
+            }
+
+            if (gamesToUpdate.Any())
+            {
+                using (var scope = _serviceProvider.CreateScope())
+                {
+                    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                    // 3. EXECUTAR BULK UPDATE (RAW SQL)
+                    // Isso é 100x mais rápido que o EF Core ChangeTracker
+                    await ExecutePostgresBulkUpdate(context, gamesToUpdate);
                 }
 
-                // 5. Salva tudo de uma vez no SQL
-                await context.SaveChangesAsync();
+                // 4. Limpa a lista de sujos no Redis
+                if (processedIds.Any())
+                {
+                    await db.SetRemoveAsync("dirty_live_games", processedIds.ToArray());
+                }
 
-                // 6. Limpa a lista de sujos (apenas os que processamos)
-                await db.SetRemoveAsync("dirty_live_games", dirtyIds);
-
-                _logger.LogInformation($"💾 [PERSISTENCE] {dirtyIds.Length} jogos sincronizados com o SQL.");
+                _logger.LogInformation($"⚡ [BULK UPDATE] {gamesToUpdate.Count} jogos atualizados em uma única transação.");
             }
+        }
+
+        private async Task ExecutePostgresBulkUpdate(AppDbContext context, List<SportsEvent> games)
+        {
+            // Construção da Query: UPDATE ... FROM (VALUES ...)
+            // Isso permite atualizar centenas de linhas em 1 comando.
+
+            var sb = new StringBuilder();
+            var parameters = new List<object>();
+            var paramIndex = 0;
+
+            sb.Append("UPDATE \"SportsEvents\" AS s SET ");
+            sb.Append("\"Score\" = v.score, ");
+            sb.Append("\"GameTime\" = v.time, ");
+            sb.Append("\"Status\" = v.status, ");
+            sb.Append("\"RawOddsHome\" = CAST(v.home AS decimal), ");
+            sb.Append("\"RawOddsDraw\" = CAST(v.draw AS decimal), ");
+            sb.Append("\"RawOddsAway\" = CAST(v.away AS decimal), ");
+            sb.Append("\"LastUpdate\" = CAST(v.updated AS timestamp with time zone) ");
+            sb.Append("FROM (VALUES ");
+
+            for (int i = 0; i < games.Count; i++)
+            {
+                var g = games[i];
+                if (i > 0) sb.Append(", ");
+
+                // Adiciona placeholders (@p0, @p1, etc)
+                sb.Append($"(@p{paramIndex++}, @p{paramIndex++}, @p{paramIndex++}, @p{paramIndex++}, @p{paramIndex++}, @p{paramIndex++}, @p{paramIndex++}, @p{paramIndex++})");
+
+                // Adiciona valores na lista de parâmetros
+                parameters.Add(g.ExternalId);                               // ID para o WHERE
+                parameters.Add(g.Score ?? "0-0");
+                parameters.Add(g.GameTime ?? "0'");
+                parameters.Add(g.Status ?? "Live");
+                parameters.Add(g.RawOddsHome);
+                parameters.Add(g.RawOddsDraw);
+                parameters.Add(g.RawOddsAway);
+                parameters.Add(DateTime.UtcNow);
+            }
+
+            // Mapeia as colunas virtuais da tabela VALUES
+            sb.Append(") AS v(id, score, time, status, home, draw, away, updated) ");
+
+            // Faz o Join pelo ID Externo (que é o ID da BetsAPI)
+            sb.Append("WHERE s.\"ExternalId\" = v.id");
+
+            // Executa o comando RAW
+            await context.Database.ExecuteSqlRawAsync(sb.ToString(), parameters.ToArray());
         }
     }
 }

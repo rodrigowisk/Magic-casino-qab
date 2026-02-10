@@ -24,5 +24,7 @@ namespace Magic_casino_tournament.Services
         Task DeductFantasyBalance(int tournamentId, string userId, decimal amount);
 
         Task ProcessFinishedTournamentsAsync();
+
+        Task ProcessGameResultAsync(string gameId, string score);
     }
 }

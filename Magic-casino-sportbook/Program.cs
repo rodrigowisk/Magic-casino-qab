@@ -197,14 +197,16 @@ builder.Services.AddMassTransit(x =>
 });
 
 // =============================================================
-// ✅ SERVICES DE NEGÓCIO (DI)
+// ✅ SERVICES DE NEGÓCIO (DI E GATEKEEPER)
 // =============================================================
+
+// Injeção do BetsApiGatekeeper usando o Redis que já configuramos acima
+builder.Services.AddSingleton<BetsApiGatekeeper>();
 
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient<BetsApiService>();
 builder.Services.AddHttpClient<PreMatchService>();
 builder.Services.AddScoped<LiveSportService>();
-builder.Services.AddSingleton<BetsApiGatekeeper>();
 
 string provider = Environment.GetEnvironmentVariable("ODDS_PROVIDER") ?? "BetsApi";
 
@@ -229,13 +231,15 @@ builder.Services.AddHttpClient<CoreWalletService>(client =>
 // 🤖 BACKGROUND SERVICES
 // =============================================================
 
-builder.Services.AddHostedService<OddsBackgroundService>(); 
+builder.Services.AddHostedService<OddsBackgroundService>();
 builder.Services.AddHostedService<PrematchOddsWorker>();
 
 builder.Services.AddHostedService<LiveOddsWorker>();
 builder.Services.AddHostedService<GameStatusWorker>();
 builder.Services.AddHostedService<LiveScoreWorker>();
-builder.Services.AddHttpClient<BetsApiService>();
+
+// ✅ ADICIONADO: O novo worker que salva do Redis para o SQL
+builder.Services.AddHostedService<LivePersistenceWorker>();
 
 var app = builder.Build();
 

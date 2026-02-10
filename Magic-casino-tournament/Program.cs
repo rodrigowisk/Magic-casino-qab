@@ -2,13 +2,14 @@
 using Magic_casino_tournament.Services;
 using Magic_casino_tournament.BackgroundServices;
 using Magic_casino_tournament.Consumers;
-using Microsoft.EntityFrameworkCore;
+using Magic_casino.Contracts; 
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using MassTransit;
-// 👇 Importante para o MassTransit reconhecer o evento "falso" que criamos
-using Magic_casino.Events;
+using Microsoft.EntityFrameworkCore; // Já deve ter, mas confirme
+using Npgsql.EntityFrameworkCore.PostgreSQL; // ⚠️ ESSENCIAL para UseNpgsql
+using Microsoft.Extensions.DependencyInjection; // Para AddStackExchangeRedisCache
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -61,15 +62,16 @@ builder.Services.AddStackExchangeRedisCache(options =>
 // ==============================================================================
 builder.Services.AddMassTransit(x =>
 {
-    // Registra o Consumidor
+    // Registra os Consumidores
     x.AddConsumer<UserUpdatedConsumer>();
+    x.AddConsumer<GameEndedConsumer>(); // ✅ NOVO: Consumidor de Fim de Jogo
 
     x.UsingRabbitMq((context, cfg) =>
     {
         // 👇 CORREÇÃO: Pegar as variáveis corretas do Docker Compose
         var rabbitHost = Environment.GetEnvironmentVariable("RABBITMQ_HOST") ?? "rabbitmq";
-        var rabbitUser = Environment.GetEnvironmentVariable("RABBITMQ_USER") ?? "admin"; // Era guest, mudei para admin
-        var rabbitPass = Environment.GetEnvironmentVariable("RABBITMQ_PASS") ?? "admin"; // Era guest, mudei para admin
+        var rabbitUser = Environment.GetEnvironmentVariable("RABBITMQ_USER") ?? "admin";
+        var rabbitPass = Environment.GetEnvironmentVariable("RABBITMQ_PASS") ?? "admin";
 
         cfg.Host(rabbitHost, "/", h =>
         {
@@ -77,10 +79,16 @@ builder.Services.AddMassTransit(x =>
             h.Password(rabbitPass);
         });
 
-        // Configura a fila específica para atualizações de usuário
+        // Fila 1: Atualizações de Usuário (Saldo, Nível)
         cfg.ReceiveEndpoint("user-updated-tournament-queue", e =>
         {
             e.ConfigureConsumer<UserUpdatedConsumer>(context);
+        });
+
+        // ✅ Fila 2: Resultados de Jogos (Vem do Sportbook)
+        cfg.ReceiveEndpoint("game-ended-tournament-queue", e =>
+        {
+            e.ConfigureConsumer<GameEndedConsumer>(context);
         });
     });
 });
@@ -134,7 +142,6 @@ var app = builder.Build();
 // ==============================================================================
 // 6. Pipeline HTTP
 // ==============================================================================
-// Swagger habilitado em Produção também para facilitar testes (opcional)
 app.UseSwagger();
 app.UseSwaggerUI();
 
@@ -154,7 +161,6 @@ using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<TournamentDbContext>();
 
-        // Tenta conectar e aplicar migrations
         Console.WriteLine(">>>>> [DB] Verificando banco de dados...");
         if (db.Database.CanConnect())
         {
@@ -165,7 +171,6 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex)
     {
-        // Loga o erro mas não derruba a aplicação imediatamente
         Console.WriteLine($"❌ [CRITICAL] Erro ao conectar/migrar banco de dados: {ex.Message}");
     }
 }

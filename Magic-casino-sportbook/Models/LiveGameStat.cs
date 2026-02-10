@@ -27,6 +27,31 @@ namespace Magic_casino_sportbook.Models
 
         public bool IsFinished { get; set; } = false;
 
+        // ✅ NOVOS CAMPOS: ESTATÍSTICAS DO JOGO
+        public int HomeCorners { get; set; } = 0;
+        public int AwayCorners { get; set; } = 0;
+
+        public int HomeYellowCards { get; set; } = 0;
+        public int AwayYellowCards { get; set; } = 0;
+
+        public int HomeRedCards { get; set; } = 0;
+        public int AwayRedCards { get; set; } = 0;
+
+        public int HomeDangerousAttacks { get; set; } = 0;
+        public int AwayDangerousAttacks { get; set; } = 0;
+
+        public int HomeAttacks { get; set; } = 0;
+        public int AwayAttacks { get; set; } = 0;
+
+        public int HomePossession { get; set; } = 0;
+        public int AwayPossession { get; set; } = 0;
+
+        public int HomeOnTarget { get; set; } = 0;
+        public int AwayOnTarget { get; set; } = 0;
+
+        public int HomeOffTarget { get; set; } = 0;
+        public int AwayOffTarget { get; set; } = 0;
+
         public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
     }
 }

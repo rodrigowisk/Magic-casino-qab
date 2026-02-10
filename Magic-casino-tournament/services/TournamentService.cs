@@ -2,9 +2,9 @@
 using Magic_casino_tournament.Data;
 using Magic_casino_tournament.Models;
 using Microsoft.EntityFrameworkCore;
-// 👇 1. ADICIONADO PARA O REDIS E JSON
 using Microsoft.Extensions.Caching.Distributed;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Magic_casino_tournament.Services
 {
@@ -12,32 +12,50 @@ namespace Magic_casino_tournament.Services
     {
         private readonly TournamentDbContext _context;
         private readonly ICoreGateway _coreGateway;
-        // 👇 2. CACHE INJETADO
         private readonly IDistributedCache _cache;
 
         public TournamentService(TournamentDbContext context, ICoreGateway coreGateway, IDistributedCache cache)
         {
             _context = context;
             _coreGateway = coreGateway;
-            _cache = cache; // <--- Inicializa o cache
+            _cache = cache;
         }
 
+        // ✅ VERSÃO OTIMIZADA (1 Consulta SQL apenas)
         public async Task<List<Tournament>> GetActiveTournamentsAsync(string? userId)
         {
-            var tournaments = await _context.Tournaments
+            var query = _context.Tournaments
                 .Where(t => t.IsActive && !t.IsFinished)
                 .OrderBy(t => t.StartDate)
-                .ToListAsync();
-
-            if (!string.IsNullOrEmpty(userId))
-            {
-                foreach (var t in tournaments)
+                .Select(t => new Tournament
                 {
-                    t.ParticipantsCount = await _context.TournamentParticipants.CountAsync(p => p.TournamentId == t.Id);
-                    t.IsJoined = await _context.TournamentParticipants.AnyAsync(p => p.TournamentId == t.Id && p.UserId == userId);
-                }
-            }
-            return tournaments;
+                    Id = t.Id,
+                    Name = t.Name,
+                    Description = t.Description,
+                    Sport = t.Sport,
+                    Category = t.Category,
+                    CoverImage = t.CoverImage,
+                    EntryFee = t.EntryFee,
+                    HouseFeePercent = t.HouseFeePercent,
+                    InitialFantasyBalance = t.InitialFantasyBalance,
+                    PrizePool = t.PrizePool,
+                    FixedPrize = t.FixedPrize,
+                    MaxParticipants = t.MaxParticipants,
+                    IsActive = t.IsActive,
+                    IsFinished = t.IsFinished,
+                    StartDate = t.StartDate,
+                    EndDate = t.EndDate,
+                    FilterRules = t.FilterRules,
+                    PrizeRuleId = t.PrizeRuleId,
+
+                    // O EF Core traduz isso para COUNT() direto no SQL
+                    ParticipantsCount = t.Participants.Count(),
+
+                    // O EF Core traduz isso para EXISTS() direto no SQL
+                    IsJoined = !string.IsNullOrEmpty(userId) && t.Participants.Any(p => p.UserId == userId)
+                });
+
+            return await query.ToListAsync();
         }
 
         public async Task<object?> GetTournamentByIdAsync(int id, string? userId)
@@ -47,7 +65,6 @@ namespace Magic_casino_tournament.Services
 
             tournament.ParticipantsCount = await _context.TournamentParticipants.CountAsync(p => p.TournamentId == id);
 
-            // ... (código existente de verificação de usuário) ...
             bool isJoined = false;
             decimal currentBalance = tournament.InitialFantasyBalance;
             int rank = 0;
@@ -94,15 +111,12 @@ namespace Magic_casino_tournament.Services
 
         public async Task<Tournament> CreateTournamentAsync(Tournament tournament)
         {
-            // ✅ LÓGICA DE PREMIAÇÃO INICIAL
             if (tournament.FixedPrize.HasValue && tournament.FixedPrize.Value > 0)
             {
-                // Se for prêmio fixo, o PrizePool começa e permanece com esse valor
                 tournament.PrizePool = tournament.FixedPrize.Value;
             }
             else
             {
-                // Se for acumulado, começa zerado
                 tournament.PrizePool = 0;
             }
 
@@ -116,12 +130,9 @@ namespace Magic_casino_tournament.Services
             var tournament = await _context.Tournaments.FindAsync(tournamentId);
             if (tournament == null) return "Torneio não encontrado.";
 
-            // 1. Checa se o usuário já está inscrito
             if (await _context.TournamentParticipants.AnyAsync(p => p.TournamentId == tournamentId && p.UserId == userId))
                 return "Usuário já inscrito.";
 
-            // ✅ 2. NOVO: CHECAGEM DE LIMITE DE USUÁRIOS
-            // Se MaxParticipants tiver valor (> 0) e a contagem atual for igual ou maior, bloqueia.
             if (tournament.MaxParticipants.HasValue && tournament.MaxParticipants.Value > 0)
             {
                 int currentCount = await _context.TournamentParticipants.CountAsync(p => p.TournamentId == tournamentId);
@@ -131,7 +142,6 @@ namespace Magic_casino_tournament.Services
                 }
             }
 
-            // 3. Cobrança da Taxa de Entrada (Sem alterações)
             if (tournament.EntryFee > 0)
             {
                 var response = await _coreGateway.DeductFundsAsync(userId, tournament.EntryFee, token);
@@ -150,7 +160,6 @@ namespace Magic_casino_tournament.Services
                 _context.TournamentTransactions.Add(transaction);
             }
 
-            // 4. Adiciona o Participante (Sem alterações)
             var participant = new TournamentParticipant
             {
                 TournamentId = tournamentId,
@@ -162,18 +171,13 @@ namespace Magic_casino_tournament.Services
             };
             _context.TournamentParticipants.Add(participant);
 
-            // ✅ 5. LÓGICA DE ATUALIZAÇÃO DO PRÊMIO (PRIZE POOL)
-            // Só adiciona ao prêmio se NÃO for Fixo (FixedPrize == null)
             if (tournament.EntryFee > 0 && (tournament.FixedPrize == null || tournament.FixedPrize == 0))
             {
                 decimal houseCut = tournament.EntryFee * (tournament.HouseFeePercent / 100m);
                 tournament.PrizePool += (tournament.EntryFee - houseCut);
             }
-            // Se for FixedPrize, o valor do PrizePool não muda (a casa absorve a entrada e paga o fixo)
 
             await _context.SaveChangesAsync();
-
-            // Invalida cache do ranking se necessário
             await _cache.RemoveAsync($"ranking:{tournamentId}");
 
             return "Success";
@@ -235,20 +239,13 @@ namespace Magic_casino_tournament.Services
             _context.TournamentBets.Add(bet);
             await _context.SaveChangesAsync();
 
-            // 🔥 Opcional: Invalidar o cache imediatamente após a aposta
-            // await _cache.RemoveAsync($"ranking:{tournamentId}");
-
             return (true, "Aposta múltipla realizada com sucesso!");
         }
 
-        // ============================================================
-        // 🔄 MÉTODO ATUALIZADO COM REDIS + DTO
-        // ============================================================
         public async Task<List<TournamentRankingDto>> GetTournamentRankingAsync(int tournamentId)
         {
             string cacheKey = $"ranking:{tournamentId}";
 
-            // 1. TENTA LER DO REDIS (Rápido)
             var cachedData = await _cache.GetStringAsync(cacheKey);
             if (!string.IsNullOrEmpty(cachedData))
             {
@@ -256,28 +253,20 @@ namespace Magic_casino_tournament.Services
                 {
                     return JsonSerializer.Deserialize<List<TournamentRankingDto>>(cachedData) ?? new List<TournamentRankingDto>();
                 }
-                catch
-                {
-                    // Se falhar o deserialize, ignora e busca do banco
-                }
+                catch { }
             }
 
-            // 2. SE NÃO ACHOU, VAI NO BANCO (Lento)
             var participants = await _context.TournamentParticipants
                 .Where(p => p.TournamentId == tournamentId)
-                .Include(p => p.Bets) // 👈 Essencial para calcular "Bilhetes" e "Saldo Possível"
+                .Include(p => p.Bets)
                 .OrderByDescending(p => p.FantasyBalance)
                 .ToListAsync();
 
-            // 3. Mapeamento para o DTO
             var ranking = participants.Select((p, index) =>
             {
-                // Dados auxiliares das apostas
                 var apostasPendentes = p.Bets.Where(b => b.Status == "Pending").ToList();
                 var apostasFinalizadas = p.Bets.Count(b => b.Status != "Pending");
                 var totalApostas = p.Bets.Count;
-
-                // Soma do que ele PODE ganhar nas apostas abertas
                 decimal potencialPendentes = apostasPendentes.Sum(b => b.PotentialWin);
 
                 return new TournamentRankingDto
@@ -286,21 +275,14 @@ namespace Magic_casino_tournament.Services
                     UserId = p.UserId,
                     UserName = string.IsNullOrEmpty(p.UserName) ? "Jogador" : p.UserName,
                     Avatar = p.Avatar ?? "",
-
                     SaldoAtual = p.FantasyBalance,
-
-                    // Saldo Possível = O que tenho hoje + O que posso ganhar
                     SaldoPossivel = p.FantasyBalance + potencialPendentes,
-
-                    // Formato "3/10" (Finalizadas/Total)
                     ProgressoBilhetes = $"{apostasFinalizadas}/{totalApostas}",
-
                     BilhetesFinalizados = apostasFinalizadas,
                     BilhetesTotais = totalApostas
                 };
             }).ToList();
 
-            // 4. SALVA NO REDIS POR 5 SEGUNDOS
             var cacheOptions = new DistributedCacheEntryOptions
             {
                 AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(5)
@@ -403,6 +385,106 @@ namespace Magic_casino_tournament.Services
 
             tournament.IsFinished = true;
             await _context.SaveChangesAsync();
+        }
+
+        public async Task ProcessGameResultAsync(string gameId, string score)
+        {
+            Console.WriteLine($"✅ [TOURNAMENT SERVICE] Processando resultado: Jogo {gameId} -> Placar {score}");
+
+            var betsContainingGame = await _context.TournamentBetSelections
+                .Include(s => s.TournamentBet)
+                .ThenInclude(b => b.Participant)
+                .Where(s => s.GameId == gameId && s.Status == "Pending")
+                .ToListAsync();
+
+            if (!betsContainingGame.Any()) return;
+
+            Console.WriteLine($"🔍 Encontradas {betsContainingGame.Count} seleções pendentes para este jogo.");
+
+            foreach (var selection in betsContainingGame)
+            {
+                bool won = CheckWinner(selection.MarketName, selection.SelectionName, score);
+                selection.Status = won ? "Won" : "Lost";
+            }
+
+            await _context.SaveChangesAsync();
+
+            var distinctBetIds = betsContainingGame.Select(s => s.TournamentBetId).Distinct().ToList();
+
+            foreach (var betId in distinctBetIds)
+            {
+                var bet = await _context.TournamentBets
+                    .Include(b => b.Selections)
+                    .Include(b => b.Participant)
+                    .FirstOrDefaultAsync(b => b.Id == betId);
+
+                if (bet == null || bet.Status != "Pending") continue;
+
+                if (bet.Selections.Any(s => s.Status == "Lost"))
+                {
+                    bet.Status = "Lost";
+                    Console.WriteLine($"❌ Bilhete {bet.Id} PERDIDO.");
+                }
+                else if (bet.Selections.All(s => s.Status == "Won"))
+                {
+                    bet.Status = "Won";
+
+                    if (bet.Participant != null)
+                    {
+                        bet.Participant.FantasyBalance += bet.PotentialWin;
+                        Console.WriteLine($"🏆 Bilhete {bet.Id} VENCEU! Creditando {bet.PotentialWin} fichas para {bet.UserId}.");
+                        await _cache.RemoveAsync($"ranking:{bet.TournamentId}");
+                    }
+                }
+            }
+
+            await _context.SaveChangesAsync();
+        }
+
+        private bool CheckWinner(string market, string outcome, string score)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(score) || !score.Contains("-")) return false;
+                var cleanScore = score.Split(' ')[0].Trim();
+                var parts = cleanScore.Split('-');
+                if (parts.Length < 2) return false;
+                if (!int.TryParse(parts[0], out int homeScore) || !int.TryParse(parts[1], out int awayScore)) return false;
+
+                var mkt = market?.ToLower().Trim() ?? "";
+                var sel = outcome?.ToLower().Trim() ?? "";
+
+                if (mkt.Contains("result") || mkt.Contains("vencedor") || mkt == "1x2" || mkt.Contains("match winner"))
+                {
+                    if (sel == "1" || sel == "casa" || sel == "home") return homeScore > awayScore;
+                    if (sel == "2" || sel == "fora" || sel == "away") return awayScore > homeScore;
+                    if (sel == "x" || sel == "draw" || sel == "empate") return homeScore == awayScore;
+                }
+                if (mkt.Contains("double") || mkt.Contains("dupla"))
+                {
+                    if (sel == "1x" || (sel.Contains("casa") && sel.Contains("empate"))) return homeScore >= awayScore;
+                    if (sel == "x2" || sel == "2x" || (sel.Contains("empate") && sel.Contains("fora"))) return awayScore >= homeScore;
+                    if (sel == "12" || (sel.Contains("casa") && sel.Contains("fora"))) return homeScore != awayScore;
+                }
+                if (mkt.Contains("goal") || mkt.Contains("gols") || mkt.Contains("over") || mkt.Contains("under") || mkt == "total de gols")
+                {
+                    int totalGols = homeScore + awayScore;
+                    var match = Regex.Match(sel.Replace(",", "."), @"(\d+(\.\d+)?)");
+                    if (match.Success && double.TryParse(match.Value, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double line))
+                    {
+                        if (sel.Contains("over") || sel.Contains("mais") || sel.Contains("acima")) return totalGols > line;
+                        if (sel.Contains("under") || sel.Contains("menos") || sel.Contains("abaixo")) return totalGols < line;
+                    }
+                }
+                if (mkt.Contains("both teams") || mkt.Contains("ambos"))
+                {
+                    bool bttsYes = homeScore > 0 && awayScore > 0;
+                    if (sel == "sim" || sel == "yes") return bttsYes;
+                    if (sel == "não" || sel == "nao" || sel == "no") return !bttsYes;
+                }
+                return false;
+            }
+            catch { return false; }
         }
     }
 }

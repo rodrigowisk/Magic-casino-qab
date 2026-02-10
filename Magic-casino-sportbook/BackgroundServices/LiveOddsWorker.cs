@@ -1,7 +1,6 @@
 ﻿using Magic_casino_sportbook.Data;
 using Magic_casino_sportbook.Services;
 using Magic_casino_sportbook.Hubs;
-using Magic_casino_sportbook.Models;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,7 +10,9 @@ namespace Magic_casino_sportbook.BackgroundServices
     {
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<LiveOddsWorker> _logger;
-        private const int DELAY_LIVE_MS = 10000; // 10s (Atualiza placar\odd)
+
+        // Tempo entre ciclos (10 segundos)
+        private const int DELAY_LIVE_MS = 10000;
 
         public LiveOddsWorker(IServiceProvider serviceProvider, ILogger<LiveOddsWorker> logger)
         {
@@ -21,7 +22,7 @@ namespace Magic_casino_sportbook.BackgroundServices
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("✅ [LIVE ODDS WORKER] Iniciado. Monitorando jogos ao vivo.");
+            _logger.LogInformation("✅ [LIVE ODDS WORKER] Iniciado. Monitorando jogos ao vivo (Redis-First).");
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -40,53 +41,30 @@ namespace Magic_casino_sportbook.BackgroundServices
                     var liveService = scope.ServiceProvider.GetRequiredService<LiveSportService>();
                     var hub = scope.ServiceProvider.GetRequiredService<IHubContext<GameHub>>();
 
-                    // 🔥 CORREÇÃO 1: Janela de tempo
-                    // Busca jogos Live ou Ended recentemente (últimos 10 min) para garantir que o update final seja enviado
-                    var lookbackTime = DateTime.UtcNow.AddMinutes(-10);
-
+                    // 1. Pega APENAS os jogos que estão marcados como AO VIVO no banco
+                    // (Essa leitura é rápida pois usa índice no Status)
                     var liveGames = await context.SportsEvents
-                        .Where(g => g.Status == "Live" || (g.Status == "Ended" && g.LastUpdate > lookbackTime))
-                        .OrderBy(g => g.LastUpdate)
-                        .Take(40)
+                        .Where(g => g.Status == "Live")
                         .ToListAsync(ct);
 
                     if (liveGames.Any())
                     {
-                        // Atualiza na API
-                        var endedGameIds = await liveService.UpdateLiveGamesAsync(liveGames, context);
-                        await context.SaveChangesAsync(ct);
+                        // 2. Atualiza Odds/Placar usando a API Externa
+                        // O Serviço agora salva no Redis e marca o jogo como "dirty"
+                        // NÃO SALVAMOS NO SQL AQUI! (Isso remove o gargalo)
+                        var idsToRemove = await liveService.UpdateLiveGamesAsync(liveGames, context);
 
-                        // 3. 🔥 CORREÇÃO CRÍTICA AQUI 🔥
-                        // AQUI ESTAVA O ERRO: .Where(g => g.Status == "Live")
-                        // MUDAMOS PARA: Incluir "Ended" e "Completed".
-                        // Isso permite que o Frontend receba a atualização de status e remova o jogo visualmente.
-                        var activeLiveGames = liveGames
-                            .Where(g => g.Status == "Live" || g.Status == "Ended" || g.Status == "Completed")
-                            .ToList();
-
-                        if (activeLiveGames.Any())
+                        // 3. Se algum jogo acabou ou sumiu, avisamos o Frontend para remover da tela
+                        if (idsToRemove != null && idsToRemove.Any())
                         {
-                            await hub.Clients.All.SendAsync("LiveOddsUpdate", activeLiveGames.Select(g => new
-                            {
-                                id = g.ExternalId,
-                                score = g.Score,
-                                time = !string.IsNullOrEmpty(g.GameTime) ? g.GameTime : "Live",
-                                status = g.Status, // Agora enviará "Ended", acionando a remoção no Vue
-                                homeOdd = g.RawOddsHome,
-                                drawOdd = g.RawOddsDraw,
-                                awayOdd = g.RawOddsAway
-                            }), ct);
-                        }
-
-                        // 4. Reforço de Remoção (RemoveGames)
-                        if (endedGameIds != null && endedGameIds.Any())
-                        {
-                            await hub.Clients.All.SendAsync("RemoveGames", endedGameIds, ct);
+                            await hub.Clients.All.SendAsync("RemoveGames", idsToRemove, ct);
                         }
                     }
 
-                    // 5. ASPIRADOR DE PÓ (Limpeza profunda para jogos antigos travados)
-                    // Aumentei para 24h para garantir que seu jogo zumbi atual seja pego
+                    // 4. ASPIRADOR DE PÓ (Limpeza de segurança)
+                    // Pega jogos que estão como "Ended" no banco mas ainda podem estar ocupando memória
+                    // Rodamos isso apenas se houver folga, ou a cada ciclo, pois é uma query leve com índice.
+                    // Para performance extrema, poderíamos rodar isso em outro worker, mas aqui está ok.
                     var recentlyEnded = await context.SportsEvents
                         .AsNoTracking()
                         .Where(g => g.Status == "Ended" && g.LastUpdate > DateTime.UtcNow.AddHours(-24))

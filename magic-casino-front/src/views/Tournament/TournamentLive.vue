@@ -48,6 +48,11 @@ interface LiveGame {
   drawOddFlash?: boolean;
   awayOddDir?: 'up' | 'down' | null;
   awayOddFlash?: boolean;
+  // ✅ ADICIONADO: Cartões
+  homeYellowCards?: number;
+  awayYellowCards?: number;
+  homeRedCards?: number;
+  awayRedCards?: number;
   [key: string]: any;
 }
 
@@ -65,6 +70,7 @@ const tournamentId = ref(Number(route.params.id));
 const fantasyBalance = ref(0);
 const currentUser = ref('');
 const tournamentEnd = ref<number>(0);
+const tournamentStart = ref<number>(0); 
 const tournamentRules = ref<any>(null);
 const defaultSportKey = ref('soccer');
 
@@ -136,7 +142,12 @@ const normalizeGame = (e: any): LiveGame => {
         homeOdd: e.rawOddsHome ?? e.homeOdd ?? 0,
         drawOdd: e.rawOddsDraw ?? e.drawOdd ?? 0,
         awayOdd: e.rawOddsAway ?? e.awayOdd ?? 0,
-        period: e.status || e.period || 'Live'
+        period: e.status || e.period || 'Live',
+        // ✅ ADICIONADO: Normalização dos cartões recebidos da API
+        homeYellowCards: e.homeYellowCards || 0,
+        awayYellowCards: e.awayYellowCards || 0,
+        homeRedCards: e.homeRedCards || 0,
+        awayRedCards: e.awayRedCards || 0,
     };
 };
 
@@ -146,24 +157,48 @@ const getGameId = (game: any): string => {
 };
 
 const isGameAllowedInTournament = (game: LiveGame): boolean => {
-    if (tournamentEnd.value > 0 && new Date(game.commenceTime).getTime() > tournamentEnd.value) {
-        return false;
+    if (tournamentStart.value > 0) {
+        const gameTime = new Date(game.commenceTime).getTime();
+        if (gameTime < tournamentStart.value - (2 * 60 * 60 * 1000)) {
+            return false;
+        }
     }
+
+    if (tournamentEnd.value > 0) {
+        const gameTime = new Date(game.commenceTime).getTime();
+        if (gameTime > tournamentEnd.value + (4 * 60 * 60 * 1000)) { 
+            return false;
+        }
+    }
+
     const gameSportNormalized = normalizeSportKey(game.sportKey);
+    
     if (tournamentRules.value && tournamentRules.value.sports && Array.isArray(tournamentRules.value.sports) && tournamentRules.value.sports.length > 0) {
         const allowedSportRule = tournamentRules.value.sports.find((s: any) => 
             normalizeSportKey(s.key) === gameSportNormalized
         );
-        if (!allowedSportRule) return false;
+        
+        if (!allowedSportRule) return false; 
+
         if (allowedSportRule.leagues && Array.isArray(allowedSportRule.leagues) && allowedSportRule.leagues.length > 0) {
-            const allowedLeagueIds = new Set(allowedSportRule.leagues.map((l: any) => String(l.id)));
-            const gameLgId = String(game.leagueId || '');
-            if (!allowedLeagueIds.has(gameLgId)) return false;
+            
+            const allowedIds = new Set(allowedSportRule.leagues.map((l: any) => String(l.id).trim().toLowerCase()));
+            const allowedNames = new Set(allowedSportRule.leagues.map((l: any) => String(l.name || l.id).trim().toLowerCase())); 
+
+            const gameLgId = String(game.leagueId || '').trim().toLowerCase();
+            const gameLgName = String(game.league || '').trim().toLowerCase();
+            
+            const matchId = allowedIds.has(gameLgId);
+            const matchName = allowedNames.has(gameLgName);
+
+            if (!matchId && !matchName) return false;
         }
         return true;
     }
+
     return gameSportNormalized === normalizeSportKey(defaultSportKey.value);
 };
+
 
 const loadCurrentUser = () => {
     try {
@@ -187,6 +222,7 @@ const loadTournamentData = async () => {
             }
             fantasyBalance.value = res.data.currentFantasyBalance ?? 1000;
             tournamentEnd.value = new Date(res.data.endDate).getTime();
+            tournamentStart.value = new Date(res.data.startDate).getTime(); 
             defaultSportKey.value = res.data.sport || 'soccer';
             
             if (res.data.filterRules) {
@@ -260,6 +296,12 @@ const setupSignalR = async () => {
                 if (update.homeOdd) updateOddWithAnimation(game, 'homeOdd', update.homeOdd);
                 if (update.drawOdd) updateOddWithAnimation(game, 'drawOdd', update.drawOdd);
                 if (update.awayOdd) updateOddWithAnimation(game, 'awayOdd', update.awayOdd);
+
+                // ✅ ADICIONADO: Atualização dos Cartões Ao Vivo via SignalR
+                if (update.homeYellowCards !== undefined) game.homeYellowCards = update.homeYellowCards;
+                if (update.awayYellowCards !== undefined) game.awayYellowCards = update.awayYellowCards;
+                if (update.homeRedCards !== undefined) game.homeRedCards = update.homeRedCards;
+                if (update.awayRedCards !== undefined) game.awayRedCards = update.awayRedCards;
             }
         });
     });
@@ -390,7 +432,6 @@ const handleSelection = (game: LiveGame, type: BetType) => {
     } else {
         const selectionName = type === '1' ? game.homeTeam : type === '2' ? game.awayTeam : 'Empate';
         
-        // ✅ CORREÇÃO AQUI: Cast para any para permitir o 8º argumento
         (store as any).addOrReplaceSelection(
             gameId, 
             game.homeTeam, 
@@ -421,7 +462,6 @@ const getOddDirection = (game: LiveGame, type: string) => { if (type === '1') re
 const isSelected = (game: LiveGame, type: BetType) => store.selections.find(s => s.id === getGameId(game))?.type === type;
 const handleImageError = (event: Event) => { (event.target as HTMLImageElement).style.display = 'none'; };
 
-// ✅ NOVA FUNÇÃO: Navega para os detalhes do ao vivo
 const goToLiveGame = (game: any) => {
     const id = getGameId(game);
     if (!id) return;
@@ -505,14 +545,31 @@ const goToLiveGame = (game: any) => {
 
                         <div class="flex flex-col justify-center gap-1 flex-1 min-w-0 h-[40px] cursor-pointer hover:text-blue-400 transition-colors"
                              @click="goToLiveGame(game)">
+                            
                             <div class="flex items-center gap-1.5">
                                 <TeamLogo :teamName="game.homeTeam" :remoteUrl="game.homeTeamLogo" size="w-3.5 h-3.5" />
                                 <span class="text-[11px] font-medium text-white/90 truncate leading-none pt-0.5">{{ game.homeTeam }}</span>
+                                
+                                <div v-if="game.homeRedCards && game.homeRedCards > 0" class="flex gap-[2px] ml-0.5 items-center">
+                                    <div v-for="n in game.homeRedCards" :key="'hrc'+n" class="w-[5px] h-[8px] bg-[#e62323] rounded-[1px] shadow-[0_0_2px_rgba(0,0,0,0.5)]"></div>
+                                </div>
+                                <div v-if="game.homeYellowCards && game.homeYellowCards > 0" class="flex gap-[2px] ml-0.5 items-center">
+                                    <div v-for="n in game.homeYellowCards" :key="'hyc'+n" class="w-[5px] h-[8px] bg-[#ffcc00] rounded-[1px] shadow-[0_0_2px_rgba(0,0,0,0.5)]"></div>
+                                </div>
                             </div>
+
                             <div class="flex items-center gap-1.5">
                                 <TeamLogo :teamName="game.awayTeam" :remoteUrl="game.awayTeamLogo" size="w-3.5 h-3.5" />
                                 <span class="text-[11px] font-medium text-white/90 truncate leading-none pt-0.5">{{ game.awayTeam }}</span>
+                                
+                                <div v-if="game.awayRedCards && game.awayRedCards > 0" class="flex gap-[2px] ml-0.5 items-center">
+                                    <div v-for="n in game.awayRedCards" :key="'arc'+n" class="w-[5px] h-[8px] bg-[#e62323] rounded-[1px] shadow-[0_0_2px_rgba(0,0,0,0.5)]"></div>
+                                </div>
+                                <div v-if="game.awayYellowCards && game.awayYellowCards > 0" class="flex gap-[2px] ml-0.5 items-center">
+                                    <div v-for="n in game.awayYellowCards" :key="'ayc'+n" class="w-[5px] h-[8px] bg-[#ffcc00] rounded-[1px] shadow-[0_0_2px_rgba(0,0,0,0.5)]"></div>
+                                </div>
                             </div>
+
                         </div>
 
                         <div class="flex gap-1 shrink-0">
