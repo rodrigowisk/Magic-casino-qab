@@ -34,7 +34,7 @@ namespace Magic_casino_sportbook.BackgroundServices
                 }
 
                 // Espera 20 minutos
-                await Task.Delay(TimeSpan.FromMinutes(20), stoppingToken);
+                await Task.Delay(TimeSpan.FromMinutes(60), stoppingToken);
             }
         }
     }

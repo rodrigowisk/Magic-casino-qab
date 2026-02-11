@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
+// ADICIONEI Heart e Share2 nas importações
 import { 
-    Info, Users, ChevronRight, ChevronLeft, Play, LogIn 
+    Info, Users, ChevronRight, ChevronLeft, Play, LogIn, 
+    Heart, Share2 
 } from 'lucide-vue-next';
 import Swal from 'sweetalert2';
 
@@ -13,7 +15,7 @@ const props = defineProps<{
 }>();
 
 // EMITS: Ações que o componente manda de volta para o Pai
-const emit = defineEmits(['join', 'enter']);
+const emit = defineEmits(['join', 'enter', 'favorite', 'share']);
 
 // --- LÓGICA DE IMAGENS (Encapsulada no componente) ---
 const coversModules = import.meta.glob('/src/assets/tournament_covers/*.{png,jpg,jpeg,svg,webp}', { eager: true });
@@ -24,7 +26,6 @@ for (const path in coversModules) {
     coversMap[fileName] = mod.default;
 }
 
-// ✅ CORREÇÃO DO ERRO DE BUILD AQUI
 const getCardImage = (t: any) => {
     const rawImageName = t?.coverImage || t?.CoverImage;
     const imageName = typeof rawImageName === 'string' ? rawImageName : '';
@@ -38,7 +39,6 @@ const getCardImage = (t: any) => {
     const keys = Object.keys(coversMap);
     if (keys.length > 0) {
         const firstKey = keys[0];
-        // Validação extra para o TypeScript não reclamar de 'undefined'
         if (typeof firstKey === 'string') {
             return coversMap[firstKey];
         }
@@ -59,12 +59,12 @@ const formatTimeSimple = (dateStr: string) => {
     return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 };
 
-// --- LÓGICA DO CARROSSEL (MATEMÁTICA PRESERVADA) ---
+// --- LÓGICA DO CARROSSEL ---
 const carouselIndex = ref(0); 
 const itemsPerPage = ref(6);
 
 const visibleTournaments = computed(() => {
-    const list = props.tournaments; // Usa a prop recebida
+    const list = props.tournaments; 
     const len = list.length;
     if (len === 0) return [];
     if (len <= itemsPerPage.value) return list;
@@ -116,12 +116,31 @@ const showInfo = (t: any) => {
     });
 };
 
-// Lida com o clique no card ou botão
+// Ações rápidas dos novos botões (Exemplos)
+const toggleFavorite = (t: any) => {
+    // Lógica visual simples ou emit
+    emit('favorite', t.id);
+    // Feedback visual rápido (opcional)
+    const Toast = Swal.mixin({
+        toast: true, position: 'top-end', showConfirmButton: false, timer: 1500, background: '#121212', color: '#fff'
+    });
+    Toast.fire({ icon: 'success', title: 'Favoritado!' });
+};
+
+const shareTournament = (t: any) => {
+    emit('share', t.id);
+    // Exemplo de feedback
+    const Toast = Swal.mixin({
+        toast: true, position: 'top-end', showConfirmButton: false, timer: 1500, background: '#121212', color: '#fff'
+    });
+    Toast.fire({ icon: 'info', title: 'Link copiado!' });
+};
+
+// Lida com o clique no card ou botão principal
 const handleAction = (t: any) => {
     if (t.isJoined) {
         emit('enter', t.id);
     } else {
-        // Confirmação visual antes de emitir o join
         Swal.fire({
             title: 'Confirmar Entrada?',
             html: `
@@ -183,8 +202,26 @@ onUnmounted(() => {
                         @click="handleAction(t)"
                     >
                         
-                        <div class="absolute top-3 left-3 z-30 pointer-events-none drop-shadow-md">
-                             <span class="text-[9px] font-mono font-bold text-white/50 tracking-tighter">#{{ t.id }}</span>
+                        <div class="absolute top-3 left-3 z-30 flex items-center gap-2 pointer-events-auto">
+                            <button 
+                                @click.stop="toggleFavorite(t)"
+                                class="text-white/40 hover:text-red-500 hover:scale-110 transition-all duration-200 drop-shadow-md"
+                                title="Favoritar"
+                            >
+                                <Heart class="w-3.5 h-3.5" /> 
+                            </button>
+
+                            <button 
+                                @click.stop="shareTournament(t)"
+                                class="text-white/40 hover:text-blue-400 hover:scale-110 transition-all duration-200 drop-shadow-md"
+                                title="Compartilhar"
+                            >
+                                <Share2 class="w-3.5 h-3.5" />
+                            </button>
+
+                            <span class="text-[9px] font-mono font-bold text-white/50 tracking-tighter drop-shadow-md select-none">
+                                #{{ t.id }}
+                            </span>
                         </div>
 
                         <div class="absolute top-3 right-3 z-30 flex items-center gap-1 bg-black/60 border border-white/10 px-2 py-0.5 rounded-full backdrop-blur-sm pointer-events-none">
@@ -217,7 +254,7 @@ onUnmounted(() => {
                                     </span>
                                 </div>
                                 
-                                <span class="text-[7px] text-white/70 uppercase font-black tracking-widest mb-0.5 drop-shadow-sm">Premiação</span>
+                                <span class="text-[12px] text-white/70 uppercase font-black tracking-widest mb-0.5 drop-shadow-sm">Premiação Atual</span>
                                 
                                 <span class="text-2xl font-black text-emerald-400 drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] tracking-tighter leading-none flex items-start">
                                     <span class="text-[10px] font-bold text-emerald-500 mt-1 mr-0.5">R$</span>
@@ -249,7 +286,7 @@ onUnmounted(() => {
                                         <span class="text-[9px] font-black uppercase text-green-400 tracking-widest drop-shadow-lg">Grátis</span>
                                     </div>
                                     <div v-else class="flex flex-col items-end leading-none drop-shadow-md">
-                                        <span class="text-[6px] text-white/60 uppercase font-black mb-0.5">Entrada</span>
+                                        <span class="text-[10px] text-white/60 uppercase font-black mb-0.5">ENTRADA</span>
                                         <span class="text-[11px] font-black text-white">R$ {{ formatCurrency(t.entryFee).replace('R$', '') }}</span>
                                     </div>
 

@@ -10,6 +10,9 @@ using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Microsoft.AspNetCore.SignalR;
+using Magic_Casino_Core.Hubs;
+using StackExchange.Redis;
 
 namespace Magic_casino.Controllers
 {
@@ -20,12 +23,21 @@ namespace Magic_casino.Controllers
         private readonly AppDbContext _context;
         private readonly IConfiguration _config;
         private readonly IPublishEndpoint _publishEndpoint;
+        private readonly IHubContext<UserHub> _hubContext;
+        private readonly IConnectionMultiplexer _redis;
 
-        public UsersController(AppDbContext context, IConfiguration config, IPublishEndpoint publishEndpoint)
+        public UsersController(
+            AppDbContext context,
+            IConfiguration config,
+            IPublishEndpoint publishEndpoint,
+            IHubContext<UserHub> hubContext,
+            IConnectionMultiplexer redis)
         {
             _context = context;
             _config = config;
             _publishEndpoint = publishEndpoint;
+            _hubContext = hubContext;
+            _redis = redis;
         }
 
         // --- CADASTRO ---
@@ -38,7 +50,6 @@ namespace Magic_casino.Controllers
             if (await _context.Users.AnyAsync(u => u.Cpf == cpfLimpo))
                 return BadRequest(new { error = "CPF já cadastrado." });
 
-            // Verifica se o UserName foi enviado e se já existe
             if (!string.IsNullOrEmpty(req.UserName))
             {
                 if (await _context.Users.AnyAsync(u => u.UserName == req.UserName))
@@ -46,11 +57,7 @@ namespace Magic_casino.Controllers
             }
 
             string passwordHash = BCrypt.Net.BCrypt.HashPassword(req.Password);
-
-            // Se não enviou UserName (legado), usa o CPF como UserName
             var finalUserName = !string.IsNullOrEmpty(req.UserName) ? req.UserName : cpfLimpo;
-
-            // ✅ GERA TOKEN DE ATIVAÇÃO
             var verificationToken = Guid.NewGuid().ToString();
 
             var newUser = new User
@@ -63,12 +70,11 @@ namespace Magic_casino.Controllers
                 Password = passwordHash,
                 IsAdmin = false,
                 CreatedAt = DateTime.UtcNow,
-
-                // ✅ NOVOS CAMPOS PARA NÍVEL E VERIFICAÇÃO
-                Level = "bronze", // Inicia como Bronze
+                Level = "bronze",
                 EmailVerified = false,
                 VerificationToken = verificationToken,
-                TournamentsPlayed = 0
+                TournamentsPlayed = 0,
+                SecurityStamp = Guid.NewGuid().ToString()
             };
 
             var newWallet = new Wallet
@@ -85,14 +91,13 @@ namespace Magic_casino.Controllers
                 _context.Wallets.Add(newWallet);
                 await _context.SaveChangesAsync();
 
-                // ✅ ENVIA O TOKEN NO EVENTO PARA O EMAIL CONSUMER
                 await _publishEndpoint.Publish(new UserRegisteredEvent
                 {
                     Name = newUser.Name,
                     Email = newUser.Email ?? "sem-email@sistema",
                     Cpf = newUser.Cpf,
                     RegisteredAt = DateTime.UtcNow,
-                    VerificationToken = newUser.VerificationToken // Passa o token para o email
+                    VerificationToken = newUser.VerificationToken
                 });
             }
             catch (Exception ex)
@@ -111,7 +116,6 @@ namespace Magic_casino.Controllers
                 return BadRequest(new { error = "Usuário e senha são obrigatórios." });
 
             var user = await _context.Users.FirstOrDefaultAsync(u => u.UserName == req.Code);
-
             if (user == null)
             {
                 var codeLimpo = req.Code.Trim().Replace(".", "").Replace("-", "");
@@ -123,33 +127,48 @@ namespace Magic_casino.Controllers
 
             if (user != null && BCrypt.Net.BCrypt.Verify(req.Password, user.Password))
             {
-                var wallet = await _context.Wallets.FirstOrDefaultAsync(w => w.UserCpf == user.Cpf);
-                var tokenHandler = new JwtSecurityTokenHandler();
-                var jwtKey = _config["Jwt:Key"];
+                // 1. Atualiza SecurityStamp
+                user.SecurityStamp = Guid.NewGuid().ToString();
+                await _context.SaveChangesAsync();
 
-                if (string.IsNullOrEmpty(jwtKey))
+                // 2. Atualiza Redis
+                try
                 {
-                    return StatusCode(500, new { error = "ERRO CRÍTICO: Configuração de JWT ausente." });
+                    var redisDb = _redis.GetDatabase();
+                    string redisKey = $"auth:security_stamp:{user.Cpf}";
+                    await redisDb.StringSetAsync(redisKey, user.SecurityStamp, TimeSpan.FromHours(1));
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Redis Error on Login] {ex.Message}");
                 }
 
-                var key = Encoding.UTF8.GetBytes(jwtKey);
+                // 3. Envia Logout para sessões antigas
+                await _hubContext.Clients.User(user.Cpf).SendAsync("ForceLogout", "Conectado em outro local.");
+
+                // 4. Gera Token
+                var wallet = await _context.Wallets.FirstOrDefaultAsync(w => w.UserCpf == user.Cpf);
+                var tokenHandler = new JwtSecurityTokenHandler();
+                var key = Encoding.UTF8.GetBytes(_config["Jwt:Key"]);
 
                 var tokenDescriptor = new SecurityTokenDescriptor
                 {
                     Subject = new ClaimsIdentity(new[] {
-                        new Claim(ClaimTypes.Name, user.Cpf),
+                        new Claim(ClaimTypes.NameIdentifier, user.Cpf),
                         new Claim("cpf", user.Cpf),
                         new Claim("username", user.UserName),
-                        new Claim("admin", user.IsAdmin.ToString())
+                        new Claim("admin", user.IsAdmin.ToString()),
+                        new Claim("SecurityStamp", user.SecurityStamp)
                     }),
                     Expires = DateTime.UtcNow.AddDays(7),
-                    Issuer = _config["Jwt:Issuer"] ?? "MagicCasinoServer",
-                    Audience = _config["Jwt:Audience"] ?? "MagicCasinoApp",
+                    Issuer = _config["Jwt:Issuer"],
+                    Audience = _config["Jwt:Audience"],
                     SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
                 };
 
                 var token = tokenHandler.WriteToken(tokenHandler.CreateToken(tokenDescriptor));
 
+                // ✅ AQUI ESTAVA O PROBLEMA: REINSERI OS CAMPOS QUE FALTAVAM (AVATAR, EMAIL, ETC)
                 return Ok(new
                 {
                     Status = 1,
@@ -158,13 +177,17 @@ namespace Magic_casino.Controllers
                     Code = user.UserName,
                     Cpf = user.Cpf,
                     Name = user.Name,
+
+                    // 👇 Estes campos estavam faltando no código anterior 👇
                     Email = user.Email,
-                    avatar = user.Avatar,
+                    avatar = user.Avatar, // Importante: 'avatar' minúsculo se o front espera assim
                     Level = user.Level,
                     EmailVerified = user.EmailVerified,
                     Balance_fiver = wallet?.BalanceFiver ?? 0,
-                    Balance_qab = wallet?.BalanceQab ?? 0,
-                    Balance_bonus = wallet?.BalanceBonus ?? 0
+                    Balance_bonus = wallet?.BalanceBonus ?? 0,
+                    // 👆 Fim dos campos reinseridos 👆
+
+                    Balance_qab = wallet?.BalanceQab ?? 0
                 });
             }
 
@@ -179,26 +202,20 @@ namespace Magic_casino.Controllers
             if (string.IsNullOrEmpty(token))
                 return BadRequest(new { error = "Token inválido." });
 
-            // Busca usuário com esse token
             var user = await _context.Users.FirstOrDefaultAsync(u => u.VerificationToken == token);
 
             if (user == null)
-                // Retorna um HTML simples de erro ou redireciona para página de erro do front
                 return BadRequest(new { error = "Link de ativação inválido ou já utilizado." });
 
-            // Ativa o e-mail
             user.EmailVerified = true;
-            user.VerificationToken = null; // Invalida o token para não ser usado de novo
+            user.VerificationToken = null;
 
-            // Lógica de Nível: Se for Bronze, sobe para Prata
             if (user.Level == "bronze")
             {
                 user.Level = "prata";
             }
 
             await _context.SaveChangesAsync();
-
-            // Redireciona para o Front (ajuste a URL conforme seu domínio real)
             return Redirect("https://quebrandoabanca.bet/?activated=true");
         }
 

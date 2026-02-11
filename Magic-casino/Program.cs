@@ -8,6 +8,10 @@ using Microsoft.OpenApi.Models;
 using StackExchange.Redis;
 using MassTransit; // ✅ Adicionado para RabbitMQ
 using System.Text;
+using Magic_Casino_Core.Hubs; // ✅ Necessário para o UserHub
+using Magic_casino.Middleware; // ✅ Necessário para achar o arquivo do Middleware
+using System.Security.Claims; // ✅ NECESSÁRIO PARA CORRIGIR O SIGNALR (ClaimTypes)
+using Microsoft.AspNetCore.SignalR; // ✅ Necessário para IUserIdProvider
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -63,7 +67,32 @@ builder.Services.AddAuthentication(x =>
         ValidateAudience = false,
 
         ValidateLifetime = true,
-        ClockSkew = TimeSpan.Zero
+        ClockSkew = TimeSpan.Zero,
+
+        // ✅ CORREÇÃO CRÍTICA PARA O SIGNALR:
+        // Isso ensina o SignalR a usar o Claim 'NameIdentifier' (que contém o CPF) como ID de conexão.
+        // Sem isso, o comando Clients.User(cpf) não encontra ninguém e o logout não acontece.
+        NameClaimType = ClaimTypes.NameIdentifier
+    };
+
+    // ✅ ALTERAÇÃO CRÍTICA PARA O SIGNALR FUNCIONAR
+    // O SignalR envia o token pela URL (?access_token=...) e não pelo Header.
+    // Sem esse bloco, a conexão WebSocket dá erro 401 e o logout não chega.
+    x.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+
+            // Se a rota começar com /hubs ou /core/hubs, pegamos o token da URL
+            var path = context.HttpContext.Request.Path;
+            if (!string.IsNullOrEmpty(accessToken) &&
+                (path.StartsWithSegments("/hubs") || path.StartsWithSegments("/core/hubs")))
+            {
+                context.Token = accessToken;
+            }
+            return Task.CompletedTask;
+        }
     };
 });
 
@@ -150,6 +179,17 @@ builder.Services.AddHttpClient(); // Habilita chamadas HTTP genéricas
 builder.Services.AddHttpClient<VelanaService>();
 
 // =============================================================
+// ✅ CONFIGURAÇÃO DO SIGNALR (IMPORTANTE PARA O LOGOUT)
+// =============================================================
+builder.Services.AddSignalR();
+
+// 👇 ESTA LINHA É A CHAVE DO SUCESSO 👇
+// Ela ensina o SignalR a identificar o usuário pelo CPF que está no Token.
+// Sem isso, Clients.User("cpf") envia para o nada.
+builder.Services.AddSingleton<IUserIdProvider, CustomUserIdProvider>();
+
+
+// =============================================================
 // 6. SWAGGER
 // =============================================================
 builder.Services.AddSwaggerGen(c =>
@@ -218,6 +258,28 @@ app.UseCors("AllowFrontend"); // Usa a política específica
 app.UseAuthentication();
 app.UseAuthorization();
 
+// ✅ ORDEM CRÍTICA: O Middleware deve ficar AQUI.
+// Depois de Auth (para saber quem é o user) e antes dos Controllers/Hubs.
+app.UseMiddleware<SecurityStampMiddleware>();
+
+// ✅ MAPEAMENTO DO HUB SIGNALR
+// Nota: Certifique-se que o arquivo Hubs/UserHub.cs existe.
+app.MapHub<UserHub>("/hubs/user");
+
 app.MapControllers();
 
 app.Run();
+
+// =============================================================
+// CLASSE AUXILIAR PARA O SIGNALR (Pode ficar aqui no final)
+// =============================================================
+public class CustomUserIdProvider : IUserIdProvider
+{
+    public string? GetUserId(HubConnectionContext connection)
+    {
+        // O SignalR usará o CPF (que está no claim "cpf" ou "NameIdentifier") como ID único.
+        // Assim, quando o Controller chamar Clients.User("12345678900"), ele saberá quem é.
+        return connection.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+               ?? connection.User?.FindFirst("cpf")?.Value;
+    }
+}

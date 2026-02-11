@@ -12,7 +12,7 @@ namespace Magic_casino_sportbook.BackgroundServices
         private readonly ILogger<LiveOddsWorker> _logger;
 
         // Tempo entre ciclos (10 segundos)
-        private const int DELAY_LIVE_MS = 10000;
+        private const int DELAY_LIVE_MS = 20000;
 
         public LiveOddsWorker(IServiceProvider serviceProvider, ILogger<LiveOddsWorker> logger)
         {

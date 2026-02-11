@@ -9,7 +9,6 @@ import {
     Filter,
     ChevronRight,
     PlayCircle,
-    // ✅ Novos ícones para o filtro
     LayoutList,
     Zap,
     CheckCircle2
@@ -38,8 +37,20 @@ const loadHistory = async () => {
 
         if (userId) {
             const res = await tournamentService.listTournaments(userId);
-            if (res.data) {
-                tournaments.value = res.data.filter((t: any) => t.isJoined);
+            if (res.data && Array.isArray(res.data)) {
+                // ✅ CORREÇÃO 1: Normalização dos campos (C# PascalCase para JS camelCase)
+                // Removemos o filtro .isJoined porque a API já retorna os torneios do usuário
+                tournaments.value = res.data.map((t: any) => ({
+                    ...t,
+                    id: t.id || t.Id,
+                    name: t.name || t.Name,
+                    isFinished: t.isFinished ?? t.IsFinished ?? false, 
+                    isActive: t.isActive ?? t.IsActive ?? true,
+                    endDate: t.endDate || t.EndDate,
+                    entryFee: t.entryFee ?? t.EntryFee ?? 0,
+                    myPrize: t.myPrize ?? t.MyPrize ?? 0,
+                    rank: t.rank ?? t.Rank ?? 0
+                }));
             }
         }
     } catch (e) {
@@ -56,11 +67,21 @@ onMounted(() => {
 // --- COMPUTEDS ---
 const filteredList = computed(() => {
     let list = tournaments.value;
+    const now = new Date().getTime();
+
+    // ✅ CORREÇÃO 2: Lógica robusta para detectar finalizados (Flag ou Data passada)
+    const isActuallyFinished = (t: any) => {
+        if (t.isFinished === true) return true;
+        if (t.endDate) {
+            return new Date(t.endDate).getTime() < now;
+        }
+        return false;
+    };
 
     if (filterStatus.value === 'ACTIVE') {
-        list = list.filter(t => !t.isFinished);
+        list = list.filter(t => !isActuallyFinished(t));
     } else if (filterStatus.value === 'FINISHED') {
-        list = list.filter(t => t.isFinished);
+        list = list.filter(t => isActuallyFinished(t));
     }
 
     if (searchQuery.value) {
@@ -69,10 +90,9 @@ const filteredList = computed(() => {
     }
 
     return list.sort((a, b) => {
-        if (a.isFinished === b.isFinished) {
-            return new Date(b.endDate).getTime() - new Date(a.endDate).getTime();
-        }
-        return a.isFinished ? 1 : -1;
+        const dateA = new Date(a.endDate || 0).getTime();
+        const dateB = new Date(b.endDate || 0).getTime();
+        return dateB - dateA;
     });
 });
 
@@ -95,20 +115,26 @@ const getRankColor = (rank: number) => {
 };
 
 const getBorderClass = (item: any) => {
-    if (!item.isFinished) return 'border-blue-500 border-l-4'; 
+    const finished = item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime());
+    
+    if (!finished) return 'border-blue-500 border-l-4'; 
     if ((item.myPrize || 0) > (item.entryFee || 0)) return 'border-green-500 border-l-4'; 
     if ((item.myPrize || 0) > 0) return 'border-yellow-500 border-l-4'; 
     return 'border-red-500 border-l-4'; 
 };
 
 const getStatusBadgeClass = (item: any) => {
-    if (!item.isFinished) return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
+    const finished = item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime());
+
+    if (!finished) return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
     if ((item.myPrize || 0) > 0) return 'bg-green-500/10 text-green-400 border-green-500/20';
     return 'bg-slate-700/30 text-slate-400 border-slate-600/30';
 };
 
 const getReturnTextClass = (item: any) => {
-    if (!item.isFinished) return 'text-white';
+    const finished = item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime());
+
+    if (!finished) return 'text-white';
     if ((item.myPrize || 0) > 0) return 'text-[#00ffb9] drop-shadow-[0_0_5px_rgba(0,255,185,0.3)]';
     return 'text-slate-500 decoration-1';
 };
@@ -193,6 +219,7 @@ const navigateToTournament = (id: number) => {
             <div v-if="!isLoading && filteredList.length === 0" class="flex flex-col items-center justify-center h-64 opacity-50 border border-dashed border-slate-700 rounded-lg m-2 bg-[#1e293b]/30">
                 <Filter class="w-10 h-10 mb-2 text-slate-600" />
                 <p class="text-sm text-slate-500">Nenhum torneio encontrado.</p>
+                <p class="text-xs text-slate-700 mt-2">Total carregado: {{ tournaments.length }}</p>
             </div>
 
             <div class="space-y-3 max-w-4xl mx-auto">
@@ -210,7 +237,7 @@ const navigateToTournament = (id: number) => {
                                     class="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded border"
                                     :class="getStatusBadgeClass(item)"
                                 >
-                                    {{ item.isFinished ? 'Finalizado' : 'Em Andamento' }}
+                                    {{ (item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime())) ? 'Finalizado' : 'Em Andamento' }}
                                 </span>
                                 <span class="text-[10px] text-slate-500 font-mono tracking-wide">ID: #{{ item.id }}</span>
                             </div>
@@ -221,7 +248,7 @@ const navigateToTournament = (id: number) => {
                                 <span class="flex items-center gap-1">
                                     <Clock class="w-3 h-3" /> {{ formatDate(item.endDate) }}
                                 </span>
-                                <span v-if="item.isFinished && item.rank" class="flex items-center gap-1 font-bold" :class="getRankColor(item.rank)">
+                                <span v-if="(item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime())) && item.rank" class="flex items-center gap-1 font-bold" :class="getRankColor(item.rank)">
                                     <Medal class="w-3 h-3" /> #{{ item.rank }}
                                 </span>
                             </div>
@@ -229,7 +256,7 @@ const navigateToTournament = (id: number) => {
 
                         <div class="self-center">
                             <button class="p-2 rounded-full bg-slate-800 group-hover:bg-blue-600 group-hover:text-white transition-all text-slate-500">
-                                <PlayCircle v-if="!item.isFinished" class="w-5 h-5" />
+                                <PlayCircle v-if="!(item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime()))" class="w-5 h-5" />
                                 <ChevronRight v-else class="w-5 h-5" />
                             </button>
                         </div>
@@ -238,16 +265,16 @@ const navigateToTournament = (id: number) => {
                     <div class="px-4 py-2 bg-[#172231] flex items-center justify-between border-t border-slate-700/50">
                         <div class="flex flex-col">
                             <span class="text-[9px] text-slate-500 uppercase tracking-wide font-bold">Investido</span>
-                            <span class="text-xs font-bold text-white tracking-wide">{{ formatCurrency(item.entryFee) }}</span>
+                            <span class="text-xs font-bold text-white tracking-wide">{{ formatCurrency(item.entryFee || 0) }}</span>
                         </div>
 
                         <div class="text-right">
                             <span class="text-[9px] uppercase tracking-wide block mb-0.5 font-bold"
-                                  :class="item.isFinished && (item.myPrize || 0) == 0 ? 'text-slate-500' : 'text-slate-400'">
-                                {{ item.isFinished ? 'Prêmio Recebido' : 'Prêmio Atual' }}
+                                  :class="(item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime())) && (item.myPrize || 0) == 0 ? 'text-slate-500' : 'text-slate-400'">
+                                {{ (item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime())) ? 'Prêmio Recebido' : 'Prêmio Atual' }}
                             </span>
                             <span class="text-sm font-black tracking-wide" :class="getReturnTextClass(item)">
-                                {{ (item.myPrize || 0) > 0 ? formatCurrency(item.myPrize) : (item.isFinished ? 'Sem Prêmio' : '--') }}
+                                {{ (item.myPrize || 0) > 0 ? formatCurrency(item.myPrize) : ((item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime())) ? 'Sem Prêmio' : '--') }}
                             </span>
                         </div>
                     </div>

@@ -63,6 +63,9 @@ namespace Magic_casino.Data
         [Column("created_at")]
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+        [Column("security_stamp")]
+        public string? SecurityStamp { get; set; }
+
         public virtual Wallet? Wallet { get; set; }
     }
 }

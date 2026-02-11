@@ -2,7 +2,15 @@
   <div class="min-h-screen bg-[#0f212e] text-white p-4 font-sans flex justify-center">
     <div class="w-full max-w-5xl">
       
-      <div class="mb-4 relative pl-2 animate-fade-in-down flex justify-between items-end">
+      <div class="mb-6 relative animate-fade-in-down flex items-center">
+        <button 
+          @click="router.push('/tournaments')" 
+          class="w-10 h-10 flex items-center justify-center bg-[#1a2c38] border border-gray-700/50 rounded-xl mr-4 text-gray-400 hover:text-white hover:border-gray-500 hover:bg-[#203442] transition-all shadow-lg group shrink-0 relative z-20"
+          title="Voltar para Torneios"
+        >
+          <ArrowLeft class="w-5 h-5 group-hover:-translate-x-0.5 transition-transform" />
+        </button>
+
         <div>
           <div class="absolute -top-6 -left-6 w-20 h-20 bg-blue-500/10 rounded-full blur-2xl"></div>
           <h1 class="text-xl font-bold text-white flex items-center gap-2 relative z-10">
@@ -13,7 +21,7 @@
         </div>
       </div>
 
-      <div class="bg-[#1a2c38] rounded-xl border border-gray-700/50 shadow-2xl overflow-hidden animate-fade-in-up flex flex-col h-[calc(100vh-120px)] md:h-auto">
+      <div class="bg-[#1a2c38] rounded-xl border border-gray-700/50 shadow-2xl overflow-hidden animate-fade-in-up flex flex-col h-[calc(100vh-180px)] md:h-auto">
         
         <div class="px-3 py-2 border-b border-gray-700/50 flex flex-col md:flex-row justify-between items-center gap-3 bg-[#15222b]">
           <div class="flex bg-[#0f212e] p-0.5 rounded-lg w-full md:w-auto overflow-x-auto custom-scrollbar">
@@ -49,7 +57,7 @@
             </thead>
             
             <tbody v-if="loading">
-              <tr v-for="i in 8" :key="i" class="border-b border-gray-700/10">
+              <tr v-for="i in 12" :key="i" class="border-b border-gray-700/10">
                 <td class="p-2"><div class="h-6 w-6 bg-gray-700/30 rounded-md animate-pulse"></div></td>
                 <td class="p-2 hidden md:table-cell"><div class="h-2 w-12 bg-gray-700/30 rounded animate-pulse"></div></td>
                 <td class="p-2"><div class="h-2 w-16 bg-gray-700/30 rounded animate-pulse"></div></td>
@@ -69,7 +77,7 @@
 
             <tbody v-else>
               <tr 
-                v-for="tx in filteredTransactions" 
+                v-for="tx in paginatedTransactions" 
                 :key="tx.id" 
                 class="border-b border-gray-700/10 hover:bg-[#203442]/50 transition-colors group cursor-default"
               >
@@ -147,8 +155,34 @@
           </table>
         </div>
 
-        <div class="p-1.5 bg-[#15222b] border-t border-gray-700/50 flex justify-center text-[9px] text-gray-600">
-          Mostrando últimos registros
+        <div v-if="totalPages > 1" class="px-4 py-3 bg-[#15222b] border-t border-gray-700/50 flex justify-between items-center text-[10px] text-gray-400">
+          <span class="hidden md:block">
+            Mostrando {{ paginatedTransactions.length }} de {{ filteredTransactions.length }}
+          </span>
+          
+          <div class="flex items-center gap-2 mx-auto md:mx-0">
+            <button 
+              @click="prevPage" 
+              :disabled="currentPage === 1"
+              class="flex items-center gap-1 px-3 py-1.5 bg-[#0f212e] border border-gray-700/50 rounded hover:bg-gray-700/50 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            >
+              <ChevronLeft class="w-3 h-3" />
+              Anterior
+            </button>
+            
+            <span class="bg-[#0f212e] px-3 py-1.5 rounded border border-gray-700/50 text-white font-mono">
+              {{ currentPage }} <span class="text-gray-600">/</span> {{ totalPages }}
+            </span>
+
+            <button 
+              @click="nextPage" 
+              :disabled="currentPage === totalPages"
+              class="flex items-center gap-1 px-3 py-1.5 bg-[#0f212e] border border-gray-700/50 rounded hover:bg-gray-700/50 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            >
+              Próxima
+              <ChevronRight class="w-3 h-3" />
+            </button>
+          </div>
         </div>
 
       </div>
@@ -157,9 +191,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import axios from 'axios';
-import { FileText, ArrowUpRight, ArrowDownLeft, Dices, Inbox, Trophy, Medal } from 'lucide-vue-next';
+import { 
+  FileText, ArrowUpRight, ArrowDownLeft, Dices, Inbox, 
+  Trophy, Medal, ArrowLeft, ChevronLeft, ChevronRight 
+} from 'lucide-vue-next';
+
+const router = useRouter();
 
 interface Transaction {
   id: string;
@@ -173,6 +213,10 @@ interface Transaction {
 const loading = ref(true);
 const transactions = ref<Transaction[]>([]);
 const activeFilter = ref('all');
+
+// --- PAGINAÇÃO ---
+const currentPage = ref(1);
+const itemsPerPage = 12;
 
 const filters = [
   { id: 'all', label: 'Todas' },
@@ -194,7 +238,30 @@ const filteredTransactions = computed(() => {
   return transactions.value.filter(t => t.type === activeFilter.value);
 });
 
-// ✅ CÁLCULO TOTAL CORRIGIDO (Subtrai inscrições)
+// ✅ Computed para Paginação
+const totalPages = computed(() => Math.ceil(filteredTransactions.value.length / itemsPerPage));
+
+const paginatedTransactions = computed(() => {
+  const start = (currentPage.value - 1) * itemsPerPage;
+  const end = start + itemsPerPage;
+  return filteredTransactions.value.slice(start, end);
+});
+
+// Funções de navegação
+const nextPage = () => {
+  if (currentPage.value < totalPages.value) currentPage.value++;
+};
+
+const prevPage = () => {
+  if (currentPage.value > 1) currentPage.value--;
+};
+
+// Reseta a página ao mudar o filtro
+watch(activeFilter, () => {
+  currentPage.value = 1;
+});
+
+// --- TOTALIZADORES ---
 const numericTotal = computed(() => {
   return filteredTransactions.value.reduce((acc, curr) => {
     if (isDebit(curr.type)) {
@@ -212,7 +279,6 @@ const formatCurrency = (val: number) => val.toLocaleString('pt-BR', { style: 'cu
 const formatDate = (d: string) => new Date(d).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 const formatTime = (d: string) => new Date(d).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-// Formatação Padrão (Desktop)
 const formatDescription = (desc: string) => {
   if (!desc) return '';
   let clean = desc.replace('Inscrição em Torneio', 'Inscrição');
@@ -220,17 +286,13 @@ const formatDescription = (desc: string) => {
   return clean;
 };
 
-// ✅ FORMATAÇÃO MOBILE (Resumida)
 const getMobileDescription = (tx: Transaction) => {
-    // Se for prêmio de torneio, retorna apenas "Prêmio"
     if (tx.type === 'tournament_prize' || tx.method.includes('Prêmio')) {
         return 'Prêmio';
     }
-    // Se for inscrição de torneio, retorna apenas "Inscrição"
     if (tx.type === 'tournament' || tx.method.includes('Inscrição')) {
         return 'Inscrição';
     }
-    // Para outros tipos, mantém o padrão formatado
     return formatDescription(tx.method);
 };
 
@@ -257,7 +319,6 @@ const getStatusLabel = (status: string) => {
   return map[status] || status;
 };
 
-// ✅ COR DO VALOR CORRIGIDA (Vermelho para Inscrição)
 const getAmountColor = (tx: Transaction) => {
   if (tx.status === 'pending') return 'text-yellow-500';
   if (isDebit(tx.type)) return 'text-red-400';

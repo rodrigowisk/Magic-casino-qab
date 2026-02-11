@@ -79,7 +79,6 @@ const getCardStyle = (item: any) => {
     const absOffset = Math.abs(item.offset);
     
     let scale = 1;
-    // Ajuste de escala para dar destaque total ao centro
     if (absOffset === 1) scale = isMobile.value ? 0.85 : 0.80; 
     if (absOffset === 2) scale = isMobile.value ? 0.75 : 0.70; 
 
@@ -156,83 +155,84 @@ const selectItem = (item: any) => {
                         :class="[
                           item.isCenter 
                             ? 'w-[280px] h-[135px] md:w-[340px] md:h-[145px] z-50' 
-                            : 'w-[150px] h-[80px] md:w-[220px] md:h-[90px] rounded-xl overflow-hidden bg-[#1e293b] border border-white/10 hover:border-white/30 shadow-lg'
+                            : 'w-[150px] h-[80px] md:w-[220px] md:h-[90px] rounded-xl overflow-hidden shadow-lg'
                         ]"
                       >
-                          <div v-if="item.isCenter" class="relative w-full h-full">
-                              <div class="w-full h-full bg-[#1e293b] border border-blue-500/30 shadow-[0_10px_40px_-10px_rgba(59,130,246,0.3)] ring-1 ring-white/5 rounded-2xl overflow-hidden p-3.5 flex flex-col justify-between relative">
-                                  
-                                  <div class="absolute -top-10 -right-10 w-32 h-32 bg-blue-500/10 blur-2xl rounded-full pointer-events-none"></div>
+                          <div v-if="item.isCenter" class="relative w-full h-full group/maincard rounded-2xl overflow-hidden">
+                              <div class="absolute inset-0 bg-gradient-to-br from-[#1e293b] via-[#0f172a] to-[#020617]"></div>
+                              <div class="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent opacity-50 pointer-events-none"></div>
+                              
+                              <div class="absolute inset-0 border border-white/10 rounded-2xl z-20 pointer-events-none"></div>
 
-                                  <div class="w-full flex items-center justify-center relative z-10">
-                                      <h2 class="text-white font-black italic text-lg md:text-xl uppercase tracking-wide truncate drop-shadow-md text-center">
+                              <div class="absolute top-0 right-0 w-[120px] h-[120px] bg-blue-500/20 blur-[50px] rounded-full pointer-events-none -mr-8 -mt-8 mix-blend-screen opacity-60"></div>
+                              <div class="absolute bottom-0 left-0 w-[100px] h-[100px] bg-indigo-500/10 blur-[40px] rounded-full pointer-events-none -ml-6 -mb-6 opacity-50"></div>
+
+                              <div class="relative h-full w-full flex flex-col justify-between p-3.5 z-30">
+                                  
+                                  <div class="w-full flex flex-col items-center justify-center relative -mt-1">
+                                      <span class="text-[9px] font-mono font-bold text-slate-500/80 tracking-widest mb-0.5">
+                                          #{{ item.id }}
+                                      </span>
+                                      <h2 class="text-transparent bg-clip-text bg-gradient-to-r from-white via-slate-200 to-slate-400 font-black italic text-lg md:text-xl uppercase tracking-wide truncate drop-shadow-sm text-center max-w-[95%] leading-none pb-1">
                                           {{ item.name }}
                                       </h2>
-                                      <span class="absolute right-0 top-0.5 text-[8px] font-mono text-slate-500 opacity-60">#{{ item.id }}</span>
                                   </div>
 
-                                  <div class="w-full flex justify-center z-10 my-1">
-                                      <div class="w-full max-w-[200px] bg-[#020617] border border-white/10 rounded-lg px-4 py-1.5 shadow-inner flex flex-col items-center justify-center transition-colors group/input hover:border-blue-500/30">
-                                          
-                                          <div class="flex items-center gap-1.5 mb-[-2px]">
-                                              <span class="text-[8px] font-bold text-slate-400 uppercase tracking-[0.15em] group-hover/input:text-slate-300 transition-colors">
-                                                  Saldo Torneio
-                                              </span>
-                                          </div>
-
-                                          <div class="flex items-baseline gap-1">
-                                              <span class="text-emerald-400 text-sm opacity-80">🪙</span>
-                                              <span class="text-white font-mono font-bold text-lg md:text-xl tracking-tight leading-none group-hover/input:text-emerald-300 transition-colors shadow-emerald-500/10 drop-shadow-sm">
+                                  <div class="w-full flex justify-center">
+                                      <div class="relative w-full max-w-[210px] bg-[#020617]/60 backdrop-blur-sm border border-white/10 rounded-lg px-4 h-[42px] shadow-[inset_0_2px_4px_rgba(0,0,0,0.5)] flex flex-col items-center justify-center transition-all group-hover/maincard:border-blue-500/20 group-hover/maincard:bg-[#020617]/80 overflow-hidden">
+                                          <span class="absolute top-0 pt-[2px] w-full text-center text-[7px] font-bold text-slate-500 uppercase tracking-[0.25em] group-hover/maincard:text-blue-300/60 transition-colors">
+                                              Saldo Torneio
+                                          </span>
+                                          <div class="flex items-baseline gap-1.5 mt-4">
+                                              <span class="text-emerald-400 text-sm drop-shadow-[0_0_3px_rgba(52,211,153,0.5)]">●</span>
+                                              <span class="text-white font-mono font-bold text-xl tracking-tight leading-none drop-shadow-md">
                                                   {{ fantasyBalance.toFixed(2) }}
                                               </span>
                                           </div>
-
                                       </div>
                                   </div>
 
-                                  <div class="w-full grid grid-cols-4 gap-2 z-10">
-                                      
-                                      <button @click.stop="emit('open-history')" class="h-8 md:h-9 flex items-center justify-center rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-blue-400/30 transition-all group" title="Histórico">
-                                          <Ticket class="w-4 h-4 text-blue-400/80 group-hover:text-blue-400 group-hover:scale-110 transition-transform" />
+                                  <div class="w-full grid grid-cols-4 gap-2">
+                                      <button @click.stop="emit('open-history')" class="h-8 md:h-9 flex items-center justify-center rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-white/20 transition-all active:scale-95" title="Histórico">
+                                          <Ticket class="w-4 h-4 text-slate-400 group-hover:text-blue-300 transition-colors" />
                                       </button>
-                                      
-                                      <button @click.stop="router.push(`/tournament/${item.id}/ranking`)" class="h-8 md:h-9 flex items-center justify-center rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-yellow-400/30 transition-all group" title="Ranking">
-                                          <Trophy class="w-4 h-4 text-yellow-400/80 group-hover:text-yellow-400 group-hover:scale-110 transition-transform" />
+                                      <button @click.stop="router.push(`/tournament/${item.id}/ranking`)" class="h-8 md:h-9 flex items-center justify-center rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-white/20 transition-all active:scale-95" title="Ranking">
+                                          <Trophy class="w-4 h-4 text-slate-400 group-hover:text-yellow-400 transition-colors" />
                                       </button>
-                                      
-                                      <button @click.stop="emit('open-details', item.id)" class="h-8 md:h-9 flex items-center justify-center rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-emerald-400/30 transition-all group" title="Detalhes">
-                                          <Info class="w-4 h-4 text-slate-400 group-hover:text-emerald-400 group-hover:scale-110 transition-transform" />
+                                      <button @click.stop="emit('open-details', item.id)" class="h-8 md:h-9 flex items-center justify-center rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-white/20 transition-all active:scale-95" title="Detalhes">
+                                          <Info class="w-4 h-4 text-slate-400 group-hover:text-emerald-300 transition-colors" />
                                       </button>
-
                                       <button @click.stop="router.push(`/tournament/${item.id}/play`)" 
-                                              class="h-8 md:h-9 flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-500 border border-blue-400/50 shadow-lg shadow-blue-900/30 transition-all hover:scale-[1.03] active:scale-95 group relative overflow-hidden" title="Jogar">
-                                          <div class="absolute inset-0 bg-gradient-to-tr from-transparent via-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                                          <Play class="w-4 h-4 text-white fill-current" />
+                                              class="h-8 md:h-9 flex items-center justify-center rounded-md bg-gradient-to-r from-blue-600 to-blue-500 border border-blue-400/30 shadow-lg hover:to-blue-400 transition-all active:scale-95 relative overflow-hidden" title="Jogar">
+                                          <Play class="w-4 h-4 text-white fill-current relative z-10" />
                                       </button>
-
                                   </div>
                               </div>
-
-                              <button v-if="tournaments.length > 1" @click.stop="navigate('prev')" class="flex md:hidden absolute -left-3 bottom-1/2 translate-y-1/2 z-[60] p-1.5 bg-slate-900/80 hover:bg-blue-600 rounded-full text-white transition-all border border-white/10 shadow-lg cursor-pointer backdrop-blur-sm">
-                                  <ChevronLeft class="w-4 h-4" />
-                              </button>
+                          </div>
+                          
+                          <div v-else class="w-full h-full relative group/sidecard overflow-hidden">
+                              <div class="absolute inset-0 bg-gradient-to-br from-[#1e293b] via-[#0f172a] to-[#020617]"></div>
                               
-                              <button v-if="tournaments.length > 1" @click.stop="navigate('next')" class="flex md:hidden absolute -right-3 bottom-1/2 translate-y-1/2 z-[60] p-1.5 bg-slate-900/80 hover:bg-blue-600 rounded-full text-white transition-all border border-white/10 shadow-lg cursor-pointer backdrop-blur-sm">
-                                  <ChevronRight class="w-4 h-4" />
-                              </button>
+                              <div class="absolute inset-0 border border-white/10 rounded-xl z-20 pointer-events-none group-hover/sidecard:border-white/20 transition-colors"></div>
 
-                          </div>
+                              <div class="relative z-30 w-full h-full flex flex-row items-center gap-3 p-3 opacity-50 group-hover/sidecard:opacity-100 transition-opacity duration-300">
+                                  
+                                  <div class="w-8 h-8 md:w-10 md:h-10 rounded-full bg-[#020617]/50 border border-white/5 flex items-center justify-center shrink-0 shadow-[inset_0_2px_4px_rgba(0,0,0,0.5)]">
+                                      <Trophy class="w-3.5 h-3.5 md:w-4 md:h-4 text-slate-500 group-hover/sidecard:text-yellow-500 transition-colors duration-300" />
+                                  </div>
 
-                          <div v-else class="w-full h-full bg-[#1e293b] rounded-xl border border-white/5 flex flex-row items-center gap-3 p-3 opacity-60 hover:opacity-100 transition-opacity">
-                              <div class="w-8 h-8 md:w-10 md:h-10 rounded-full bg-slate-900 border border-white/10 flex items-center justify-center shrink-0">
-                                  <Trophy class="w-4 h-4 md:w-5 md:h-5 text-slate-500" />
-                              </div>
-                              <div class="flex flex-col min-w-0">
-                                  <span class="text-[10px] md:text-xs font-bold text-gray-300 uppercase truncate">{{ item.name }}</span>
-                                  <span class="text-[8px] text-slate-500 font-mono">ID: #{{ item.id }}</span>
+                                  <div class="flex flex-col min-w-0">
+                                      <span class="text-[10px] md:text-xs font-black italic uppercase text-slate-300 group-hover/sidecard:text-white truncate transition-colors duration-300 tracking-wide">
+                                          {{ item.name }}
+                                      </span>
+                                      <span class="text-[7px] md:text-[8px] font-mono font-bold text-slate-600 group-hover/sidecard:text-slate-500 transition-colors">
+                                          ID: #{{ item.id }}
+                                      </span>
+                                  </div>
+
                               </div>
                           </div>
-                      </div>
+                          </div>
                     </transition-group>
                 </div>
             </div>
