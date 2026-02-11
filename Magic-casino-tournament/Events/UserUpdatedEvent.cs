@@ -2,8 +2,8 @@
 {
     public class UserUpdatedEvent
     {
-        public string UserId { get; set; }
-        public string Name { get; set; }
-        public string Avatar { get; set; }
+        public required string UserId { get; set; }
+        public required string Name { get; set; }
+        public required string Avatar { get; set; }
     }
 }

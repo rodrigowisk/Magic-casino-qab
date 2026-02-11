@@ -2,6 +2,9 @@
 using Magic_casino_tournament.Services;
 using Magic_casino_tournament.BackgroundServices;
 using Magic_casino_tournament.Consumers;
+using Magic_casino_tournament.Hubs;
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.DependencyInjection;
 using Magic_casino.Contracts; 
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
@@ -56,6 +59,15 @@ builder.Services.AddStackExchangeRedisCache(options =>
     options.Configuration = Environment.GetEnvironmentVariable("ConnectionStrings__Redis") ?? "redis:6379";
     options.InstanceName = "Tournament_"; // Prefixo para organizar as chaves
 });
+
+
+var redisConnection = Environment.GetEnvironmentVariable("ConnectionStrings__Redis") ?? "redis:6379";
+
+// 2. Adicione o SignalR com o Redis Backplane configurado
+builder.Services.AddSignalR()
+    .AddStackExchangeRedis(redisConnection, options => {
+        options.Configuration.ChannelPrefix = "TournamentHub";
+    });
 
 // ==============================================================================
 // 🐰 3. CONFIGURAÇÃO DO RABBITMQ (MASSTRANSIT)
@@ -149,7 +161,7 @@ app.UseCors("AllowAll");
 
 app.UseAuthentication();
 app.UseAuthorization();
-
+app.MapHub<TournamentHub>("/tournamentHub");
 app.MapControllers();
 
 // ==============================================================================

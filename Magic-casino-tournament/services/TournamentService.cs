@@ -5,6 +5,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+// 👇 1. Imports do SignalR adicionados
+using Microsoft.AspNetCore.SignalR;
+using Magic_casino_tournament.Hubs;
 
 namespace Magic_casino_tournament.Services
 {
@@ -13,12 +16,20 @@ namespace Magic_casino_tournament.Services
         private readonly TournamentDbContext _context;
         private readonly ICoreGateway _coreGateway;
         private readonly IDistributedCache _cache;
+        // 👇 2. Variável do Hub adicionada
+        private readonly IHubContext<TournamentHub> _hubContext;
 
-        public TournamentService(TournamentDbContext context, ICoreGateway coreGateway, IDistributedCache cache)
+        // 👇 3. Construtor atualizado com injeção do Hub
+        public TournamentService(
+            TournamentDbContext context,
+            ICoreGateway coreGateway,
+            IDistributedCache cache,
+            IHubContext<TournamentHub> hubContext)
         {
             _context = context;
             _coreGateway = coreGateway;
             _cache = cache;
+            _hubContext = hubContext;
         }
 
         // ✅ VERSÃO OTIMIZADA (1 Consulta SQL apenas)
@@ -178,7 +189,13 @@ namespace Magic_casino_tournament.Services
             }
 
             await _context.SaveChangesAsync();
+
+            // Invalida cache ao entrar
             await _cache.RemoveAsync($"ranking:{tournamentId}");
+
+            // 👇 Dispara atualização do ranking para quem estiver na tela (Novo Player)
+            var novoRanking = await GetTournamentRankingAsync(tournamentId);
+            await _hubContext.Clients.Group(tournamentId.ToString()).SendAsync("ReceiveRankingUpdate", novoRanking);
 
             return "Success";
         }
@@ -238,6 +255,29 @@ namespace Magic_casino_tournament.Services
 
             _context.TournamentBets.Add(bet);
             await _context.SaveChangesAsync();
+
+            // =================================================================
+            // 👇 MÁGICA DO REAL-TIME AQUI
+            // =================================================================
+            try
+            {
+                // 1. Remove o cache antigo para forçar recálculo
+                await _cache.RemoveAsync($"ranking:{tournamentId}");
+
+                // 2. Busca o ranking atualizado (agora virá do banco com saldo descontado)
+                var novoRanking = await GetTournamentRankingAsync(tournamentId);
+
+                // 3. Envia para todos conectados no grupo deste torneio
+                await _hubContext.Clients.Group(tournamentId.ToString())
+                    .SendAsync("ReceiveRankingUpdate", novoRanking);
+
+                Console.WriteLine($"📡 [SIGNALR] Ranking do torneio {tournamentId} atualizado com sucesso!");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ [SIGNALR ERROR] Falha ao enviar ranking: {ex.Message}");
+            }
+            // =================================================================
 
             return (true, "Aposta múltipla realizada com sucesso!");
         }
@@ -433,7 +473,12 @@ namespace Magic_casino_tournament.Services
                     {
                         bet.Participant.FantasyBalance += bet.PotentialWin;
                         Console.WriteLine($"🏆 Bilhete {bet.Id} VENCEU! Creditando {bet.PotentialWin} fichas para {bet.UserId}.");
+
+                        // 👇 MÁGICA DO REAL-TIME TB NO FIM DO JOGO
+                        // Atualiza ranking quando alguém ganha aposta
                         await _cache.RemoveAsync($"ranking:{bet.TournamentId}");
+                        var novoRanking = await GetTournamentRankingAsync(bet.TournamentId);
+                        await _hubContext.Clients.Group(bet.TournamentId.ToString()).SendAsync("ReceiveRankingUpdate", novoRanking);
                     }
                 }
             }

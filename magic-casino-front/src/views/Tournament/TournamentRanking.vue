@@ -3,6 +3,8 @@ import { ref, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { Trophy, Eye, X } from 'lucide-vue-next'; 
 import tournamentService, { type TournamentRankingDto } from '../../services/Tournament/TournamentService';
+// 👇 Importação do Serviço SignalR (Caminho relativo baseado na sua estrutura)
+import tournamentSignal from '../../services/Tournament/TournamentSignalService';
 import { useAuthStore } from '../../stores/useAuthStore';
 import TournamentBetCard from '../../components/Tournament/TournamentBetCard.vue';
 
@@ -60,26 +62,45 @@ const closeBetsModal = () => {
     showBetsModal.value = false;
 };
 
-// ... Lógica de Polling ...
-let pollingInterval: ReturnType<typeof setInterval> | null = null;
+// --- LÓGICA DE RANKING (COM SIGNALR) ---
+
 onMounted(async () => {
-  await loadRanking(true);
-  pollingInterval = setInterval(() => { loadRanking(false); }, 5000);
+    // 1. Carregamento inicial via API (para o usuário ver dados imediatamente)
+    await loadRanking(true);
+
+    // 2. Configura o ouvinte do SignalR para atualizações em tempo real
+    tournamentSignal.setRankingListener((novoRanking: any[]) => {
+        // Atualiza a variável reativa automaticamente quando o servidor mandar
+        if (Array.isArray(novoRanking)) {
+             ranking.value = novoRanking; 
+        }
+    });
+
+    // 3. Inicia a conexão com o Hub
+    await tournamentSignal.start();
+
+    // 4. Entra no grupo específico deste torneio
+    // Isso garante que só recebemos updates do torneio atual (ex: ID 45)
+    await tournamentSignal.joinTournament(tournamentId);
 });
-onUnmounted(() => {
-  if (pollingInterval) clearInterval(pollingInterval);
+
+onUnmounted(async () => {
+    // Encerra a conexão ao sair da tela para liberar recursos
+    await tournamentSignal.stop();
 });
+
 const loadRanking = async (showLoading = false) => {
-  if (showLoading) isLoading.value = true;
-  try {
-    const res = await tournamentService.getRanking(tournamentId);
-    ranking.value = Array.isArray(res.data) ? res.data : [];
-  } catch (error) {
-    if (showLoading) ranking.value = [];
-  } finally {
-    if (showLoading) isLoading.value = false;
-  }
+    if (showLoading) isLoading.value = true;
+    try {
+        const res = await tournamentService.getRanking(tournamentId);
+        ranking.value = Array.isArray(res.data) ? res.data : [];
+    } catch (error) {
+        if (showLoading) ranking.value = [];
+    } finally {
+        if (showLoading) isLoading.value = false;
+    }
 };
+
 const getRankIcon = (pos: number) => {
     if (pos === 1) return '🥇'; if (pos === 2) return '🥈'; if (pos === 3) return '🥉'; return `#${pos}`;
 };
