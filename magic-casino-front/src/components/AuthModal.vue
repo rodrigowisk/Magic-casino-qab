@@ -3,32 +3,45 @@ import { ref, reactive, watch } from 'vue';
 import { X, User, Mail, Lock, Phone, FileText, AlertCircle, Eye, EyeOff, Loader2, AtSign } from 'lucide-vue-next';
 import AuthService from '../services/AuthService';
 import { vMaska } from "maska/vue" 
+import { useAuthStore } from '../stores/useAuthStore';
 
 const props = defineProps<{ initialTab?: 'login' | 'register' }>();
 const emit = defineEmits(['close', 'login-success']);
 
+const authStore = useAuthStore();
 const activeTab = ref<'login' | 'register'>(props.initialTab || 'login');
 const isLoading = ref(false);
-const showPassword = ref(false);
+const showPassword = ref(false); // Controla visualização da senha (compartilhado visualmente, mas não os dados)
 const globalErrorMessage = ref('');
 
-// ✅ Estados para validação em tempo real
+// Estados para validação (Cadastro)
 const isCheckingUser = ref(false);
 let debounceTimer: any = null;
-
 const fieldErrors = reactive({ cpf: '', email: '', password: '', userName: '' });
 
-const form = ref({ name: '', userName: '', cpf: '', email: '', phone: '', password: '' });
+// ✅ CORREÇÃO 1: ESTADOS SEPARADOS PARA LOGIN E CADASTRO
+// Isso impede que limpar um afete o outro
+const loginForm = ref({ cpf: '', password: '' });
+
+const initialRegisterState = { name: '', userName: '', cpf: '', email: '', phone: '', password: '' };
+const registerForm = ref({ ...initialRegisterState });
 
 const switchTab = (tab: 'login' | 'register') => {
     activeTab.value = tab;
     globalErrorMessage.value = '';
-    // Limpa erros e form ao trocar de aba
+    
+    // Limpa erros visuais ao trocar de aba
     Object.keys(fieldErrors).forEach(key => fieldErrors[key as keyof typeof fieldErrors] = '');
+
+    // ✅ Se for para a aba CADASTRO, limpa o formulário de cadastro para começar do zero.
+    // ✅ Se for para a aba LOGIN, NÃO FAZ NADA (mantém os dados salvos/autofill).
+    if (tab === 'register') {
+        registerForm.value = { ...initialRegisterState };
+    }
 };
 
-// --- VALIDAÇÃO EM TEMPO REAL (WATCHER) ---
-watch(() => form.value.userName, (newVal) => {
+// --- VALIDAÇÃO EM TEMPO REAL (Só monitora o registerForm) ---
+watch(() => registerForm.value.userName, (newVal) => {
     if (activeTab.value !== 'register') return;
 
     clearTimeout(debounceTimer);
@@ -76,28 +89,29 @@ const handleSubmit = async () => {
     isLoading.value = true;
     globalErrorMessage.value = '';
     
-    // Preserva erro de usuário já verificado (debouncer)
+    // Preserva erro de validação assíncrona
     const currentUserError = fieldErrors.userName;
     Object.keys(fieldErrors).forEach(key => fieldErrors[key as keyof typeof fieldErrors] = '');
     if (currentUserError) fieldErrors.userName = currentUserError;
 
     let hasError = false;
     
-    // Validações de Registro
+    // Validações APENAS para Cadastro
     if (activeTab.value === 'register') {
-        if (!form.value.userName) { fieldErrors.userName = 'Obrigatório'; hasError = true; }
-        else if (form.value.userName.length < 3) { fieldErrors.userName = 'Mínimo 3 letras'; hasError = true; }
+        if (!registerForm.value.userName) { fieldErrors.userName = 'Obrigatório'; hasError = true; }
+        else if (registerForm.value.userName.length < 3) { fieldErrors.userName = 'Mínimo 3 letras'; hasError = true; }
         else if (fieldErrors.userName) { hasError = true; }
-    }
 
-    // Validações de CPF
-    if (!form.value.cpf) { fieldErrors.cpf = 'Obrigatório'; hasError = true; }
-    else if (activeTab.value === 'register' && !isValidCPF(form.value.cpf)) { fieldErrors.cpf = 'Inválido'; hasError = true; }
+        if (!registerForm.value.cpf) { fieldErrors.cpf = 'Obrigatório'; hasError = true; }
+        else if (!isValidCPF(registerForm.value.cpf)) { fieldErrors.cpf = 'Inválido'; hasError = true; }
 
-    // Validações de Email e Senha (apenas registro)
-    if (activeTab.value === 'register') {
-        if (!form.value.email || !isValidEmail(form.value.email)) { fieldErrors.email = 'Inválido'; hasError = true; }
-        if (form.value.password.length < 6) { fieldErrors.password = 'Mínimo 6 chars'; hasError = true; }
+        if (!registerForm.value.email || !isValidEmail(registerForm.value.email)) { fieldErrors.email = 'Inválido'; hasError = true; }
+        if (registerForm.value.password.length < 6) { fieldErrors.password = 'Mínimo 6 chars'; hasError = true; }
+    } 
+    else {
+        // Validação Login
+        if (!loginForm.value.cpf) { fieldErrors.cpf = 'Obrigatório'; hasError = true; }
+        if (!loginForm.value.password) { fieldErrors.password = 'Obrigatório'; hasError = true; }
     }
 
     if (hasError) { isLoading.value = false; return; }
@@ -106,19 +120,30 @@ const handleSubmit = async () => {
         let responseData;
 
         if (activeTab.value === 'login') {
-            // LOGIN NORMAL
-            responseData = await AuthService.login(form.value.cpf, form.value.password);
+            // Usa loginForm
+            responseData = await AuthService.login(loginForm.value.cpf, loginForm.value.password);
         } else {
-            // REGISTRO + LOGIN AUTOMÁTICO
-            // 1. Cria a conta
-            await AuthService.register(form.value);
-
-            // 2. Faz o login imediatamente para pegar o Token
-            responseData = await AuthService.login(form.value.cpf, form.value.password);
+            // Usa registerForm
+            await AuthService.register(registerForm.value);
+            // Login automático com os dados do registro
+            responseData = await AuthService.login(registerForm.value.cpf, registerForm.value.password);
         }
         
-        // Emite sucesso com os dados do usuário e token já carregados
-        emit('login-success', responseData.user || responseData); 
+        const userData = responseData.user || responseData;
+        const tokenData = responseData.token || responseData.accessToken;
+
+        // Atualiza Store (Isso deve corrigir o botão "Comprar" -> "Jogar" no Lobby)
+        if (tokenData && authStore.setLogin) {
+            authStore.setLogin(userData, tokenData);
+        } else {
+            authStore.user = userData;
+            if (tokenData) authStore.token = tokenData;
+        }
+
+        if (tokenData) localStorage.setItem('token', tokenData);
+        localStorage.setItem('user', JSON.stringify(userData));
+
+        emit('login-success', userData); 
         emit('close');
 
     } catch (error: any) {
@@ -126,10 +151,10 @@ const handleSubmit = async () => {
             const msg = error.response.data.message || error.response.data.error || '';
             const msgLower = typeof msg === 'string' ? msg.toLowerCase() : '';
             
-            if (msgLower.includes('cpf')) fieldErrors.cpf = 'Já cadastrado';
+            if (msgLower.includes('cpf')) fieldErrors.cpf = 'Já cadastrado/Inválido';
             else if (msgLower.includes('email')) fieldErrors.email = 'Em uso';
-            else if (msgLower.includes('nome') || msgLower.includes('usuário') || msgLower.includes('indisponível')) fieldErrors.userName = 'Indisponível';
-            else if (msgLower.includes('senha') || msgLower.includes('credentials')) globalErrorMessage.value = 'Dados inválidos';
+            else if (msgLower.includes('nome') || msgLower.includes('usuário')) fieldErrors.userName = 'Indisponível';
+            else if (msgLower.includes('senha') || msgLower.includes('credentials')) globalErrorMessage.value = 'Dados incorretos';
             else globalErrorMessage.value = typeof msg === 'string' ? msg : "Erro ao processar";
         } else {
             globalErrorMessage.value = 'Erro de conexão';
@@ -137,10 +162,11 @@ const handleSubmit = async () => {
     } finally {
         isLoading.value = false;
     }
-};</script>
+};
+</script>
 
 <template>
-  <div class="fixed inset-0 z-[99999] w-screen h-screen flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in" @click.self="$emit('close')">
+  <div class="fixed inset-0 z-[99999] w-screen h-screen flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
     
     <div class="w-full max-w-[340px] bg-[#1a2c38] rounded-xl shadow-2xl border border-gray-700/50 overflow-hidden relative animate-scale-in">
       
@@ -184,104 +210,123 @@ const handleSubmit = async () => {
 
         <form @submit.prevent="handleSubmit" class="space-y-2.5">
             
-            <div v-if="activeTab === 'register'" class="space-y-1">
-                <div class="relative group">
-                    <User class="w-3.5 h-3.5 absolute left-3 top-2.5 text-gray-500 group-focus-within:text-blue-500 transition-colors" />
-                    <input v-model="form.name" type="text" placeholder="Nome Completo" class="input-slim pl-9" required>
-                </div>
-            </div>
-
-            <div v-if="activeTab === 'register'" class="space-y-1">
-                <div class="relative group">
-                    <AtSign class="w-3.5 h-3.5 absolute left-3 top-2.5 transition-colors" 
-                            :class="fieldErrors.userName ? 'text-red-500' : 'text-gray-500 group-focus-within:text-blue-500'" />
-                    
-                    <input 
-                        v-model="form.userName" 
-                        type="text" 
-                        placeholder="Usuário (Login)" 
-                        class="input-slim pl-9 pr-8"
-                        :class="{ 
-                            'border-red-500/50 focus:border-red-500': fieldErrors.userName,
-                            'border-green-500/50': !fieldErrors.userName && form.userName.length >= 3 && !isCheckingUser
-                        }"
-                        required
-                    >
-                    
-                    <div class="absolute right-3 top-2.5">
-                        <Loader2 v-if="isCheckingUser" class="w-3.5 h-3.5 text-blue-400 animate-spin" />
-                        <span v-else-if="fieldErrors.userName" class="text-[9px] text-red-500 font-bold whitespace-nowrap">{{ fieldErrors.userName }}</span>
+            <template v-if="activeTab === 'register'">
+                <div class="space-y-1">
+                    <div class="relative group">
+                        <User class="w-3.5 h-3.5 absolute left-3 top-2.5 text-gray-500 group-focus-within:text-blue-500 transition-colors" />
+                        <input v-model="registerForm.name" type="text" placeholder="Nome Completo" class="input-slim pl-9" required autocomplete="new-password">
                     </div>
                 </div>
-            </div>
+
+                <div class="space-y-1">
+                    <div class="relative group">
+                        <AtSign class="w-3.5 h-3.5 absolute left-3 top-2.5 transition-colors" 
+                                :class="fieldErrors.userName ? 'text-red-500' : 'text-gray-500 group-focus-within:text-blue-500'" />
+                        
+                        <input 
+                            v-model="registerForm.userName" 
+                            type="text" 
+                            placeholder="Usuário (Login)" 
+                            class="input-slim pl-9 pr-8"
+                            :class="{ 'border-red-500/50 focus:border-red-500': fieldErrors.userName }"
+                            required
+                            autocomplete="new-password"
+                        >
+                        
+                        <div class="absolute right-3 top-2.5">
+                            <Loader2 v-if="isCheckingUser" class="w-3.5 h-3.5 text-blue-400 animate-spin" />
+                            <span v-else-if="fieldErrors.userName" class="text-[9px] text-red-500 font-bold whitespace-nowrap">{{ fieldErrors.userName }}</span>
+                        </div>
+                    </div>
+                </div>
+            </template>
 
             <div class="space-y-1">
                 <div class="relative group">
-                    <FileText v-if="activeTab === 'register'" class="w-3.5 h-3.5 absolute left-3 top-2.5 transition-colors" :class="fieldErrors.cpf ? 'text-red-500' : 'text-gray-500 group-focus-within:text-blue-500'" />
-                    <User v-else class="w-3.5 h-3.5 absolute left-3 top-2.5 text-gray-500 group-focus-within:text-blue-500 transition-colors" />
-                    
-                    <input 
-                        v-if="activeTab === 'register'"
-                        v-model="form.cpf" 
-                        v-maska data-maska="###.###.###-##" 
-                        type="text" 
-                        placeholder="CPF" 
-                        class="input-slim pl-9"
-                        :class="{ 'border-red-500/50 focus:border-red-500': fieldErrors.cpf }"
-                        required
-                    >
-                    <input 
-                        v-else
-                        v-model="form.cpf" 
-                        type="text" 
-                        placeholder="Nome de Usuário/Apelido" 
-                        class="input-slim pl-9"
-                        required
-                    >
+                    <template v-if="activeTab === 'register'">
+                        <FileText class="w-3.5 h-3.5 absolute left-3 top-2.5 transition-colors" :class="fieldErrors.cpf ? 'text-red-500' : 'text-gray-500 group-focus-within:text-blue-500'" />
+                        <input 
+                            v-model="registerForm.cpf" 
+                            v-maska data-maska="###.###.###-##" 
+                            type="text" 
+                            placeholder="CPF" 
+                            class="input-slim pl-9"
+                            :class="{ 'border-red-500/50 focus:border-red-500': fieldErrors.cpf }"
+                            required
+                            autocomplete="new-password"
+                        >
+                    </template>
+                    <template v-else>
+                        <User class="w-3.5 h-3.5 absolute left-3 top-2.5 text-gray-500 group-focus-within:text-blue-500 transition-colors" />
+                        <input 
+                            v-model="loginForm.cpf" 
+                            type="text" 
+                            placeholder="Nome de Usuário/Apelido ou CPF" 
+                            class="input-slim pl-9"
+                            required
+                            autocomplete="username"
+                        >
+                    </template>
 
-                    <span v-if="fieldErrors.cpf" class="absolute right-3 top-2.5 text-[9px] text-red-500 font-bold">{{ fieldErrors.cpf }}</span>
+                    <span v-if="activeTab === 'register' && fieldErrors.cpf" class="absolute right-3 top-2.5 text-[9px] text-red-500 font-bold">{{ fieldErrors.cpf }}</span>
                 </div>
             </div>
 
-            <div v-if="activeTab === 'register'" class="space-y-1">
-                <div class="relative group">
-                    <Mail class="w-3.5 h-3.5 absolute left-3 top-2.5 transition-colors" :class="fieldErrors.email ? 'text-red-500' : 'text-gray-500 group-focus-within:text-blue-500'" />
-                    <input 
-                        v-model="form.email" 
-                        type="email" 
-                        placeholder="E-mail" 
-                        class="input-slim pl-9"
-                        :class="{ 'border-red-500/50 focus:border-red-500': fieldErrors.email }"
-                        required
-                    >
-                    <span v-if="fieldErrors.email" class="absolute right-3 top-2.5 text-[9px] text-red-500 font-bold">{{ fieldErrors.email }}</span>
+            <template v-if="activeTab === 'register'">
+                <div class="space-y-1">
+                    <div class="relative group">
+                        <Mail class="w-3.5 h-3.5 absolute left-3 top-2.5 transition-colors" :class="fieldErrors.email ? 'text-red-500' : 'text-gray-500 group-focus-within:text-blue-500'" />
+                        <input 
+                            v-model="registerForm.email" 
+                            type="email" 
+                            placeholder="E-mail" 
+                            class="input-slim pl-9"
+                            :class="{ 'border-red-500/50 focus:border-red-500': fieldErrors.email }"
+                            required
+                            autocomplete="new-password"
+                        >
+                        <span v-if="fieldErrors.email" class="absolute right-3 top-2.5 text-[9px] text-red-500 font-bold">{{ fieldErrors.email }}</span>
+                    </div>
                 </div>
-            </div>
 
-            <div v-if="activeTab === 'register'" class="space-y-1">
-                <div class="relative group">
-                    <Phone class="w-3.5 h-3.5 absolute left-3 top-2.5 text-gray-500 group-focus-within:text-blue-500 transition-colors" />
-                    <input v-model="form.phone" v-maska data-maska="(##) #####-####" type="tel" placeholder="Celular" class="input-slim pl-9">
+                <div class="space-y-1">
+                    <div class="relative group">
+                        <Phone class="w-3.5 h-3.5 absolute left-3 top-2.5 text-gray-500 group-focus-within:text-blue-500 transition-colors" />
+                        <input v-model="registerForm.phone" v-maska data-maska="(##) #####-####" type="tel" placeholder="Celular" class="input-slim pl-9" autocomplete="new-password">
+                    </div>
                 </div>
-            </div>
+            </template>
 
             <div class="space-y-1">
                 <div class="relative group">
                     <Lock class="w-3.5 h-3.5 absolute left-3 top-2.5 text-gray-500 group-focus-within:text-blue-500 transition-colors" />
+                    
                     <input 
-                        v-model="form.password" 
+                        v-if="activeTab === 'register'"
+                        v-model="registerForm.password" 
                         :type="showPassword ? 'text' : 'password'" 
                         placeholder="Senha" 
                         class="input-slim pl-9 pr-9"
                         :class="{ 'border-red-500/50 focus:border-red-500': fieldErrors.password }"
                         required
+                        autocomplete="new-password"
                     >
+                    <input 
+                        v-else
+                        v-model="loginForm.password" 
+                        :type="showPassword ? 'text' : 'password'" 
+                        placeholder="Senha" 
+                        class="input-slim pl-9 pr-9"
+                        required
+                        autocomplete="current-password"
+                    >
+
                     <button type="button" @click="showPassword = !showPassword" class="absolute right-3 top-2.5 text-gray-500 hover:text-white focus:outline-none">
                         <Eye v-if="!showPassword" class="w-3.5 h-3.5" />
                         <EyeOff v-else class="w-3.5 h-3.5" />
                     </button>
                 </div>
-                <span v-if="fieldErrors.password" class="text-[9px] text-red-500 font-bold ml-1 block">{{ fieldErrors.password }}</span>
+                <span v-if="activeTab === 'register' && fieldErrors.password" class="text-[9px] text-red-500 font-bold ml-1 block">{{ fieldErrors.password }}</span>
             </div>
 
             <button 

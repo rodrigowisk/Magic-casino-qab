@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { Check, X, Lock } from 'lucide-vue-next';
+import { Check, X, Lock, ShieldCheck, EyeOff } from 'lucide-vue-next';
 
 // Recebe os dados da aposta e se deve ocultar (modo privacidade)
 const props = defineProps<{
@@ -63,23 +63,35 @@ const getBorderClass = (bet: any) => {
     return 'border-blue-500 border-l-4'; 
 }
 
+// 👇 1. Título alterado para "Valor Perdido"
 const getReturnLabel = (bet: any) => {
     const status = getRealStatus(bet);
     if (status === 'won') return 'Retorno Pago';
-    if (status === 'lost') return 'Retorno';
+    if (status === 'lost') return 'Valor Perdido'; 
     return 'Retorno Potencial';
 }
 
+// 👇 2. Valor alterado para puxar o valor apostado negativo
 const formatReturnValue = (bet: any) => {
     const status = getRealStatus(bet);
-    if (status === 'lost') return '🪙 0,00';
+    if (status === 'lost') {
+        // Formata apenas o valor numérico (ex: 10.000,00)
+        const numStr = new Intl.NumberFormat('pt-BR', { 
+            minimumFractionDigits: 2, 
+            maximumFractionDigits: 2 
+        }).format(bet.amount);
+        
+        // Monta a string deixando a moeda e o sinal negativo colados no número
+        return `🪙 -${numStr}`;
+    }
     return formatCurrency(bet.potentialWin);
 }
 
+// 👇 3. Classe CSS alterada para Vermelho ao invés de riscado/cinza
 const getReturnValueClass = (bet: any) => {
     const status = getRealStatus(bet);
     if (status === 'won') return 'text-[#00ffb9] drop-shadow-[0_0_5px_rgba(0,255,185,0.3)]'; 
-    if (status === 'lost') return 'text-slate-500 line-through decoration-1';
+    if (status === 'lost') return 'text-red-500 drop-shadow-[0_0_5px_rgba(239,68,68,0.3)]'; 
     return 'text-white';
 }
 
@@ -94,14 +106,41 @@ const shouldShowLock = () => {
        :class="getBorderClass(bet)">
     
     <div v-if="shouldShowLock()" 
-         class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-[#1e293b]/80 backdrop-blur-md border border-slate-700/50 m-[1px]">
-         <div class="bg-slate-800/90 p-3 rounded-full border border-slate-600 shadow-xl mb-2 animate-pulse">
-            <Lock class="w-6 h-6 text-slate-400" />
+         class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-gradient-to-br from-[#1e293b] via-[#1e293b] to-[#0f172a] m-[1px]">
+         
+         <div class="absolute -right-8 -bottom-10 text-white/[0.03] transform rotate-12 transition-transform duration-700 group-hover:rotate-0 group-hover:scale-110 pointer-events-none">
+            <Lock :size="160" stroke-width="1.5" />
          </div>
-         <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Aposta Oculta</span>
+
+         <div class="relative z-10 flex flex-col items-center text-center space-y-3 px-4">
+            
+            <div class="relative mb-1">
+                <div class="absolute inset-0 bg-blue-500/20 blur-xl rounded-full animate-pulse"></div>
+                <div class="relative bg-[#0f172a] p-3.5 rounded-full border border-slate-700/80 shadow-2xl flex items-center justify-center ring-1 ring-white/5">
+                    <EyeOff class="w-6 h-6 text-blue-400" />
+                </div>
+            </div>
+
+            <div class="space-y-1">
+                <h3 class="text-white font-bold tracking-[0.15em] text-[10px] uppercase flex items-center justify-center gap-2">
+                    <Lock class="w-3 h-3 text-blue-500" />
+                    Bilhete Protegido
+                </h3>
+                
+                <p class="text-[10px] text-slate-400 max-w-[240px] leading-relaxed mx-auto font-medium">
+                    A visualização deste bilhete será liberada automaticamente após a 
+                    <span class="text-blue-300 font-bold border-b border-blue-500/20 pb-0.5">finalização dos jogos</span>.
+                </p>
+            </div>
+
+            <div class="flex items-center gap-1.5 px-3 py-1 bg-slate-800/50 backdrop-blur-sm rounded-full border border-slate-700/50 mt-2">
+                <ShieldCheck class="w-3 h-3 text-emerald-500" />
+                <span class="text-[8px] text-slate-400 font-bold uppercase tracking-wider">Fair Play</span>
+            </div>
+         </div>
     </div>
 
-    <div :class="{ 'blur-sm opacity-20 pointer-events-none select-none': shouldShowLock() }">
+    <div :class="{ 'blur-md opacity-30 pointer-events-none select-none grayscale': shouldShowLock() }">
         
         <div class="px-4 py-3 flex justify-between items-start cursor-pointer border-b border-slate-700/50" 
              @click="bet.selections.length > 1 ? isExpanded = !isExpanded : null">
@@ -203,7 +242,7 @@ const shouldShowLock = () => {
 
           <div class="text-right">
             <span class="text-[9px] uppercase tracking-wide block mb-0.5 font-bold" 
-                  :class="bet.status?.toLowerCase() === 'lost' ? 'text-slate-500' : 'text-slate-400'">
+                  :class="bet.status?.toLowerCase() === 'lost' ? 'text-red-500/80' : 'text-slate-400'">
               {{ getReturnLabel(bet) }}
             </span>
             <span class="text-base font-black tracking-wide" 

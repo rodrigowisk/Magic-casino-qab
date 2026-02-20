@@ -26,5 +26,9 @@ namespace Magic_casino_tournament.Services
         Task ProcessFinishedTournamentsAsync();
 
         Task ProcessGameResultAsync(string gameId, string score);
+
+        Task<bool> ToggleFavoriteAsync(int tournamentId, string userId);
+
+        Task<object> GetUserHistoryAsync(string userId);
     }
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Magic_casino_sportbook.Data.Models; // Necessário para encontrar EventMarket
+using Magic_casino_sportbook.Models;
 
 namespace Magic_casino_sportbook.Models
 {
@@ -42,6 +43,24 @@ namespace Magic_casino_sportbook.Models
         public string? Score { get; set; }
         public string? GameTime { get; set; }
 
+        public int HomeAttacks { get; set; }
+        public int AwayAttacks { get; set; }
+
+        public int HomeDangerousAttacks { get; set; }
+        public int AwayDangerousAttacks { get; set; }
+
+        public int HomeCorners { get; set; }
+        public int AwayCorners { get; set; }
+
+        public int HomeOnTarget { get; set; }
+        public int AwayOnTarget { get; set; }
+
+        public int HomeOffTarget { get; set; }
+        public int AwayOffTarget { get; set; }
+
+        public int HomePossession { get; set; }
+        public int AwayPossession { get; set; }
+
         public string? OddsSource { get; set; }
 
         public DateTime CommenceTime { get; set; }
@@ -58,5 +77,12 @@ namespace Magic_casino_sportbook.Models
 
         // ✅ 2. CORRIGIDO: Usa 'EventMarket' em vez de 'MarketOdd'
         public ICollection<EventMarket> Odds { get; set; } = new List<EventMarket>();
+
+        public int HomeRedCards { get; set; }
+        public int AwayRedCards { get; set; }
+
+        public int HomeYellowCards { get; set; }
+        public int AwayYellowCards { get; set; }
+
     }
 }

@@ -1,13 +1,16 @@
-﻿using Magic_casino_tournament.Models;
+﻿using System.Security.Claims;
+using System.Text.RegularExpressions;
+using Magic_casino_tournament.Hubs;
+using Magic_casino_tournament.Models;
 using Magic_casino_tournament.Services;
+using MassTransit;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
-using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.SignalR;
 
 namespace Magic_casino_tournament.Controllers
 {
-    // ✅ DTO para receber Nome e Avatar do Front
+    // DTO para receber Nome e Avatar do Front
     public class JoinTournamentRequest
     {
         public string UserName { get; set; }
@@ -19,10 +22,14 @@ namespace Magic_casino_tournament.Controllers
     public class TournamentsController : ControllerBase
     {
         private readonly ITournamentService _service;
+        private readonly IHubContext<TournamentHub> _hubContext;
+        private readonly IPublishEndpoint _publishEndpoint;
 
-        public TournamentsController(ITournamentService service)
+        public TournamentsController(ITournamentService service, IHubContext<TournamentHub> hubContext, IPublishEndpoint publishEndpoint)
         {
             _service = service;
+            _hubContext = hubContext;
+            _publishEndpoint = publishEndpoint;
         }
 
         // ===================================================================================
@@ -30,14 +37,26 @@ namespace Magic_casino_tournament.Controllers
         // ===================================================================================
 
         [HttpGet]
-        public async Task<ActionResult<List<Tournament>>> GetAll([FromQuery] string? userId)
+        public async Task<ActionResult<List<Tournament>>> GetAll()
         {
-            return Ok(await _service.GetActiveTournamentsAsync(userId));
+            // 1. CORREÇÃO PRINCIPAL DOS FAVORITOS:
+            // Tenta identificar o usuário pelo Token. Se ele estiver logado, pegamos o ID.
+            // Se não estiver (anônimo), retorna null.
+            string? userId = GetUserIdFromToken();
+
+            // 2. Passa esse ID para o serviço. 
+            // O serviço vai usar isso para preencher "IsFavorite = true" nos torneios corretos.
+            var tournaments = await _service.GetActiveTournamentsAsync(userId);
+
+            return Ok(tournaments);
         }
 
         [HttpGet("{id}")]
-        public async Task<ActionResult<Tournament>> GetById(int id, [FromQuery] string? userId)
+        public async Task<ActionResult<Tournament>> GetById(int id)
         {
+            // Também pegamos o ID aqui para saber se esse torneio específico é favorito ou se o user já entrou
+            string? userId = GetUserIdFromToken();
+
             var tournament = await _service.GetTournamentByIdAsync(id, userId);
 
             if (tournament == null)
@@ -54,7 +73,7 @@ namespace Magic_casino_tournament.Controllers
         }
 
         // -----------------------------------------------------------
-        // ✅ bets users
+        // ✅ Apostas do Usuário
         // -----------------------------------------------------------
         [HttpGet("{id}/bets")]
         [Authorize]
@@ -67,24 +86,29 @@ namespace Magic_casino_tournament.Controllers
             return Ok(bets);
         }
 
+        [HttpGet("history/{userId}")]
+        public async Task<ActionResult> GetUserHistory(string userId)
+        {
+            try
+            {
+                var history = await _service.GetUserHistoryAsync(userId);
+                return Ok(history);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Erro ao buscar histórico", error = ex.Message });
+            }
+        }
 
         // -----------------------------------------------------------
-        // ✅ bets outros users
+        // ✅ Apostas de Outros Usuários
         // -----------------------------------------------------------
         [HttpGet("{id}/participants/{targetUserId}/bets")]
         public async Task<ActionResult> GetPlayerBets(int id, string targetUserId)
         {
-            // Reutilizamos o mesmo serviço, pois ele busca pelo ID passado
-            // Nota: Não colocamos [Authorize] obrigatório se quiser que seja público, 
-            // ou coloque se apenas logados podem ver.
-
             var bets = await _service.GetUserBetsAsync(id, targetUserId);
-
-            // Se quiser privacidade extra, você pode filtrar os dados aqui antes de retornar,
-            // mas como o Front já aplica o Blur, retornar os dados crus está ok.
             return Ok(bets);
         }
-
 
         [HttpGet("prize-rules")]
         public ActionResult<List<PrizeRuleDefinition>> GetPrizeRules()
@@ -101,28 +125,41 @@ namespace Magic_casino_tournament.Controllers
         public async Task<ActionResult> Create(Tournament tournament)
         {
             var created = await _service.CreateTournamentAsync(tournament);
+            if (created != null)
+            {
+                await _hubContext.Clients.All.SendAsync("TournamentListUpdate", created);
+            }
+
             return Ok(created);
         }
 
         // ===================================================================================
-        // 🎮 AÇÕES DO JOGADOR (INSCRIÇÃO E APOSTA)
+        // 🎮 AÇÕES DO JOGADOR (INSCRIÇÃO, FAVORITO E APOSTA)
+        // ===================================================================================
+
         [HttpPost("{id}/join")]
         [Authorize]
         public async Task<IActionResult> Join(int id, [FromBody] JoinTournamentRequest request)
         {
-            // 1. Extrai CPF/User do Token
             var userId = GetUserIdFromToken();
             if (string.IsNullOrEmpty(userId)) return Unauthorized("Usuário não identificado.");
 
-            // 2. Pega o Token puro para repassar ao Core
             string token = Request.Headers["Authorization"].ToString().Replace("Bearer ", "");
 
-            // 3. Garante valores padrão caso venha vazio
-            string name = string.IsNullOrEmpty(request.UserName) ? "Jogador" : request.UserName;
+            // 🔥 CORREÇÃO: Pega o Login real do Token (unique_name ou Name)
+            // Isso impede que o 'Nome Completo' seja gravado como 'UserName
+            // '
+            string realUserName = User.FindFirst("preferred_username")?.Value
+                                              ?? User.FindFirst("username")?.Value
+                                              ?? request.UserName // << AGORA O FRONTEND TEM PRIORIDADE SOBRE O NOME COMPLETO
+                                              ?? "Jogador";
+
+            // Limpeza extra: Se vier com @, remove (opcional, mas bom para padronizar)
+            // if (realUserName.StartsWith("@")) realUserName = realUserName.Substring(1);
+
             string avatar = string.IsNullOrEmpty(request.Avatar) ? "" : request.Avatar;
 
-            // 4. Chama o serviço passando os dados
-            var result = await _service.JoinTournamentAsync(id, userId, token, name, avatar);
+            var result = await _service.JoinTournamentAsync(id, userId, token, realUserName, avatar);
 
             if (result == "Success")
                 return Ok(new { message = "Inscrição realizada com sucesso!" });
@@ -130,7 +167,28 @@ namespace Magic_casino_tournament.Controllers
             return BadRequest(new { error = result });
         }
 
-        // ✅ APOSTA EM LOTE
+        // 👇 CORREÇÃO DA AÇÃO DE FAVORITAR
+        [HttpPost("{id}/favorite")]
+        [Authorize] // Obrigatório estar logado para favoritar
+        public async Task<IActionResult> ToggleFavorite(int id)
+        {
+            try
+            {
+                var userId = GetUserIdFromToken();
+                if (string.IsNullOrEmpty(userId)) return Unauthorized();
+
+                // Chama o método correto no Serviço (que já trata Adicionar/Remover no banco)
+                bool isFavorited = await _service.ToggleFavoriteAsync(id, userId);
+
+                // Retorna o novo estado para o Front atualizar o ícone visualmente
+                return Ok(new { IsFavorite = isFavorited });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(ex.Message);
+            }
+        }
+
         [HttpPost("{id}/bet")]
         [Authorize]
         public async Task<IActionResult> PlaceBet(int id, [FromBody] PlaceTournamentBetRequest request)
@@ -154,21 +212,21 @@ namespace Magic_casino_tournament.Controllers
         // ===================================================================================
         private string? GetUserIdFromToken()
         {
+            // Tenta pegar o ID de várias Claims possíveis para garantir compatibilidade
             var rawCpf = User.FindFirst("cpf")?.Value
                       ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                      ?? User.FindFirst("sub")?.Value
+                      ?? User.FindFirst("id")?.Value
                       ?? User.FindFirst(ClaimTypes.Name)?.Value;
 
             if (string.IsNullOrEmpty(rawCpf)) return null;
 
-            // Limpa formatação do CPF (ex: 123.456 -> 123456)
+            // Limpa formatação caso seja CPF (ex: remove pontos e traços)
             return Regex.Replace(rawCpf, "[^0-9]", "");
         }
     }
 
-    // ===================================================================================
-    // 📦 DTOs (Data Transfer Objects)
-    // ===================================================================================
-
+    // DTOs
     public class PlaceTournamentBetRequest
     {
         public string? UserId { get; set; }

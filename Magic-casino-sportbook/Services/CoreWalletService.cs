@@ -53,23 +53,56 @@ namespace Magic_casino_sportbook.Services
             return await SendTransactionAsync("/api/internal/wallet/deduct", payload, token);
         }
 
-        // 3. Creditar Prêmio (Usado pelo Worker ao pagar a aposta)
+        // 3. Creditar Prêmio (Versão Simples)
         public async Task<(bool Success, string Message)> CreditFundsAsync(string userCpf, decimal amount)
         {
             var payload = new
             {
                 UserCpf = userCpf,
                 Amount = amount,
-                Source = "Sportbook", // O Core deve identificar "Sportbook" e somar no balance_qab
-                Type = "Win",         // Tipo da transação
+                Source = "Sportbook",
+                Type = "Win",
                 ReferenceId = Guid.NewGuid().ToString()
             };
 
-            // Worker não tem token de usuário, passa null (o Core deve aceitar chamada interna)
             return await SendTransactionAsync("/api/internal/wallet/credit", payload, null);
         }
 
-        // 4. Método Auxiliar (Para não repetir código)
+        // 4. ✅ NOVO MÉTODO OBRIGATÓRIO (Para corrigir o erro de Build do LiveScoreWorker)
+        // Permite adicionar saldo passando uma descrição personalizada (ex: "Prêmio Aposta #123")
+        public async Task<(bool Success, string Message)> AddBalanceAsync(string userCpf, decimal amount, string description)
+        {
+            var payload = new
+            {
+                UserCpf = userCpf,
+                Amount = amount,
+                Source = "Sportbook",
+                Type = "Win",
+                Description = description, // Envia a descrição para o extrato
+                ReferenceId = Guid.NewGuid().ToString()
+            };
+
+            // Reutiliza a rota de crédito
+            return await SendTransactionAsync("/api/internal/wallet/credit", payload, null);
+        }
+
+        // 5. Estornar Aposta (Reembolso)
+        public async Task<(bool Success, string Message)> ProcessRefundAsync(string userCpf, decimal amount, string description)
+        {
+            var payload = new
+            {
+                UserCpf = userCpf,
+                Amount = amount,
+                Source = "Sportbook",
+                Type = "Refund",
+                Description = description,
+                ReferenceId = Guid.NewGuid().ToString()
+            };
+
+            return await SendTransactionAsync("/api/internal/wallet/credit", payload, null);
+        }
+
+        // 6. Método Auxiliar
         private async Task<(bool Success, string Message)> SendTransactionAsync(string endpoint, object payload, string? token)
         {
             try

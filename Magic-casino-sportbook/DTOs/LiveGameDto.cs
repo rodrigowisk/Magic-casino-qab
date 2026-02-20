@@ -49,8 +49,6 @@ namespace Magic_casino_sportbook.DTOs
         [JsonPropertyName("period")]
         public string Period { get; set; } = string.Empty;
 
-        // 🔴 ANTES: [JsonPropertyName("rawOddsHome")]
-        // 🟢 AGORA: "homeOdd" (O Vue usa 'homeOdd' para exibir e animar)
         [JsonPropertyName("homeOdd")]
         public decimal RawOddsHome { get; set; }
 
@@ -59,5 +57,24 @@ namespace Magic_casino_sportbook.DTOs
 
         [JsonPropertyName("awayOdd")]
         public decimal RawOddsAway { get; set; }
+
+        public int HomeAttacks { get; set; }
+        public int AwayAttacks { get; set; }
+
+        public int HomeDangerousAttacks { get; set; }
+        public int AwayDangerousAttacks { get; set; }
+
+        public int HomeCorners { get; set; }
+        public int AwayCorners { get; set; }
+
+        public int HomeOnTarget { get; set; }
+        public int AwayOnTarget { get; set; }
+
+        public int HomeOffTarget { get; set; }
+        public int AwayOffTarget { get; set; }
+
+        public int HomePossession { get; set; }
+        public int AwayPossession { get; set; }
+
     }
 }

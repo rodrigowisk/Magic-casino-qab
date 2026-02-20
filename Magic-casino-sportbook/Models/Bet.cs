@@ -26,6 +26,8 @@ namespace Magic_casino_sportbook.Models
 
         public string Status { get; set; } = "pending";
 
+        public DateTime? SettledAt { get; set; }
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         // Relacionamento com as seleções

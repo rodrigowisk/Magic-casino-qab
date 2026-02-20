@@ -1,4 +1,5 @@
 ﻿using Magic_casino_sportbook.Services;
+using Magic_casino_sportbook.Services.Prematch;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -46,23 +47,11 @@ namespace Magic_casino_sportbook.BackgroundServices
             {
                 using var scope = _serviceProvider.CreateScope();
 
-                // 🚦 AQUI É A DECISÃO DE QUAL API USAR
-                var provider = Environment.GetEnvironmentVariable("ODDS_PROVIDER");
+                // ✅ Versão Limpa: Apenas BetsAPI
+                _logger.LogInformation("🔄 Iniciando Sync com BETS API (Via ScheduleService)...");
 
-                if (provider == "BetsApi")
-                {
-                    _logger.LogInformation("🔄 Iniciando Sync com BETS API...");
-                    // Pede explicitamente o serviço da BetsAPI
-                    var service = scope.ServiceProvider.GetRequiredService<BetsApiService>();
-                    await service.SyncBaseOddsToDatabase();
-                }
-                else
-                {
-                    _logger.LogInformation("🔄 Iniciando Sync com THE ODDS API...");
-                    // Pede explicitamente o serviço da TheOddsApi
-                    var service = scope.ServiceProvider.GetRequiredService<TheOddsApiService>();
-                    await service.SyncBaseOddsToDatabase();
-                }
+                var service = scope.ServiceProvider.GetRequiredService<IScheduleService>();
+                await service.SyncEventsSchedule();
 
                 _logger.LogInformation("✅ Sincronização concluída.");
             }

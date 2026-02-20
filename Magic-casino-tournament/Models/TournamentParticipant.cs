@@ -23,6 +23,8 @@ namespace Magic_casino_tournament.Models
 
         public int Rank { get; set; } = 0;
 
+        public DateTime JoinedAt { get; set; } = DateTime.UtcNow;
+
         public virtual List<TournamentBet> Bets { get; set; } = new();
     }
 }

@@ -16,6 +16,9 @@ namespace Magic_casino_tournament.Data
 
         public DbSet<TournamentBetSelection> TournamentBetSelections { get; set; }
 
+        // 👇 ADICIONADO: Tabela de Favoritos
+        public DbSet<TournamentFavorite> TournamentFavorites { get; set; }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -35,6 +38,11 @@ namespace Magic_casino_tournament.Data
                 .WithOne(b => b.Participant)
                 .HasForeignKey(b => b.ParticipantId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            // 👇 ADICIONADO: Configura Favoritos (Chave Composta)
+            // Define que a chave primária é a combinação de UserId + TournamentId
+            modelBuilder.Entity<TournamentFavorite>()
+                .HasKey(f => new { f.UserId, f.TournamentId });
         }
     }
 }

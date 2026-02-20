@@ -94,7 +94,7 @@ services:
     image: magic-casino-sportbook:prod
     container_name: sportbook
     environment:
-      ASPNETCORE_ENVIRONMENT: "Development"
+      ASPNETCORE_ENVIRONMENT: "Production"
       REDIS_CONNECTION_STRING: "redis:6379,abortConnect=false"
       ConnectionStrings__Redis: "redis:6379"
       ConnectionStrings__DefaultConnection: "${DB_CONN_SPORTBOOK}"
@@ -109,6 +109,8 @@ services:
     restart: always
     depends_on:
       - redis
+    volumes:
+      - ./Magic-casino-sportbook/logs:/app/logs
 
   # ✅ SLOT
   slot:

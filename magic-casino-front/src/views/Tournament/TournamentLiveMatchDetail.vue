@@ -103,11 +103,10 @@ const fetchDetails = async () => {
             awayTeam: eventRes.awayTeam || eventRes.AwayTeam,
             league: eventRes.league || eventRes.League,
             commenceTime: eventRes.commenceTime || eventRes.CommenceTime,
-            // Campos Ao Vivo
             homeScore: hScore,
             awayScore: aScore,
             currentMinute: eventRes.gameTime || eventRes.currentMinute || eventRes.time || '0',
-            period: eventRes.status || eventRes.period || 'Live',
+            period: eventRes.status || eventRes.period || 'Scheduled', 
             odds: safeOdds
         };
     } else {
@@ -127,14 +126,12 @@ const setupSignalR = async () => {
     connection.on('LiveOddsUpdate', (updatedGames: any[]) => {
         if (!event.value || !updatedGames || !Array.isArray(updatedGames)) return;
         
-        // Procura atualização para O MEU jogo atual
         const update = updatedGames.find(u => {
             const uId = String(u.id || u.gameId).trim();
             return uId === event.value.id;
         });
 
         if (update) {
-            // Atualiza Placar e Tempo
             if (update.time) event.value.currentMinute = update.time;
             if (update.status) event.value.period = update.status;
             
@@ -144,7 +141,6 @@ const setupSignalR = async () => {
                 event.value.awayScore = parseInt(parts[1]) || 0;
             }
 
-            // Atualiza Odds do Mercado Principal (1x2) se existirem na lista de odds
             if (update.homeOdd || update.drawOdd || update.awayOdd) {
                 updateMainMarketOdds(update);
             }
@@ -154,41 +150,48 @@ const setupSignalR = async () => {
     try { await connection.start(); } catch (err) { console.error("SignalR Detail Error:", err); }
 };
 
-// ✅ CORREÇÃO: Implementação real que usa a variável 'update'
 const updateMainMarketOdds = (update: any) => {
     if (!event.value.odds || !Array.isArray(event.value.odds)) return;
     
-    // Procura o mercado "Match Winner" ou "Resultado Final"
     const market = event.value.odds.find((m: any) => {
         const name = translateMarket(m.marketName || m.MarketName).toLowerCase();
         return name === 'resultado final';
     });
 
     if (market) {
-        // Atualiza Casa (1)
         if (update.homeOdd) {
-            const homeOutcome = event.value.odds.find((o: any) => 
-                o.marketName === market.marketName && (o.outcomeName === '1' || o.outcomeName === event.value.homeTeam)
-            );
+            const homeOutcome = event.value.odds.find((o: any) => o.marketName === market.marketName && (o.outcomeName === '1' || o.outcomeName === event.value.homeTeam));
             if (homeOutcome) homeOutcome.price = update.homeOdd;
         }
-
-        // Atualiza Empate (X)
         if (update.drawOdd) {
-            const drawOutcome = event.value.odds.find((o: any) => 
-                o.marketName === market.marketName && (o.outcomeName === 'X' || o.outcomeName === 'Draw' || o.outcomeName === 'Empate')
-            );
+            const drawOutcome = event.value.odds.find((o: any) => o.marketName === market.marketName && (o.outcomeName === 'X' || o.outcomeName === 'Draw' || o.outcomeName === 'Empate'));
             if (drawOutcome) drawOutcome.price = update.drawOdd;
         }
-
-        // Atualiza Fora (2)
         if (update.awayOdd) {
-            const awayOutcome = event.value.odds.find((o: any) => 
-                o.marketName === market.marketName && (o.outcomeName === '2' || o.outcomeName === event.value.awayTeam)
-            );
+            const awayOutcome = event.value.odds.find((o: any) => o.marketName === market.marketName && (o.outcomeName === '2' || o.outcomeName === event.value.awayTeam));
             if (awayOutcome) awayOutcome.price = update.awayOdd;
         }
     }
+};
+
+// --- COMPUTED & FORMATTERS ---
+const isLive = computed(() => {
+    if (!event.value) return false;
+    const p = (event.value.period || '').toLowerCase();
+    // Verifica se é status de jogo ao vivo
+    return p.includes('live') || p.includes('1h') || p.includes('2h') || p.includes('half') || (event.value.currentMinute && event.value.currentMinute !== '0');
+});
+
+const formatGameDate = (dateStr: string) => {
+    if (!dateStr) return '--/--';
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+};
+
+const formatGameTime = (dateStr: string) => {
+    if (!dateStr) return '--:--';
+    const date = new Date(dateStr);
+    return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 };
 
 // --- LÓGICA DE MERCADOS ---
@@ -290,7 +293,6 @@ const handleSelection = (odd: any, marketNameGrouped: string) => {
         return;
     }
 
-    // Remove concorrentes do mesmo mercado
     const existingInMarket = betStore.selections.find(s => {
         return s.id.startsWith(`TOURNAMENT_${event.value.id}`) && s.id.includes(marketNameGrouped.replace(/\s+/g, ''));
     });
@@ -304,7 +306,6 @@ const handleSelection = (odd: any, marketNameGrouped: string) => {
     if (betType === '2') selName = event.value.awayTeam;
     if (betType === 'X') selName = 'Empate';
 
-    // Cast 'as any' para permitir metadados de torneio
     (betStore as any).addOrReplaceSelection(
         uniqueId,
         event.value.homeTeam,
@@ -317,12 +318,11 @@ const handleSelection = (odd: any, marketNameGrouped: string) => {
             isTournament: true,
             tournamentId: tournamentId.value,
             marketName: marketNameGrouped,
-            isLive: true // Flag extra para indicar que é ao vivo
+            isLive: isLive.value 
         }
     );
 };
 
-// --- FORMATADORES ---
 const formatOutcomeName = (val: string | number) => {
     let str = asString(val)
         .replace(/ or /gi, ' / ')
@@ -347,7 +347,7 @@ onUnmounted(() => {
             :is-loading="isLoading" 
             :progress="loadingProgress" 
             :is-absolute="true" 
-            loading-text="Sincronizando Ao Vivo..."
+            loading-text="Carregando Detalhes..."
         />
 
         <div class="flex-1 flex flex-col h-full overflow-y-auto custom-scrollbar relative">
@@ -360,7 +360,7 @@ onUnmounted(() => {
                         <ArrowLeft class="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
                     </button>
                     <div class="flex flex-col">
-                        <div class="flex items-center gap-1.5 text-red-500 animate-pulse">
+                        <div v-if="isLive" class="flex items-center gap-1.5 text-red-500 animate-pulse">
                             <span class="w-2 h-2 bg-red-500 rounded-full"></span>
                             <span class="text-[10px] font-black uppercase tracking-widest">AO VIVO</span>
                         </div>
@@ -372,32 +372,53 @@ onUnmounted(() => {
 
                 <div v-if="event" class="space-y-6 animate-fade-in">
 
-                    <div class="relative rounded-xl p-6 border border-red-500/20 shadow-2xl overflow-hidden group min-h-[180px] flex items-center bg-[#1a2c38]">
+                    <div class="relative rounded-xl p-6 border border-white/10 shadow-2xl overflow-hidden group min-h-[180px] flex items-center bg-[#1a2c38]">
                         <div class="absolute inset-0 z-0">
-                            <img src="/images/backgrouns-sport/backgrounds1.png" alt="Stadium" class="w-full h-full object-cover opacity-20" />
+                            <img src="/images/backgrouns-sport/backgrounds1.png" alt="Stadium" class="w-full h-full object-cover opacity-20 mix-blend-overlay" />
                         </div>
-                        <div class="absolute inset-0 z-0 bg-gradient-to-t from-[#0f212e] via-[#0f212e]/90 to-transparent"></div>
+                        <div class="absolute inset-0 z-0 bg-gradient-to-t from-[#0f172a] via-[#0f172a]/80 to-transparent"></div>
 
                         <div class="relative z-10 flex items-center justify-between gap-4 w-full">
+                            
                             <div class="flex-1 flex flex-col items-center gap-3 text-center">
                                 <TeamLogo :teamName="event.homeTeam" :remoteUrl="event.homeTeamLogo" size="w-20 h-20 md:w-24 md:h-24" class="drop-shadow-2xl transition-transform group-hover:scale-105" />
                                 <h1 class="text-white font-black text-lg md:text-xl leading-tight line-clamp-2 drop-shadow-md">{{ event.homeTeam }}</h1>
                             </div>
 
-                            <div class="flex flex-col items-center justify-center min-w-[120px]">
+                            <div class="flex flex-col items-center justify-center min-w-[140px] px-2 z-20">
                                 
-                                <div class="bg-red-600/90 text-white px-3 py-1 rounded-t-lg font-black text-xs uppercase tracking-widest flex items-center gap-1 shadow-lg">
-                                    <Timer class="w-3 h-3 animate-spin-slow" />
-                                    <span>{{ event.currentMinute }}'</span>
+                                <div v-if="isLive" class="flex flex-col items-center">
+                                    <div class="bg-red-600/90 text-white px-3 py-1 rounded-t-lg font-black text-xs uppercase tracking-widest flex items-center gap-1 shadow-lg">
+                                        <Timer class="w-3 h-3 animate-spin-slow" />
+                                        <span>{{ event.currentMinute }}'</span>
+                                    </div>
+                                    <div class="bg-[#0f172a] bg-opacity-90 backdrop-blur-md border border-white/10 px-6 py-3 rounded-b-xl shadow-2xl flex items-center gap-4">
+                                        <span class="text-4xl md:text-5xl font-black text-white">{{ event.homeScore }}</span>
+                                        <span class="text-gray-500 text-2xl font-light">:</span>
+                                        <span class="text-4xl md:text-5xl font-black text-white">{{ event.awayScore }}</span>
+                                    </div>
+                                    <span class="text-[10px] text-gray-400 font-bold uppercase tracking-wide mt-2">{{ event.period || 'Ao Vivo' }}</span>
                                 </div>
 
-                                <div class="bg-[#0f172a] bg-opacity-90 backdrop-blur-md border-x border-b border-white/10 px-6 py-4 rounded-b-xl shadow-2xl flex items-center gap-4">
-                                    <span class="text-4xl md:text-5xl font-black text-white">{{ event.homeScore }}</span>
-                                    <span class="text-gray-500 text-2xl font-light">:</span>
-                                    <span class="text-4xl md:text-5xl font-black text-white">{{ event.awayScore }}</span>
+                                <div v-else class="flex flex-col items-center justify-center">
+                                    
+                                    <div class="w-10 h-10 rounded-full bg-[#1e293b]/80 border border-blue-500/30 flex items-center justify-center mb-2 shadow-lg backdrop-blur-sm">
+                                        <span class="text-blue-400 font-black text-xs tracking-widest">VS</span>
+                                    </div>
+
+                                    <div class="bg-[#0f172a] border border-white/10 px-4 py-1.5 rounded flex items-center gap-2 mb-1 shadow-inner">
+                                        <Timer class="w-3.5 h-3.5 text-blue-400" />
+                                        <span class="text-lg font-bold text-white font-mono leading-none">
+                                            {{ formatGameTime(event.commenceTime) }}
+                                        </span>
+                                    </div>
+
+                                    <span class="text-slate-500 text-[10px] font-bold tracking-wide">
+                                        {{ formatGameDate(event.commenceTime) }}
+                                    </span>
+
                                 </div>
-                                
-                                <span class="text-[10px] text-gray-400 font-bold uppercase tracking-wide mt-2">{{ event.period || 'Ao Vivo' }}</span>
+
                             </div>
 
                             <div class="flex-1 flex flex-col items-center gap-3 text-center">
@@ -416,14 +437,14 @@ onUnmounted(() => {
                                 class="flex items-center justify-between p-3.5 cursor-pointer bg-white/[0.02] hover:bg-white/[0.05] transition-colors select-none">
                                 
                                 <div class="flex items-center gap-2.5">
-                                    <div class="bg-red-500/10 p-1.5 rounded text-red-500">
+                                    <div class="bg-blue-500/10 p-1.5 rounded text-blue-400">
                                         <BarChart3 v-if="marketName.includes('Gols')" class="w-4 h-4" />
                                         <Trophy v-else class="w-4 h-4" />
                                     </div>
                                     <h3 class="text-white font-bold text-xs uppercase tracking-wide">{{ marketName }}</h3>
                                     
                                     <span v-if="getSelectedCountForMarket(marketName) > 0" 
-                                          class="ml-1 bg-red-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded shadow-sm min-w-[20px] text-center animate-bounce-in">
+                                          class="ml-1 bg-blue-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded shadow-sm min-w-[20px] text-center animate-bounce-in">
                                         {{ getSelectedCountForMarket(marketName) }}
                                     </span>
                                 </div>

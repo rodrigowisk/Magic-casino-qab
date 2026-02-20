@@ -1,4 +1,5 @@
 ﻿using Magic_casino_sportbook.Services;
+using Magic_casino_sportbook.Services.Prematch;
 
 namespace Magic_casino_sportbook.BackgroundServices
 {
@@ -21,7 +22,7 @@ namespace Magic_casino_sportbook.BackgroundServices
                 {
                     using (var scope = _serviceProvider.CreateScope())
                     {
-                        var service = scope.ServiceProvider.GetRequiredService<IOddsService>();
+                        var service = scope.ServiceProvider.GetRequiredService<IScheduleService>();
                         await service.SyncEventsSchedule();
                     }
                 }

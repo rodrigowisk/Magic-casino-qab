@@ -364,8 +364,8 @@ const form = ref({
 const passForm = ref({ currentPassword: '', newPassword: '', confirmPassword: '' });
 
 const avatarsList = {
-    man: Array.from({ length: 22 }, (_, i) => `/images/avatars/man/${i + 1}.svg`),
-    woman: Array.from({ length: 6 }, (_, i) => `/images/avatars/woman/${i + 1}.svg`)
+    man: Array.from({ length: 39 }, (_, i) => `/images/avatars/man/${i + 1}.svg`),
+    woman: Array.from({ length: 13 }, (_, i) => `/images/avatars/woman/${i + 1}.svg`)
 };
 
 const filteredAvatars = computed(() => {

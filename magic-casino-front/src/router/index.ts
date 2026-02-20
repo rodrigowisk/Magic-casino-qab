@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory, RouterView } from 'vue-router'
 
 // Views Públicas
-import Home from '../views/Home.vue'
+//import Home from '../views/Home.vue'
 import SportEvents from '../views/SportEvents.vue'
 import MyBets from '../views/MyBets.vue'
 import LiveEvents from '../views/LiveEvents.vue' 
@@ -18,12 +18,16 @@ import TournamentRanking from '../views/Tournament/TournamentRanking.vue'
 import TournamentHistory from '../views/Tournament/TournamentHistory.vue'
 import TournamentMatchDetail from '../views/Tournament/TournamentMatchDetail.vue';
 import TournamentLiveMatchDetail from '../views/Tournament/TournamentLiveMatchDetail.vue';
+import Favorites from '../views/Tournament/Favorites.vue';
+// Importando o Info explicitamente para manter padrão (opcional, mas recomendado)
+import TournamentInfo from '../views/Tournament/TournamentInfo.vue'; 
 
 // ✅ Admin Views
 import TournamentAdminList from '../views/Admin/Tournament/TournamentAdminList.vue'
 import TournamentCreate from '../views/Admin/Tournament/TournamentCreate.vue'
 import ConfigPage from '../views/ConfigPage.vue'
 import SportsConfiguration from '../components/Admin/SportsConfiguration.vue'
+import AdminSender from '../views/Admin/AdminSender.vue';
 
 // Placeholder
 const EmBreve = { template: '<div class="p-10 text-white text-xl">🚧 Módulo em construção...</div>' }
@@ -35,12 +39,13 @@ const router = createRouter({
     // =======================================================
     // 🌍 1. ROTAS DO SPORTBOOK (Layout Padrão)
     // =======================================================
+
     { 
       path: '/', 
       name: 'home', 
-      component: Home,
-      meta: { layout: 'default' } 
+      redirect: '/tournaments' // <--- ALTERE AQUI: Redireciona direto para o lobby
     },
+
     { 
       path: '/sports/:id', 
       name: 'sport-events', 
@@ -83,28 +88,47 @@ const router = createRouter({
       component: () => import('../views/Transactions.vue'),
       meta: { layout: 'default', requiresAuth: true } 
     },
+    { 
+      path: '/inbox', 
+      name: 'Inbox', 
+      // O caminho deve bater com a sua pasta. Pela imagem é esse:
+      component: () => import('../components/UserInbox.vue'),
+      meta: { layout: 'default', requiresAuth: true } 
+    },
 
     // =======================================================
-    // 🏆 2. ROTAS DE TORNEIO (Layout Limpo / Tournament)
+    // 🏆 2. ROTAS DE LOBBY (Layout Limpo / Tournament)
     // =======================================================
     { 
       path: '/tournaments', 
       name: 'TournamentLobby', 
       component: TournamentLobby,
-      meta: { layout: 'tournament', requiresAuth: true }
+      meta: { layout: 'default', requiresAuth: true }
+    },
+
+    { 
+      path: '/tournaments/favorites', 
+      name: 'Favorites',
+      component: Favorites,
+      meta: { layout: 'default', requiresAuth: true } 
+    },
+    {
+      path: '/tournaments/list/:type', // Ex: /tournaments/list/free, /tournaments/list/featured
+      name: 'TournamentList',
+      component: () => import('../views/Tournament/TournamentListPage.vue'),
+      props: true // Permite passar o :type como prop para o componente
     },
     
     // ✅ ROTA PAI DO TORNEIO (WRAPPER)
-    // As sub-rotas agora renderizam dentro do <router-view> do TournamentWrapper
     { 
       path: '/tournament/:id',
-      component: TournamentWrapper, // O Wrapper segura o Carrossel
+      component: TournamentWrapper,
       meta: { layout: 'tournament', requiresAuth: true },
-      // Redireciona para 'play' se acessar apenas /tournament/123
-      redirect: to => { return { path: `/tournament/${to.params.id}/play` }}, 
+      // Redireciona para o 'play' usando o nome da rota (mais seguro)
+      redirect: to => { return { name: 'TournamentPlay', params: { id: to.params.id } }}, 
       children: [
         { 
-          path: 'play', // Nota: Sem a barra '/' na frente (caminho relativo)
+          path: 'play', 
           name: 'TournamentPlay', 
           component: TournamentPlay,
           props: true
@@ -115,13 +139,15 @@ const router = createRouter({
           component: TournamentLive,
           props: true
         },
+        // --- CORREÇÃO AQUI ---
         {
-          path: '/tournament/:id/live/:gameId',
+          path: 'live/:gameId', // Caminho relativo (sem a barra inicial e sem repetir /tournament/:id)
           name: 'TournamentLiveMatchDetail',
           component: TournamentLiveMatchDetail,
           meta: { layout: 'tournament', requiresAuth: true },
           props: true
         },
+        // ---------------------
         { 
           path: 'my-bets', 
           name: 'TournamentMyBets', 
@@ -133,6 +159,11 @@ const router = createRouter({
           name: 'TournamentHistory', 
           component: TournamentHistory,
           props: true
+        },
+        {
+          path: 'info',
+          name: 'TournamentInfo',
+          component: TournamentInfo // Usando o import do topo
         },
         { 
           path: 'ranking', 
@@ -146,7 +177,6 @@ const router = createRouter({
           component: TournamentMatchDetail,
           props: true
         }
-        
       ]
     },
 
@@ -164,10 +194,14 @@ const router = createRouter({
         { path: 'tournaments', name: 'TournamentAdminList', component: TournamentAdminList },
         { path: 'tournaments/create', name: 'TournamentCreate', component: TournamentCreate },
 
+        // Módulo Mensagens/Sistema
+        { path: 'messages', name: 'AdminMessages', component: AdminSender },
+
         // Configurações
         { path: 'sportbook', name: 'SportsConfiguration', component: SportsConfiguration },
         { path: 'casino', name: 'AdminCasino', component: EmBreve },
         { path: 'config', name: 'AdminConfig', component: ConfigPage }
+        
       ]
     }
   ]

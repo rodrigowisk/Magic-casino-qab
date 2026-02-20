@@ -29,14 +29,19 @@ export interface Tournament {
     rank?: number; 
     filterRules?: string;
 
+    // 👇 NOVOS CAMPOS (Opcionais para não quebrar listagens antigas)
+    isFavorite?: boolean; // Para o botão de coração
+    myPrize?: number;     // Para o histórico
+    status?: string;      // Para o histórico
+
     // ID da regra de premiação
     prizeRuleId?: string; 
 }
 
-// ✅ NOVA INTERFACE DO RANKING (Compatível com o DTO do C#)
+// ✅ INTERFACE DO RANKING (Compatível com o DTO do C#)
 export interface TournamentRankingDto {
     posicao: number;
-    userId: string; // 👈 OBRIGATÓRIO: Adicionado para o Front saber de quem buscar as apostas
+    userId: string;
     userName: string;
     avatar: string;
     saldoAtual: number;
@@ -46,6 +51,7 @@ export interface TournamentRankingDto {
     bilhetesTotais?: number;
 }
 
+// Mantido conforme seu arquivo original para segurança
 const API_URL = "/api/tournament";
 
 class TournamentService {
@@ -56,6 +62,14 @@ class TournamentService {
     listTournaments(userId?: string): Promise<AxiosResponse<Tournament[]>> {
         const params = userId ? { userId } : {};
         return api.get<Tournament[]>(`${API_URL}/`, { baseURL: '/', params });
+    }
+
+    /**
+     * ✅ NOVO: Busca histórico completo (Ativos + Finalizados)
+     * Chama a rota: /api/tournament/history/{userId}
+     */
+    getHistory(userId: string): Promise<AxiosResponse<Tournament[]>> {
+        return api.get<Tournament[]>(`${API_URL}/history/${userId}`, { baseURL: '/' });
     }
 
     /**
@@ -74,7 +88,7 @@ class TournamentService {
     }
 
     /**
-     * ✅ Busca o Ranking do Torneio (Retorna o novo DTO)
+     * Busca o Ranking do Torneio
      */
     getRanking(tournamentId: number): Promise<AxiosResponse<TournamentRankingDto[]>> {
         return api.get<TournamentRankingDto[]>(`${API_URL}/${tournamentId}/ranking`, { baseURL: '/' });
@@ -99,8 +113,7 @@ class TournamentService {
     }
 
     /**
-     * ✅ NOVO MÉTODO: Busca apostas de QUALQUER jogador pelo ID
-     * (Usado pelo Modal de "Olho")
+     * Busca apostas de QUALQUER jogador pelo ID
      */
     getPlayerBets(tournamentId: number, targetUserId: string): Promise<AxiosResponse<any>> {
         return api.get(`${API_URL}/${tournamentId}/participants/${targetUserId}/bets`, { baseURL: '/' });
@@ -123,6 +136,17 @@ class TournamentService {
      */
     getPrizeRules(): Promise<AxiosResponse<PrizeRule[]>> {
         return api.get<PrizeRule[]>(`${API_URL}/prize-rules`, { baseURL: '/' });
+    }
+
+    /**
+     * ✅ NOVO: Toggle Favorito
+     */
+    async toggleFavorite(tournamentId: number) {
+        return await api.post(`${API_URL}/${tournamentId}/favorite`, {}, { baseURL: '/' });
+    }
+
+    async getTournamentRanking(id: number) {
+    return api.get(`/Tournaments/${id}/ranking`);
     }
     
 }

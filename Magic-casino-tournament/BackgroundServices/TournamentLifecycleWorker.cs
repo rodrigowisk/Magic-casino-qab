@@ -35,8 +35,8 @@ namespace Magic_casino_tournament.BackgroundServices
                     Console.WriteLine($"❌ [ERRO WORKER] Falha ao processar torneios: {ex.Message}");
                 }
 
-                // Verifica a cada 2 minutos
-                await Task.Delay(TimeSpan.FromMinutes(2), stoppingToken);
+                // Verifica a cada 1 minutos
+                await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
             }
         }
     }

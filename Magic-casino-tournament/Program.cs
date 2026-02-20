@@ -5,14 +5,18 @@ using Magic_casino_tournament.Consumers;
 using Magic_casino_tournament.Hubs;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
-using Magic_casino.Contracts; 
+using Magic_casino.Contracts;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using MassTransit;
-using Microsoft.EntityFrameworkCore; // Já deve ter, mas confirme
-using Npgsql.EntityFrameworkCore.PostgreSQL; // ⚠️ ESSENCIAL para UseNpgsql
-using Microsoft.Extensions.DependencyInjection; // Para AddStackExchangeRedisCache
+using Microsoft.EntityFrameworkCore;
+using Npgsql.EntityFrameworkCore.PostgreSQL;
+// 👇 SEÇÃO DE REDIS E REDLOCK CORRIGIDA
+using StackExchange.Redis;
+using RedLockNet; // 👈 OBRIGATÓRIO PARA IDistributedLockFactory
+using RedLockNet.SERedis;
+using RedLockNet.SERedis.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -49,38 +53,59 @@ builder.Services.AddHttpClient<ICoreGateway, CoreGateway>();
 // Serviço principal do Torneio
 builder.Services.AddScoped<ITournamentService, TournamentService>();
 
+// Worker de Pagamento de Apostas
+builder.Services.AddHostedService<TournamentSettlementWorker>();
+
 // Worker de ciclo de vida (iniciar/encerrar torneios)
 builder.Services.AddHostedService<TournamentLifecycleWorker>();
 
 // ✅ CONFIGURAÇÃO DO REDIS (CACHE)
 builder.Services.AddStackExchangeRedisCache(options =>
 {
-    // "redis" é o nome do serviço no seu docker-compose.yml
     options.Configuration = Environment.GetEnvironmentVariable("ConnectionStrings__Redis") ?? "redis:6379";
-    options.InstanceName = "Tournament_"; // Prefixo para organizar as chaves
+    options.InstanceName = "Tournament_";
 });
-
 
 var redisConnection = Environment.GetEnvironmentVariable("ConnectionStrings__Redis") ?? "redis:6379";
 
-// 2. Adicione o SignalR com o Redis Backplane configurado
+// ==============================================================================
+// 🔒 CONFIGURAÇÃO DO REDLOCK (Bloqueio Distribuído) - CORRIGIDO
+// ==============================================================================
+// 1. Cria a conexão Multiplexer (singleton)
+var multiplexer = ConnectionMultiplexer.Connect(redisConnection);
+builder.Services.AddSingleton<IConnectionMultiplexer>(multiplexer);
+
+// 2. Registra a fábrica de Locks
+builder.Services.AddSingleton<IDistributedLockFactory>(sp =>
+{
+    // O RedLock precisa de uma lista de conexões (mesmo que seja só uma)
+    var endpoints = new List<RedLockMultiplexer>
+    {
+        new RedLockMultiplexer(multiplexer)
+    };
+
+    return RedLockFactory.Create(endpoints);
+});
+
+// 3. Adicione o SignalR com o Redis Backplane configurado
 builder.Services.AddSignalR()
     .AddStackExchangeRedis(redisConnection, options => {
         options.Configuration.ChannelPrefix = "TournamentHub";
     });
 
 // ==============================================================================
-// 🐰 3. CONFIGURAÇÃO DO RABBITMQ (MASSTRANSIT)
+// 🐰 4. CONFIGURAÇÃO DO RABBITMQ (MASSTRANSIT)
 // ==============================================================================
 builder.Services.AddMassTransit(x =>
 {
     // Registra os Consumidores
     x.AddConsumer<UserUpdatedConsumer>();
-    x.AddConsumer<GameEndedConsumer>(); // ✅ NOVO: Consumidor de Fim de Jogo
+    x.AddConsumer<GameEndedConsumer>();
+    // OBS: O JoinTournamentConsumer é injetado automaticamente pelo framework se estiver na mesma pasta,
+    // mas se precisar forçar, descomente: x.AddConsumer<JoinTournamentConsumer>();
 
     x.UsingRabbitMq((context, cfg) =>
     {
-        // 👇 CORREÇÃO: Pegar as variáveis corretas do Docker Compose
         var rabbitHost = Environment.GetEnvironmentVariable("RABBITMQ_HOST") ?? "rabbitmq";
         var rabbitUser = Environment.GetEnvironmentVariable("RABBITMQ_USER") ?? "admin";
         var rabbitPass = Environment.GetEnvironmentVariable("RABBITMQ_PASS") ?? "admin";
@@ -91,13 +116,13 @@ builder.Services.AddMassTransit(x =>
             h.Password(rabbitPass);
         });
 
-        // Fila 1: Atualizações de Usuário (Saldo, Nível)
+        // Fila 1: Atualizações de Usuário
         cfg.ReceiveEndpoint("user-updated-tournament-queue", e =>
         {
             e.ConfigureConsumer<UserUpdatedConsumer>(context);
         });
 
-        // ✅ Fila 2: Resultados de Jogos (Vem do Sportbook)
+        // Fila 2: Resultados de Jogos
         cfg.ReceiveEndpoint("game-ended-tournament-queue", e =>
         {
             e.ConfigureConsumer<GameEndedConsumer>(context);
@@ -106,11 +131,11 @@ builder.Services.AddMassTransit(x =>
 });
 
 // ==============================================================================
-// 4. Configuração do JWT
+// 5. Configuração do JWT
 // ==============================================================================
 var jwtKey = Environment.GetEnvironmentVariable("JWT_SECRET")
-             ?? builder.Configuration["Jwt:Key"]
-             ?? "ChaveSecretaDoCassino2026SuperSeguraNaoMudeIsso";
+              ?? builder.Configuration["Jwt:Key"]
+              ?? "ChaveSecretaDoCassino2026SuperSeguraNaoMudeIsso";
 
 var keyBytes = Encoding.ASCII.GetBytes(jwtKey);
 
@@ -127,13 +152,13 @@ builder.Services.AddAuthentication(x =>
     {
         ValidateIssuerSigningKey = true,
         IssuerSigningKey = new SymmetricSecurityKey(keyBytes),
-        ValidateIssuer = false, // Em dev geralmente é false
+        ValidateIssuer = false,
         ValidateAudience = false
     };
 });
 
 // ==============================================================================
-// 5. Controladores, Swagger e CORS
+// 6. Controladores, Swagger e CORS
 // ==============================================================================
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -152,7 +177,7 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 // ==============================================================================
-// 6. Pipeline HTTP
+// 7. Pipeline HTTP
 // ==============================================================================
 app.UseSwagger();
 app.UseSwaggerUI();
@@ -165,7 +190,7 @@ app.MapHub<TournamentHub>("/tournamentHub");
 app.MapControllers();
 
 // ==============================================================================
-// 7. Migração Automática (Ao iniciar)
+// 8. Migração Automática (Ao iniciar)
 // ==============================================================================
 using (var scope = app.Services.CreateScope())
 {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { 
     Trophy, 
@@ -8,53 +8,89 @@ import {
     Search,
     Filter,
     ChevronRight,
-    PlayCircle,
+    Play, // 👈 Ícone de Play importado
     LayoutList,
     Zap,
-    CheckCircle2
+    CheckCircle2,
+    ArrowLeft,
+    Coins
 } from 'lucide-vue-next';
 import tournamentService from '../../services/Tournament/TournamentService';
 import PageLoader from '../../components/PageLoader.vue';
 import { usePageLoader } from '../../composables/usePageLoader';
+import { useAuthStore } from '../../stores/useAuthStore'; 
+
+// Importa o Modal que criamos
+import TournamentDetailsModal from '../../views/Tournament/TournamentDetailsModal.vue';
 
 const router = useRouter();
+const authStore = useAuthStore();
 const { isLoading, loadingProgress, startLoader, finishLoader } = usePageLoader();
 
 const tournaments = ref<any[]>([]);
 const filterStatus = ref<'ALL' | 'ACTIVE' | 'FINISHED'>('ALL');
 const searchQuery = ref('');
 
+// --- ESTADOS DO MODAL ---
+const showDetailsModal = ref(false);
+const selectedTournament = ref<any>(null);
+
+const getUserIdSafe = () => {
+    let u = authStore.user;
+    if (!u) {
+        const stored = localStorage.getItem('user') || localStorage.getItem('user_data') || localStorage.getItem('session');
+        if (stored) {
+            try { u = JSON.parse(stored); } catch (e) {}
+        }
+    }
+    if (!u) return '';
+    const rawId = u.cpf || u.Cpf || u.id || u.Id || u.userId || u.UserId || u.code || u.Code || '';
+    return String(rawId).replace(/\D/g, ''); 
+};
+
+const isItemFinished = (t: any) => {
+    if (t.isFinished === true) return true;
+    if (String(t.isFinished).toLowerCase() === 'true') return true;
+    const statusText = String(t.status || '').toUpperCase();
+    if (statusText === 'FINISHED' || statusText === 'FINALIZADO') return true;
+    return false;
+};
+
 // --- CARREGAR DADOS ---
 const loadHistory = async () => {
+    const userId = getUserIdSafe();
+    if (!userId) return;
+
     startLoader();
     try {
-        const stored = localStorage.getItem('user') || localStorage.getItem('user_data');
-        let userId = '';
-        if (stored) {
-            const u = JSON.parse(stored);
-            userId = u.cpf || u.id || u.code || '';
-        }
+        const res = await tournamentService.getHistory(userId);
+        
+        console.log("💰 DADOS DO HISTÓRICO ATUALIZADOS:", res.data);
 
-        if (userId) {
-            const res = await tournamentService.listTournaments(userId);
-            if (res.data && Array.isArray(res.data)) {
-                // ✅ CORREÇÃO 1: Normalização dos campos (C# PascalCase para JS camelCase)
-                // Removemos o filtro .isJoined porque a API já retorna os torneios do usuário
-                tournaments.value = res.data.map((t: any) => ({
+        if (res.data && Array.isArray(res.data)) {
+            tournaments.value = res.data.map((t: any) => {
+                
+                // 1. Pega o Dinheiro Real
+                const money = t.realPrize ?? t.RealPrize ?? 0;
+
+                return {
                     ...t,
                     id: t.id || t.Id,
-                    name: t.name || t.Name,
-                    isFinished: t.isFinished ?? t.IsFinished ?? false, 
-                    isActive: t.isActive ?? t.IsActive ?? true,
+                    name: t.name || t.Name || 'Torneio',
+                    isFinished: t.isFinished ?? t.IsFinished ?? t.isFinish ?? t.IsFinish ?? false,
                     endDate: t.endDate || t.EndDate,
                     entryFee: t.entryFee ?? t.EntryFee ?? 0,
-                    myPrize: t.myPrize ?? t.MyPrize ?? 0,
-                    rank: t.rank ?? t.Rank ?? 0
-                }));
-            }
+                    
+                    // Mapeia dinheiro real
+                    moneyPrize: money,
+                    
+                    rank: t.rank ?? t.Rank ?? 0,
+                    status: t.status || t.Status || ''
+                };
+            });
         }
     } catch (e) {
-        console.error("Erro ao carregar histórico:", e);
+        console.error("❌ Falha ao carregar histórico:", e);
     } finally {
         finishLoader();
     }
@@ -64,24 +100,20 @@ onMounted(() => {
     loadHistory();
 });
 
+watch(() => authStore.user, (newUser) => {
+    if (newUser && tournaments.value.length === 0) {
+        loadHistory();
+    }
+}, { deep: true });
+
 // --- COMPUTEDS ---
 const filteredList = computed(() => {
     let list = tournaments.value;
-    const now = new Date().getTime();
-
-    // ✅ CORREÇÃO 2: Lógica robusta para detectar finalizados (Flag ou Data passada)
-    const isActuallyFinished = (t: any) => {
-        if (t.isFinished === true) return true;
-        if (t.endDate) {
-            return new Date(t.endDate).getTime() < now;
-        }
-        return false;
-    };
 
     if (filterStatus.value === 'ACTIVE') {
-        list = list.filter(t => !isActuallyFinished(t));
+        list = list.filter(t => !isItemFinished(t));
     } else if (filterStatus.value === 'FINISHED') {
-        list = list.filter(t => isActuallyFinished(t));
+        list = list.filter(t => isItemFinished(t));
     }
 
     if (searchQuery.value) {
@@ -92,7 +124,7 @@ const filteredList = computed(() => {
     return list.sort((a, b) => {
         const dateA = new Date(a.endDate || 0).getTime();
         const dateB = new Date(b.endDate || 0).getTime();
-        return dateB - dateA;
+        return dateB - dateA; 
     });
 });
 
@@ -115,37 +147,44 @@ const getRankColor = (rank: number) => {
 };
 
 const getBorderClass = (item: any) => {
-    const finished = item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime());
-    
+    const finished = isItemFinished(item);
     if (!finished) return 'border-blue-500 border-l-4'; 
-    if ((item.myPrize || 0) > (item.entryFee || 0)) return 'border-green-500 border-l-4'; 
-    if ((item.myPrize || 0) > 0) return 'border-yellow-500 border-l-4'; 
+    if ((item.moneyPrize || 0) > 0) return 'border-emerald-500 border-l-4'; 
     return 'border-red-500 border-l-4'; 
 };
 
 const getStatusBadgeClass = (item: any) => {
-    const finished = item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime());
-
+    const finished = isItemFinished(item);
     if (!finished) return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
-    if ((item.myPrize || 0) > 0) return 'bg-green-500/10 text-green-400 border-green-500/20';
+    if ((item.moneyPrize || 0) > 0) return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
     return 'bg-slate-700/30 text-slate-400 border-slate-600/30';
 };
 
 const getReturnTextClass = (item: any) => {
-    const finished = item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime());
-
+    const finished = isItemFinished(item);
     if (!finished) return 'text-white';
-    if ((item.myPrize || 0) > 0) return 'text-[#00ffb9] drop-shadow-[0_0_5px_rgba(0,255,185,0.3)]';
+    if ((item.moneyPrize || 0) > 0) return 'text-[#00ffb9] drop-shadow-[0_0_5px_rgba(0,255,185,0.3)]';
     return 'text-slate-500 decoration-1';
 };
 
+// --- NAVEGAÇÃO E ABRIR MODAL ---
+const openTournamentDetails = (tournament: any) => {
+    selectedTournament.value = tournament;
+    showDetailsModal.value = true;
+};
+
+// 👇 Função restaurada para entrar direto no torneio
 const navigateToTournament = (id: number) => {
     router.push(`/tournament/${id}/play`);
+};
+
+const goBack = () => {
+    router.back();
 };
 </script>
 
 <template>
-    <div class="relative h-full flex flex-col bg-[#0f172a] text-slate-300 overflow-hidden loader-scope">
+    <div class="relative h-full flex flex-col bg-[#0f172a] text-slate-300 overflow-hidden loader-scope z-40">
         
         <PageLoader 
             :is-loading="isLoading" 
@@ -153,69 +192,95 @@ const navigateToTournament = (id: number) => {
             loading-text="Carregando Histórico..."
         />
 
-        <div class="flex-shrink-0 px-4 py-4 border-b border-slate-800 bg-[#141e2e] shadow-lg z-10">
-            <div class="flex items-center justify-between mb-4">
-                <div>
-                    <h2 class="text-lg font-black text-white flex items-center gap-2 uppercase tracking-wide italic">
-                        <Trophy class="w-5 h-5 text-yellow-500 fill-yellow-500/20" />
-                        <span class="bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
-                            Meus Torneios
-                        </span>
-                    </h2>
-                </div>
+        <div class="flex-shrink-0 h-[180px] bg-gradient-to-br from-[#050505] to-[#0f172a] border-b border-white/10 px-4 flex flex-col justify-center z-50 relative shadow-md">
+            <div class="max-w-4xl mx-auto w-full flex flex-col gap-4">
                 
-                <div class="relative w-32 md:w-56 group">
-                    <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-4">
+                        <button 
+                            @click="goBack"
+                            class="w-12 h-12 rounded-2xl border border-white/10 bg-white/5 flex items-center justify-center hover:bg-white/10 hover:border-white/20 transition-all shrink-0"
+                        >
+                            <ArrowLeft class="w-5 h-5 text-slate-300" />
+                        </button>
+                        
+                        <div>
+                            <h2 class="text-2xl font-bold text-white tracking-tight leading-none flex items-center gap-3">
+                                <Trophy class="w-6 h-6 text-yellow-500" />
+                                Meus Torneios
+                            </h2>
+                            <p class="text-xs text-slate-400 font-medium mt-1 hidden md:block">
+                                Histórico completo e competições ativas.
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <div class="relative w-32 md:w-56 group hidden md:block">
+                        <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
+                        <input 
+                            v-model="searchQuery" 
+                            type="text" 
+                            placeholder="Buscar..." 
+                            class="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-xs text-white focus:border-blue-500/50 focus:bg-white/10 outline-none transition-all placeholder:text-slate-500"
+                        />
+                    </div>
+                </div>
+
+                <div class="flex p-1 bg-[#0b1121]/50 rounded-xl border border-white/10 relative shadow-inner gap-1 backdrop-blur-sm">
+                    <button 
+                        @click="filterStatus = 'ALL'"
+                        class="flex-1 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all duration-300 flex items-center justify-center gap-2 relative overflow-hidden group"
+                        :class="filterStatus === 'ALL' 
+                            ? 'text-white shadow-[0_0_20px_rgba(37,99,235,0.15)] border border-blue-500/30' 
+                            : 'text-slate-500 hover:text-slate-300 hover:bg-white/5 border border-transparent'"
+                    >
+                        <div v-if="filterStatus === 'ALL'" class="absolute inset-0 bg-gradient-to-br from-blue-600 to-indigo-700 opacity-100 transition-opacity"></div>
+                        <LayoutList class="w-3.5 h-3.5 relative z-10" :class="filterStatus === 'ALL' ? 'text-white' : 'text-slate-600 group-hover:text-slate-400'" />
+                        <span class="relative z-10">Todos</span>
+                    </button>
+
+                    <button 
+                        @click="filterStatus = 'ACTIVE'"
+                        class="flex-1 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all duration-300 flex items-center justify-center gap-2 relative overflow-hidden group"
+                        :class="filterStatus === 'ACTIVE' 
+                            ? 'text-white shadow-[0_0_20px_rgba(34,197,94,0.15)] border border-green-500/30' 
+                            : 'text-slate-500 hover:text-slate-300 hover:bg-white/5 border border-transparent'"
+                    >
+                        <div v-if="filterStatus === 'ACTIVE'" class="absolute inset-0 bg-gradient-to-br from-green-600 to-emerald-700 opacity-100 transition-opacity"></div>
+                        <Zap class="w-3.5 h-3.5 relative z-10" :class="filterStatus === 'ACTIVE' ? 'text-white fill-white' : 'text-slate-600 group-hover:text-slate-400'" />
+                        <span class="relative z-10">Ativos</span>
+                    </button>
+
+                    <button 
+                        @click="filterStatus = 'FINISHED'"
+                        class="flex-1 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all duration-300 flex items-center justify-center gap-2 relative overflow-hidden group"
+                        :class="filterStatus === 'FINISHED' 
+                            ? 'text-white shadow-[0_0_20px_rgba(100,116,139,0.15)] border border-slate-500/30' 
+                            : 'text-slate-500 hover:text-slate-300 hover:bg-white/5 border border-transparent'"
+                    >
+                        <div v-if="filterStatus === 'FINISHED'" class="absolute inset-0 bg-gradient-to-br from-slate-600 to-slate-700 opacity-100 transition-opacity"></div>
+                        <CheckCircle2 class="w-3.5 h-3.5 relative z-10" :class="filterStatus === 'FINISHED' ? 'text-white' : 'text-slate-600 group-hover:text-slate-400'" />
+                        <span class="relative z-10">Finalizados</span>
+                    </button>
+                </div>
+
+            </div>
+        </div>
+
+        <div class="flex-1 overflow-y-auto custom-scrollbar p-3 md:p-4 pb-20 relative z-0">
+            
+            <div class="md:hidden px-4 mb-4">
+                 <div class="relative group">
+                    <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
                     <input 
                         v-model="searchQuery" 
                         type="text" 
                         placeholder="Buscar torneio..." 
-                        class="w-full bg-[#0f172a] border border-slate-700 rounded-full pl-9 pr-3 py-1.5 text-xs text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-600 shadow-inner"
+                        class="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:border-blue-500/50 focus:bg-white/10 outline-none transition-all placeholder:text-slate-500"
                     />
                 </div>
             </div>
 
-            <div class="flex p-1.5 bg-[#0b1121] rounded-xl border border-white/5 relative shadow-inner gap-1">
-                <button 
-                    @click="filterStatus = 'ALL'"
-                    class="flex-1 py-2.5 rounded-lg text-[10px] md:text-xs font-bold uppercase tracking-widest transition-all duration-300 flex items-center justify-center gap-2 relative overflow-hidden group"
-                    :class="filterStatus === 'ALL' 
-                        ? 'text-white shadow-[0_0_20px_rgba(37,99,235,0.15)] border border-blue-500/30' 
-                        : 'text-slate-500 hover:text-slate-300 hover:bg-white/5 border border-transparent'"
-                >
-                    <div v-if="filterStatus === 'ALL'" class="absolute inset-0 bg-gradient-to-br from-blue-600 to-indigo-700 opacity-100 transition-opacity"></div>
-                    <LayoutList class="w-3.5 h-3.5 relative z-10" :class="filterStatus === 'ALL' ? 'text-white' : 'text-slate-600 group-hover:text-slate-400'" />
-                    <span class="relative z-10">Todos</span>
-                </button>
-
-                <button 
-                    @click="filterStatus = 'ACTIVE'"
-                    class="flex-1 py-2.5 rounded-lg text-[10px] md:text-xs font-bold uppercase tracking-widest transition-all duration-300 flex items-center justify-center gap-2 relative overflow-hidden group"
-                    :class="filterStatus === 'ACTIVE' 
-                        ? 'text-white shadow-[0_0_20px_rgba(34,197,94,0.15)] border border-green-500/30' 
-                        : 'text-slate-500 hover:text-slate-300 hover:bg-white/5 border border-transparent'"
-                >
-                    <div v-if="filterStatus === 'ACTIVE'" class="absolute inset-0 bg-gradient-to-br from-green-600 to-emerald-700 opacity-100 transition-opacity"></div>
-                    <Zap class="w-3.5 h-3.5 relative z-10" :class="filterStatus === 'ACTIVE' ? 'text-white fill-white' : 'text-slate-600 group-hover:text-slate-400'" />
-                    <span class="relative z-10">Ativos</span>
-                </button>
-
-                <button 
-                    @click="filterStatus = 'FINISHED'"
-                    class="flex-1 py-2.5 rounded-lg text-[10px] md:text-xs font-bold uppercase tracking-widest transition-all duration-300 flex items-center justify-center gap-2 relative overflow-hidden group"
-                    :class="filterStatus === 'FINISHED' 
-                        ? 'text-white shadow-[0_0_20px_rgba(100,116,139,0.15)] border border-slate-500/30' 
-                        : 'text-slate-500 hover:text-slate-300 hover:bg-white/5 border border-transparent'"
-                >
-                    <div v-if="filterStatus === 'FINISHED'" class="absolute inset-0 bg-gradient-to-br from-slate-600 to-slate-700 opacity-100 transition-opacity"></div>
-                    <CheckCircle2 class="w-3.5 h-3.5 relative z-10" :class="filterStatus === 'FINISHED' ? 'text-white' : 'text-slate-600 group-hover:text-slate-400'" />
-                    <span class="relative z-10">Finalizados</span>
-                </button>
-            </div>
-        </div>
-
-        <div class="flex-1 overflow-y-auto custom-scrollbar p-3 md:p-4 pb-20 relative">
-            
             <div v-if="!isLoading && filteredList.length === 0" class="flex flex-col items-center justify-center h-64 opacity-50 border border-dashed border-slate-700 rounded-lg m-2 bg-[#1e293b]/30">
                 <Filter class="w-10 h-10 mb-2 text-slate-600" />
                 <p class="text-sm text-slate-500">Nenhum torneio encontrado.</p>
@@ -226,18 +291,18 @@ const navigateToTournament = (id: number) => {
                 <div 
                     v-for="item in filteredList" 
                     :key="item.id"
-                    @click="navigateToTournament(item.id)"
+                    @click="openTournamentDetails(item)"
                     class="bg-[#1e293b] rounded-lg shadow-lg overflow-hidden transition-all hover:bg-[#263345] cursor-pointer group hover:-translate-y-0.5 hover:shadow-xl duration-300"
                     :class="getBorderClass(item)"
                 >
-                    <div class="px-4 py-3 flex justify-between items-start border-b border-slate-700/50">
+                    <div class="px-4 py-3 flex justify-between items-center border-b border-slate-700/50">
                         <div class="flex flex-col gap-1 flex-1 min-w-0 pr-4">
                             <div class="flex items-center gap-2">
                                 <span 
                                     class="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded border"
                                     :class="getStatusBadgeClass(item)"
                                 >
-                                    {{ (item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime())) ? 'Finalizado' : 'Em Andamento' }}
+                                    {{ isItemFinished(item) ? 'Finalizado' : 'Em Andamento' }}
                                 </span>
                                 <span class="text-[10px] text-slate-500 font-mono tracking-wide">ID: #{{ item.id }}</span>
                             </div>
@@ -248,19 +313,28 @@ const navigateToTournament = (id: number) => {
                                 <span class="flex items-center gap-1">
                                     <Clock class="w-3 h-3" /> {{ formatDate(item.endDate) }}
                                 </span>
-                                <span v-if="(item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime())) && item.rank" class="flex items-center gap-1 font-bold" :class="getRankColor(item.rank)">
+                                <span v-if="isItemFinished(item) && item.rank" class="flex items-center gap-1 font-bold" :class="getRankColor(item.rank)">
                                     <Medal class="w-3 h-3" /> #{{ item.rank }}
                                 </span>
                             </div>
                         </div>
 
                         <div class="self-center">
-                            <button class="p-2 rounded-full bg-slate-800 group-hover:bg-blue-600 group-hover:text-white transition-all text-slate-500">
-                                <PlayCircle v-if="!(item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime()))" class="w-5 h-5" />
-                                <ChevronRight v-else class="w-5 h-5" />
+                            <button v-if="!isItemFinished(item)"
+                                @click.stop="navigateToTournament(item.id)"
+                                class="flex items-center justify-center gap-1.5 px-4 md:px-5 py-2 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-400 hover:to-green-500 text-white rounded-lg shadow-[0_4px_15px_rgba(16,185,129,0.4)] transition-transform hover:scale-105 active:scale-95"
+                            >
+                                <Play class="w-4 h-4 fill-current" />
+                                <span class="text-[10px] md:text-xs font-black uppercase tracking-widest">Jogar</span>
+                            </button>
+
+                            <button v-else 
+                                class="p-2 rounded-full bg-slate-800 group-hover:bg-slate-700 transition-all text-slate-500 group-hover:text-white"
+                            >
+                                <ChevronRight class="w-5 h-5" />
                             </button>
                         </div>
-                    </div>
+                        </div>
 
                     <div class="px-4 py-2 bg-[#172231] flex items-center justify-between border-t border-slate-700/50">
                         <div class="flex flex-col">
@@ -270,17 +344,25 @@ const navigateToTournament = (id: number) => {
 
                         <div class="text-right">
                             <span class="text-[9px] uppercase tracking-wide block mb-0.5 font-bold"
-                                  :class="(item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime())) && (item.myPrize || 0) == 0 ? 'text-slate-500' : 'text-slate-400'">
-                                {{ (item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime())) ? 'Prêmio Recebido' : 'Prêmio Atual' }}
+                                  :class="isItemFinished(item) && (item.moneyPrize || 0) == 0 ? 'text-slate-500' : 'text-slate-400'">
+                                {{ isItemFinished(item) ? 'Prêmio Recebido' : 'Prêmio Atual' }}
                             </span>
-                            <span class="text-sm font-black tracking-wide" :class="getReturnTextClass(item)">
-                                {{ (item.myPrize || 0) > 0 ? formatCurrency(item.myPrize) : ((item.isFinished || (item.endDate && new Date(item.endDate).getTime() < new Date().getTime())) ? 'Sem Prêmio' : '--') }}
+                            <span class="text-sm font-black tracking-wide flex items-center justify-end gap-1" :class="getReturnTextClass(item)">
+                                <Coins v-if="(item.moneyPrize || 0) > 0" class="w-3.5 h-3.5" />
+                                {{ (item.moneyPrize || 0) > 0 ? formatCurrency(item.moneyPrize) : (isItemFinished(item) ? 'Sem Prêmio' : '--') }}
                             </span>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
+
+        <TournamentDetailsModal 
+            :show="showDetailsModal" 
+            :tournament="selectedTournament" 
+            @update:show="showDetailsModal = $event" 
+        />
+
     </div>
 </template>
 

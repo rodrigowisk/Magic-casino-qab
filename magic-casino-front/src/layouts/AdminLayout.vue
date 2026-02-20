@@ -1,21 +1,35 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
-import { Trophy, Dices, Settings, LayoutDashboard, LogOut } from 'lucide-vue-next';
+// Adicionei o icone ShieldAlert (para o botão Admin)
+import { Trophy, Dices, Settings, LayoutDashboard, LogOut, ShieldAlert } from 'lucide-vue-next';
 
 const route = useRoute();
 
+// 1. Lógica para identificar qual aba está ativa
 const activeTab = computed(() => {
   const path = route?.path || ''; 
+  
+  // Se a URL tiver /admin/system ou /admin/messages, ativa a aba ADMIN
+  if (path.includes('/admin/system') || path.includes('/admin/messages')) return 'system';
+  
   if (path.includes('/admin/tournaments')) return 'tournament';
   if (path.includes('/admin/sportbook')) return 'sportbook';
   if (path.includes('/admin/casino')) return 'casino';
   if (path.includes('/admin/config')) return 'config';
-  return 'tournament';
+  
+  return 'tournament'; // Padrão
 });
 
+// 2. Lógica para mudar o menu lateral baseado na aba
 const sidebarMenus = computed(() => {
   switch (activeTab.value) {
+    case 'system': // <--- NOVO MENU ADMIN
+      return [
+        { label: 'Enviar Mensagem', to: '/admin/messages' }, // Onde vai ficar seu form
+        { label: 'Gerenciar Usuários', to: '#', disabled: true } // Exemplo futuro
+      ];
+
     case 'tournament':
       return [
         { label: 'Listar Torneios', to: '/admin/tournaments' },
@@ -44,33 +58,51 @@ const sidebarMenus = computed(() => {
 <template>
   <div class="admin-layout">
     <div class="flex flex-col flex-1 h-full overflow-hidden">
+      
       <header class="admin-topbar">
         <div class="logo-area">🛡️ PAINEL MASTER</div>
+        
         <nav class="top-nav">
           <router-link to="/admin/tournaments" class="nav-item" :class="{ active: activeTab === 'tournament' }">
             <Trophy class="w-4 h-4" /> Torneios
           </router-link>
+          
           <router-link to="/admin/sportbook" class="nav-item" :class="{ active: activeTab === 'sportbook' }">
             <LayoutDashboard class="w-4 h-4" /> Sportbook
           </router-link>
+          
           <router-link to="/admin/casino" class="nav-item" :class="{ active: activeTab === 'casino' }">
             <Dices class="w-4 h-4" /> Cassino
           </router-link>
+
+          <router-link to="/admin/messages" class="nav-item" :class="{ active: activeTab === 'system' }">
+            <ShieldAlert class="w-4 h-4" /> Admin
+          </router-link>
+
           <router-link to="/admin/config" class="nav-item" :class="{ active: activeTab === 'config' }">
             <Settings class="w-4 h-4" /> Config
           </router-link>
         </nav>
+        
         <div class="user-area">Admin</div>
       </header>
 
       <div class="flex flex-1 overflow-hidden">
         <aside class="sidebar">
           <div class="menu-title">MÓDULO {{ activeTab.toUpperCase() }}</div>
+          
           <nav class="side-menu">
-            <router-link v-for="item in sidebarMenus" :key="item.label" :to="item.to" class="side-item" :class="{ 'disabled': item.disabled }">
+            <router-link 
+              v-for="item in sidebarMenus" 
+              :key="item.label" 
+              :to="item.to" 
+              class="side-item" 
+              :class="{ 'disabled': item.disabled }"
+            >
               {{ item.label }}
             </router-link>
           </nav>
+          
           <div class="mt-auto p-4 border-t border-gray-700">
             <router-link to="/" class="side-item logout">
               <LogOut class="w-4 h-4" /> Sair do Painel
@@ -91,6 +123,7 @@ const sidebarMenus = computed(() => {
 </template>
 
 <style scoped>
+/* Mantive seus estilos originais */
 .admin-layout { display: flex; height: 100vh; background-color: #121214; color: #e1e1e6; }
 .admin-topbar { height: 60px; background-color: #202024; border-bottom: 1px solid #323238; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; flex-shrink: 0; }
 .logo-area { font-weight: 900; color: #ffd700; letter-spacing: 1px; }

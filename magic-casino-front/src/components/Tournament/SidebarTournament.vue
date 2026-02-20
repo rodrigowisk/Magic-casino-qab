@@ -3,12 +3,13 @@ import { ref, onMounted, watch, computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { 
     ChevronDown, MapPin, Star,
-    Trophy, ArrowLeftCircle, 
-    Swords 
-    // History removido das importações
+    Trophy, AlertTriangle
 } from 'lucide-vue-next';
-import SportsService from '../../services/SportsService';
+
+// ✅ CORREÇÃO 1: Usando o Service correto (o mesmo que você enviou)
+import SportbookService from '../../services/Sportbook/SportbookService';
 import TournamentService from '../../services/Tournament/TournamentService';
+
 import { getFlag } from '../../utils/flags'; 
 import { normalizeCountryName } from '../../utils/countryTranslations';
 import { useFavoritesStore } from '../../stores/useFavoritesStore';
@@ -25,7 +26,6 @@ const debugInfo = ref('');
 
 // --- CONTROLE DE EXIBIÇÃO ---
 const isSportsMenuOpen = ref(true); 
-const canShowSportsButton = ref(false); 
 
 // --- DADOS DO TORNEIO ---
 const tournamentName = ref('');
@@ -34,7 +34,7 @@ const tournamentName = ref('');
 const isFavoritesExpanded = ref(true); 
 const expandedFavoriteCountries = ref<Set<string>>(new Set()); 
 
-// --- DADOS ---
+// --- DADOS COMPUTADOS ---
 const tournamentId = computed(() => {
     const id = Number(route.params.id);
     return isNaN(id) ? null : id;
@@ -72,16 +72,7 @@ const mapSportToKey = (name: string): string => {
     return 'soccer'; 
 };
 
-// --- NAVEGAÇÃO ---
-const goBackToLobby = () => router.push('/tournaments');
-
-const goToMyTournaments = () => {
-    const currentId = route.params.id || '0';
-    router.push(`/tournament/${currentId}/history`);
-};
-
-// Função goToHistory removida pois era redundante
-
+// --- AÇÕES ---
 const goToLeague = (leagueName: string) => { 
     if (!tournamentId.value) return;
     router.push({ 
@@ -106,23 +97,26 @@ const toggleLeagueFavorite = (leagueName: string, event: Event) => {
     favStore.toggleFavorite(leagueName, currentSportKey.value);
 };
 
+// --- GET USER ID (Limpo e Seguro) ---
 const getUserId = () => {
     try {
-        const userStr = localStorage.getItem('user');
-        if (userStr) {
-            const user = JSON.parse(userStr);
-            return user.id || user.Id || user.userId || '';
+        const stored = localStorage.getItem('user') || localStorage.getItem('user_data') || localStorage.getItem('session');
+        if (stored) {
+            const userData = JSON.parse(stored);
+            const rawId = userData.id || userData.Id || userData.userId || userData.userName || userData.user_name || userData.cpf || userData.Cpf || userData.code || userData.Code || '';
+            // Remove aspas extras se houver e espaços
+            return String(rawId).replace(/['"]/g, '').trim();
         }
-        return localStorage.getItem('userId') || '';
-    } catch (e) { return ''; }
+        const simpleId = localStorage.getItem('userId');
+        return simpleId ? String(simpleId).replace(/['"]/g, '').trim() : '';
+    } catch (e) { 
+        console.error("Erro user:", e); 
+        return '';
+    }
 };
 
 const fetchAndGroupLeagues = async () => {
-    if (isHistoryPage.value) {
-        canShowSportsButton.value = false;
-        return;
-    }
-
+    if (isHistoryPage.value) return;
     if (!tournamentId.value) {
         countriesList.value = [];
         tournamentName.value = '';
@@ -130,30 +124,33 @@ const fetchAndGroupLeagues = async () => {
     }
 
     loading.value = true;
-    canShowSportsButton.value = false;
     isSportsMenuOpen.value = true; 
-
     countriesList.value = [];
-    expandedCountries.value.clear();
     debugInfo.value = '';
 
+    console.group("🕵️ DEBUG MENU TORNEIO");
+
     try {
+        const userId = getUserId();
+        const tRes = await TournamentService.getTournament(tournamentId.value, userId);
+        
         let allowedLeagueIds = new Set<string>();
         let isRestricted = false;
         let tournamentEndTime = 0; 
-        const userId = getUserId();
-        
-        const tRes = await TournamentService.getTournament(tournamentId.value, userId);
-        
+
         if (tRes.data) {
+            console.log("✅ Torneio:", tRes.data.name);
             tournamentName.value = tRes.data.name; 
             currentSportDisplay.value = tRes.data.sport || 'Futebol';
             currentSportKey.value = mapSportToKey(currentSportDisplay.value);
-            
+
             if (tRes.data.endDate) {
-                tournamentEndTime = new Date(tRes.data.endDate).getTime();
+                const endObj = new Date(tRes.data.endDate);
+                if (endObj.getHours() === 0) endObj.setHours(23, 59, 59, 999);
+                tournamentEndTime = endObj.getTime();
             }
 
+            // --- LÓGICA DE RESTRIÇÃO ---
             if (tRes.data.filterRules) {
                 try {
                     const rules = JSON.parse(tRes.data.filterRules);
@@ -161,52 +158,74 @@ const fetchAndGroupLeagues = async () => {
                         mapSportToKey(s.key) === currentSportKey.value
                     );
                     
-                    if (sportRules?.leagues) {
+                    if (sportRules?.leagues && Array.isArray(sportRules.leagues) && sportRules.leagues.length > 0) {
                         sportRules.leagues.forEach((l: any) => allowedLeagueIds.add(String(l.id)));
                         isRestricted = true;
+                        console.log("🔒 Modo Restrito Ativado. Ligas permitidas:", allowedLeagueIds.size);
                     }
                 } catch (e) { console.error("Erro regras:", e); }
             }
         }
 
-        const response = await SportsService.getEvents(currentSportKey.value, 1, 3000);
+        // ✅ CORREÇÃO 2: Chamando getEventsBySport (método correto do seu SportbookService)
+        // Pedindo 5000 jogos para garantir que venha tudo
+        const response = await SportbookService.getEventsBySport(currentSportKey.value, 5000);
         let events = Array.isArray(response) ? response : (response.data || []);
         
+        console.log(`📡 Jogos recebidos da API: ${events.length}`);
+
         if (events && events.length > 0) {
-            const now = new Date().getTime(); 
+            
+            const TECH_BUFFER = 45 * 60 * 1000; // Aumentei tolerância para 45min
 
             const filteredEvents = events.filter((e: any) => {
+                // Normaliza o ID da liga para String para comparar com segurança
+                const lid = String(e.leagueId || e.LeagueId || e.league?.id || '').trim();
                 const gameTime = new Date(e.commenceTime).getTime();
-                const isWithinTime = gameTime >= now && (tournamentEndTime === 0 || gameTime <= tournamentEndTime);
 
-                if (!isWithinTime) return false;
-
-                if (isRestricted) {
-                    const lid = e.leagueId || e.LeagueId || e.league?.id || (e.league && e.league.id);
-                    if (!lid || !allowedLeagueIds.has(String(lid))) return false;
+                // 1. Filtro de Data (Fim do Torneio)
+                if (tournamentEndTime > 0 && gameTime > (tournamentEndTime + TECH_BUFFER)) {
+                    return false;
                 }
+
+                // 2. Filtro de Liga (Apenas se for restrito E o jogo tiver ID de liga)
+                // Se o jogo não tem ID de liga (lid vazio), nós o mantemos por segurança para não sumir jogos importantes
+                if (isRestricted && lid !== '' && !allowedLeagueIds.has(lid)) {
+                    return false;
+                }
+                
                 return true;
             });
-            events = filteredEvents;
+            
+            console.log(`🎯 Jogos após filtro: ${filteredEvents.length}`);
+            
+            // Fallback: Se o filtro matou tudo, mas não deveria (erro de config), mostra o original
+            if (filteredEvents.length === 0 && events.length > 0 && isRestricted) {
+                console.warn("⚠️ O filtro removeu TODOS os jogos. Exibindo lista completa por segurança.");
+                events = events; // Restaura
+            } else {
+                events = filteredEvents;
+            }
         }
 
         if (events && events.length > 0) {
-            const groups: Record<string, Set<string>> = {};
-            const leagueOriginalNames: Record<string, string> = {};
+             const groups: Record<string, Set<string>> = {};
+             const leagueOriginalNames: Record<string, string> = {};
 
-            events.forEach((event: any) => {
+             events.forEach((event: any) => {
                 const rawLeague = event.league || event.League || event.leagueName || 'Outros';
                 const rawCountry = event.country || event.Country || event.countryName || 'Internacional';
-                const { country: displayCountry, league: cleanLeague } = normalizeCountryName(rawCountry, rawLeague);
+                
+                const { country: displayCountry, league: cleanLeague } = normalizeCountryName(String(rawCountry), String(rawLeague));
 
                 if (!groups[displayCountry]) groups[displayCountry] = new Set();
                 groups[displayCountry].add(cleanLeague);
                 leagueOriginalNames[cleanLeague] = rawLeague; 
             });
 
-            const sortedCountries = Object.keys(groups).sort();
-            
-            if (sortedCountries.includes('Brasil')) {
+             const sortedCountries = Object.keys(groups).sort();
+             
+             if (sortedCountries.includes('Brasil')) {
                  const idx = sortedCountries.findIndex(c => c === 'Brasil');
                  if (idx !== -1) {
                      const removed = sortedCountries.splice(idx, 1)[0];
@@ -215,34 +234,28 @@ const fetchAndGroupLeagues = async () => {
                  expandedFavoriteCountries.value.add('Brasil');
             }
 
-            countriesList.value = sortedCountries.map(country => ({
+             countriesList.value = sortedCountries.map(country => ({
                 name: country,
-                leagues: Array.from(groups[country] || []).sort().map(lgName => ({
-                    displayName: lgName,
-                    queryName: leagueOriginalNames[lgName] || lgName
+                leagues: Array.from(groups[country] || []).sort().map(lg => ({ 
+                    displayName: lg, 
+                    queryName: leagueOriginalNames[lg] || lg 
                 }))
             }));
         } else {
             countriesList.value = [];
-            debugInfo.value = 'Nenhum jogo disponível neste período.';
+            debugInfo.value = 'Nenhum jogo disponível.';
         }
 
     } catch (e) {
-        console.error("Erro menu torneio:", e);
+        console.error("❌ Erro Menu:", e);
+        debugInfo.value = 'Erro ao carregar menu.';
     } finally {
+        console.groupEnd();
         loading.value = false;
-        setTimeout(() => {
-            if (countriesList.value.length > 0) {
-                canShowSportsButton.value = true;
-            }
-        }, 800);
     }
 };
 
 watch(() => route.params.id, fetchAndGroupLeagues, { immediate: true });
-watch(() => route.path, () => {
-    if (isHistoryPage.value) canShowSportsButton.value = false;
-});
 
 onMounted(() => {
     favStore.fetchFavorites();
@@ -250,43 +263,13 @@ onMounted(() => {
 </script>
 
 <template>
-  <aside 
-    class="bg-[#0f172a] flex-shrink-0 overflow-y-auto border-r border-white/5 custom-scrollbar h-full w-full md:w-64 transition-all"
+  <div 
+    class="bg-[#0f172a] flex-shrink-0 overflow-y-auto custom-scrollbar h-full w-full transition-all"
   >
-    
     <div v-if="!isLobby" class="flex flex-col h-full">
         
-        <div class="bg-blue-600/10 border-b border-blue-500/20 px-3 py-2 flex flex-col justify-center gap-1.5 shrink-0 min-h-[120px] relative">
-            
-            <div class="flex items-center gap-2 mb-1 pb-1.5 border-b border-blue-500/10">
-                <Trophy class="w-4 h-4 text-blue-400" />
-                <span class="text-[11px] font-bold uppercase text-blue-400 tracking-wide">Menu Torneio</span>
-            </div>
-            
-            <button @click="goToMyTournaments" class="flex items-center gap-2 text-[10px] font-bold text-gray-300 hover:text-white transition-colors bg-black/20 hover:bg-blue-600/20 py-2 px-3 rounded w-full text-left border border-white/5 hover:border-blue-500/30">
-                <Swords class="w-3.5 h-3.5 text-yellow-500" /> Meus Torneios
-            </button>
-
-            <div class="h-px bg-blue-500/10 w-full my-0.5"></div>
-
-            <button @click="goBackToLobby" class="flex items-center gap-2 text-[10px] font-bold text-red-400 hover:text-red-300 transition-colors bg-black/20 hover:bg-red-500/10 py-2 px-3 rounded w-full justify-center border border-transparent hover:border-red-500/20">
-                <ArrowLeftCircle class="w-3.5 h-3.5" /> Sair para o Lobby
-            </button>
-        </div>
-
         <div v-if="!isHistoryPage" class="p-4 flex-1 overflow-hidden flex flex-col">
-            <transition name="fade">
-                <div v-if="canShowSportsButton" class="mb-4 shrink-0">
-                    <button 
-                        @click="isSportsMenuOpen = !isSportsMenuOpen" 
-                        class="w-full flex items-center justify-between bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white text-[10px] font-bold uppercase tracking-wider py-2.5 px-3 rounded shadow-lg shadow-blue-900/20 border border-blue-400/20 transition-all group active:scale-[0.98]"
-                    >
-                        <span class="drop-shadow-md">Mostrar Menu Esportes</span>
-                        <ChevronDown class="w-4 h-4 transition-transform duration-300 text-white/80" :class="isSportsMenuOpen ? 'rotate-180' : ''" />
-                    </button>
-                </div>
-            </transition>
-
+            
             <transition name="expand">
                 <div v-show="isSportsMenuOpen" class="flex-1 overflow-y-auto custom-scrollbar pb-10">
                     
@@ -360,9 +343,12 @@ onMounted(() => {
                 </div>
             </transition>
 
-            <div v-if="!loading && countriesList.length === 0" class="pl-2 mt-4">
-                 <span v-if="debugInfo" class="text-xs text-red-500/50 italic block">{{ debugInfo }}</span>
-                 <span v-else class="text-xs text-slate-500 italic">Nenhum jogo encontrado.</span>
+            <div v-if="!loading && countriesList.length === 0" class="pl-2 mt-4 flex flex-col items-center text-center opacity-50">
+                 <AlertTriangle class="w-8 h-8 text-yellow-500 mb-2" />
+                 <span v-if="debugInfo" class="text-xs text-red-500/80 italic block">{{ debugInfo }}</span>
+                 <span v-else class="text-xs text-slate-500 italic">
+                    Nenhum jogo encontrado para os critérios deste torneio.
+                 </span>
             </div>
         </div>
 
@@ -375,7 +361,7 @@ onMounted(() => {
         </p>
     </div>
 
-  </aside>
+  </div>
 </template>
 
 <style scoped>
@@ -383,15 +369,6 @@ onMounted(() => {
 .custom-scrollbar::-webkit-scrollbar-track { background: #0f212e; }
 .custom-scrollbar::-webkit-scrollbar-thumb { background: #2f4553; border-radius: 4px; }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #557086; }
-
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.5s ease;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
 
 .expand-enter-active,
 .expand-leave-active {

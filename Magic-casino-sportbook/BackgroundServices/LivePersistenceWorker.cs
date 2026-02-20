@@ -61,7 +61,7 @@ namespace Magic_casino_sportbook.BackgroundServices
             var gamesToUpdate = new List<SportsEvent>();
             var processedIds = new List<RedisValue>();
 
-            // 2. Coleta dados do Redis (Sem ir no banco ainda!)
+            // 2. Coleta dados do Redis
             foreach (var redisValue in dirtyIdsRedis)
             {
                 var gameId = redisValue.ToString();
@@ -74,6 +74,17 @@ namespace Magic_casino_sportbook.BackgroundServices
                         var game = JsonSerializer.Deserialize<SportsEvent>(json!, _jsonOptions);
                         if (game != null)
                         {
+                            // 🛡️ SANITIZAÇÃO DE MEMÓRIA 🛡️
+                            // Se o Redis disser que o tempo é "Ended" ou "FT", força o status para "Ended"
+                            // Isso corrige dados contraditórios vindos do updater
+                            if (game.GameTime == "FT" || game.GameTime == "Ended" || game.GameTime == "90+")
+                            {
+                                if (game.Status == "Live")
+                                {
+                                    game.Status = "Ended";
+                                }
+                            }
+
                             gamesToUpdate.Add(game);
                             processedIds.Add(redisValue);
                         }
@@ -82,7 +93,7 @@ namespace Magic_casino_sportbook.BackgroundServices
                 }
                 else
                 {
-                    // Se não tá no Redis mas tá na lista de sujos, removemos da lista de sujos depois
+                    // Se não tá no Redis mas tá na lista de sujos, removemos da lista de sujos
                     processedIds.Add(redisValue);
                 }
             }
@@ -94,7 +105,6 @@ namespace Magic_casino_sportbook.BackgroundServices
                     var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
                     // 3. EXECUTAR BULK UPDATE (RAW SQL)
-                    // Isso é 100x mais rápido que o EF Core ChangeTracker
                     await ExecutePostgresBulkUpdate(context, gamesToUpdate);
                 }
 
@@ -110,9 +120,6 @@ namespace Magic_casino_sportbook.BackgroundServices
 
         private async Task ExecutePostgresBulkUpdate(AppDbContext context, List<SportsEvent> games)
         {
-            // Construção da Query: UPDATE ... FROM (VALUES ...)
-            // Isso permite atualizar centenas de linhas em 1 comando.
-
             var sb = new StringBuilder();
             var parameters = new List<object>();
             var paramIndex = 0;
@@ -120,7 +127,12 @@ namespace Magic_casino_sportbook.BackgroundServices
             sb.Append("UPDATE \"SportsEvents\" AS s SET ");
             sb.Append("\"Score\" = v.score, ");
             sb.Append("\"GameTime\" = v.time, ");
-            sb.Append("\"Status\" = v.status, ");
+
+            // 🔥🔥🔥 AQUI ESTÁ A PROTEÇÃO NO BANCO DE DADOS 🔥🔥🔥
+            // A lógica CASE WHEN diz: 
+            // "Se o jogo no banco JÁ ESTÁ 'Ended', MANTENHA 'Ended'. Caso contrário, use o valor novo (v.status)."
+            sb.Append("\"Status\" = CASE WHEN s.\"Status\" = 'Ended' THEN 'Ended' ELSE v.status END, ");
+
             sb.Append("\"RawOddsHome\" = CAST(v.home AS decimal), ");
             sb.Append("\"RawOddsDraw\" = CAST(v.draw AS decimal), ");
             sb.Append("\"RawOddsAway\" = CAST(v.away AS decimal), ");
@@ -132,11 +144,9 @@ namespace Magic_casino_sportbook.BackgroundServices
                 var g = games[i];
                 if (i > 0) sb.Append(", ");
 
-                // Adiciona placeholders (@p0, @p1, etc)
                 sb.Append($"(@p{paramIndex++}, @p{paramIndex++}, @p{paramIndex++}, @p{paramIndex++}, @p{paramIndex++}, @p{paramIndex++}, @p{paramIndex++}, @p{paramIndex++})");
 
-                // Adiciona valores na lista de parâmetros
-                parameters.Add(g.ExternalId);                               // ID para o WHERE
+                parameters.Add(g.ExternalId);
                 parameters.Add(g.Score ?? "0-0");
                 parameters.Add(g.GameTime ?? "0'");
                 parameters.Add(g.Status ?? "Live");
@@ -146,13 +156,9 @@ namespace Magic_casino_sportbook.BackgroundServices
                 parameters.Add(DateTime.UtcNow);
             }
 
-            // Mapeia as colunas virtuais da tabela VALUES
             sb.Append(") AS v(id, score, time, status, home, draw, away, updated) ");
-
-            // Faz o Join pelo ID Externo (que é o ID da BetsAPI)
             sb.Append("WHERE s.\"ExternalId\" = v.id");
 
-            // Executa o comando RAW
             await context.Database.ExecuteSqlRawAsync(sb.ToString(), parameters.ToArray());
         }
     }

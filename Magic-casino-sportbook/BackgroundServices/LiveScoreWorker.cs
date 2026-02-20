@@ -1,12 +1,14 @@
-﻿using Magic_casino_sportbook.Data;
-using Magic_casino_sportbook.Models;
-using Magic_casino_sportbook.Services;
-using Magic_casino_sportbook.Events; // ✅ Necessário para GameEndedEvent e BetWonEvent
-using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using MassTransit; // ✅ Necessário para IPublishEndpoint
+using Magic_casino_sportbook.Data;
+using Magic_casino_sportbook.Events;
+using Magic_casino_sportbook.Models;
+using Magic_casino_sportbook.Services;
+using Magic_casino_sportbook.Services.Gateways;
+using MassTransit;
+using Microsoft.EntityFrameworkCore;
+using StackExchange.Redis;
 
 namespace Magic_casino_sportbook.BackgroundServices
 {
@@ -14,19 +16,22 @@ namespace Magic_casino_sportbook.BackgroundServices
     {
         private readonly IServiceProvider _serviceProvider;
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly BetsApiHttpService _api;
         private readonly string _betsApiToken;
         private const string BASE_URL = "https://api.b365api.com";
         private readonly JsonSerializerOptions _jsonOptions;
-        private readonly BetsApiGatekeeper _gatekeeper; // ✅ NOVO: Gatekeeper adicionado
+        private readonly BetsApiGatekeeper _gatekeeper;
+        private readonly IConnectionMultiplexer _redis;
 
-        public LiveScoreWorker(IServiceProvider serviceProvider, IHttpClientFactory httpClientFactory, BetsApiGatekeeper gatekeeper)
+        public LiveScoreWorker(IServiceProvider serviceProvider, IHttpClientFactory httpClientFactory, BetsApiHttpService api, BetsApiGatekeeper gatekeeper, IConnectionMultiplexer redis)
         {
             _serviceProvider = serviceProvider;
             _httpClientFactory = httpClientFactory;
-            _gatekeeper = gatekeeper; // ✅ NOVO: Injeção do Gatekeeper
+            _gatekeeper = gatekeeper;
+            _redis = redis;
+            _api = api;
             _betsApiToken = Environment.GetEnvironmentVariable("BETSAPI_TOKEN") ?? "";
 
-            // ✅ JSON Permissivo para evitar erros de tipos (string/int)
             _jsonOptions = new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true,
@@ -39,7 +44,7 @@ namespace Magic_casino_sportbook.BackgroundServices
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             Console.WriteLine("\n-------------------------------------------------------------");
-            Console.WriteLine("🏁 [LIVE SCORE] WORKER GERAL: ATUALIZAÇÃO EM MASSA (10 SEG) 🏁");
+            Console.WriteLine("🏁 [LIVE SCORE] WORKER GERAL: ATUALIZAÇÃO VIA RABBITMQ (10 SEG) 🏁");
             Console.WriteLine("-------------------------------------------------------------\n");
 
             while (!stoppingToken.IsCancellationRequested)
@@ -50,8 +55,6 @@ namespace Magic_casino_sportbook.BackgroundServices
                     {
                         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                         var walletService = scope.ServiceProvider.GetRequiredService<CoreWalletService>();
-
-                        // O RabbitMQ está aqui
                         var publishEndpoint = scope.ServiceProvider.GetRequiredService<IPublishEndpoint>();
 
                         await UpdateAllActiveGamesAsync(context, walletService, publishEndpoint);
@@ -82,7 +85,7 @@ namespace Magic_casino_sportbook.BackgroundServices
 
             if (!allTargetIds.Any()) return;
 
-            Console.WriteLine($"🔍 [WORKER MASSIVO] Verificando status de {allTargetIds.Count} jogos na API...");
+            Console.WriteLine($"🔍 [WORKER] Atualizando {allTargetIds.Count} jogos...");
 
             if (!string.IsNullOrEmpty(_betsApiToken))
             {
@@ -98,18 +101,15 @@ namespace Magic_casino_sportbook.BackgroundServices
         private async Task FetchAndSettleFromApi(List<string> matchIds, AppDbContext context, CoreWalletService walletService, IPublishEndpoint publishEndpoint)
         {
             var idsString = string.Join(",", matchIds);
-            var client = _httpClientFactory.CreateClient();
-            client.Timeout = TimeSpan.FromSeconds(20); // ✅ NOVO: Timeout ajustado para 20s
-            var url = $"{BASE_URL}/v1/bet365/result?token={_betsApiToken}&event_id={idsString}";
+            var url = $"/v1/bet365/result?event_id={idsString}";
 
             try
             {
-                // ✅ NOVO: Espera na Fila VIP (Prioridade para o Ao Vivo)
                 await _gatekeeper.WaitAsync(isLivePriority: true);
+                var response = await _api.GetAsync(url, isLivePriority: true);
 
-                var response = await client.GetAsync(url);
+                if (response == null) return;
 
-                // Proteção Anti-429
                 if ((int)response.StatusCode == 429)
                 {
                     Console.WriteLine("⛔ [RESULT LIMIT] 429 Detectado. Pausando 5s...");
@@ -126,45 +126,80 @@ namespace Magic_casino_sportbook.BackgroundServices
                     {
                         foreach (var res in data.Results)
                         {
-                            // ✅ 1. EXTRAÇÃO DE ESTATÍSTICAS (RODA PARA TODOS OS JOGOS DO BATCH)
-                            if (res.Stats.HasValue && res.Stats.Value.ValueKind == JsonValueKind.Object)
+                            var gameDb = await context.SportsEvents
+                                .AsNoTracking()
+                                .FirstOrDefaultAsync(g => g.ExternalId == res.ActualId);
+
+                            bool hasStats = res.Stats.HasValue && res.Stats.Value.ValueKind == JsonValueKind.Object;
+
+                            var currentStats = await ProcessAndReturnLiveStats(context, res.ActualId, res.Stats, res.Score, res.TimeStatus);
+
+                            if (currentStats != null)
                             {
-                                await ProcessLiveStats(context, res.ActualId, res.Stats.Value, res.Score, res.TimeStatus);
+                                await publishEndpoint.Publish(new LiveGameUpdatedEvent
+                                {
+                                    GameId = res.ActualId,
+                                    Score = res.Score,
+
+                                    Status = "Live",
+                                    LastUpdate = DateTime.UtcNow,
+                                    GameTime = null,
+                                    RawOddsHome = null,
+                                    RawOddsDraw = null,
+                                    RawOddsAway = null,
+                                    HomeScore = currentStats.HomeScore,
+                                    AwayScore = currentStats.AwayScore,
+                                    HomeCorners = currentStats.HomeCorners,
+                                    AwayCorners = currentStats.AwayCorners,
+                                    HomeYellowCards = hasStats ? currentStats.HomeYellowCards : null,
+                                    AwayYellowCards = hasStats ? currentStats.AwayYellowCards : null,
+                                    HomeRedCards = hasStats ? currentStats.HomeRedCards : null,
+                                    AwayRedCards = hasStats ? currentStats.AwayRedCards : null,
+                                    HomeAttacks = currentStats.HomeAttacks,
+                                    AwayAttacks = currentStats.AwayAttacks,
+                                    HomeDangerousAttacks = currentStats.HomeDangerousAttacks,
+                                    AwayDangerousAttacks = currentStats.AwayDangerousAttacks,
+                                    HomeOnTarget = currentStats.HomeOnTarget,
+                                    AwayOnTarget = currentStats.AwayOnTarget,
+                                    HomeOffTarget = currentStats.HomeOffTarget,
+                                    AwayOffTarget = currentStats.AwayOffTarget
+                                });
                             }
 
-                            // ✅ 2. LÓGICA ORIGINAL DE ENCERRAMENTO
                             if (res.TimeStatus == "3" && !string.IsNullOrEmpty(res.Score))
                             {
-                                var gameDb = await context.SportsEvents.FirstOrDefaultAsync(g => g.ExternalId == res.ActualId);
+                                var gameToEdit = await context.SportsEvents.FirstOrDefaultAsync(g => g.ExternalId == res.ActualId);
 
-                                if (gameDb != null)
+                                if (gameToEdit != null)
                                 {
-                                    // DETECTOU QUE O JOGO ACABOU AGORA
-                                    if (gameDb.Status != "Ended")
+                                    if (gameToEdit.Status != "Ended")
                                     {
-                                        Console.WriteLine($"🏁 [FIM DETECTADO] {gameDb.HomeTeam} vs {gameDb.AwayTeam} -> Ended ({res.Score})");
+                                        Console.WriteLine($"🏁 [FIM DETECTADO] {gameToEdit.HomeTeam} vs {gameToEdit.AwayTeam} -> Ended ({res.Score})");
+                                        gameToEdit.Status = "Ended";
+                                        gameToEdit.Score = res.Score;
+                                        gameToEdit.GameTime = "FT";
+                                        context.Entry(gameToEdit).State = EntityState.Modified;
 
-                                        // 1. Atualiza no Banco Local
-                                        gameDb.Status = "Ended";
-                                        gameDb.Score = res.Score;
-                                        gameDb.GameTime = "FT";
-                                        context.Entry(gameDb).State = EntityState.Modified;
+                                        try
+                                        {
+                                            var dbRedis = _redis.GetDatabase();
+                                            await dbRedis.KeyDeleteAsync($"live_game:{gameToEdit.ExternalId}");
+                                            await dbRedis.SetRemoveAsync("dirty_live_games", gameToEdit.ExternalId);
+                                            Console.WriteLine($"🧹 [REDIS] Jogo {gameToEdit.ExternalId} removido do cache.");
+                                        }
+                                        catch (Exception exRedis) { Console.WriteLine($"⚠️ Erro Redis: {exRedis.Message}"); }
 
-                                        // 🚀 2. PUBLICA O EVENTO PARA O MÓDULO DE TORNEIOS (RABBITMQ)
-                                        // Isso avisa o TournamentWorker que o jogo acabou, sem acoplamento.
                                         await publishEndpoint.Publish(new GameEndedEvent
                                         {
-                                            GameId = gameDb.ExternalId,
-                                            HomeTeam = gameDb.HomeTeam,
-                                            AwayTeam = gameDb.AwayTeam,
+                                            GameId = gameToEdit.ExternalId,
+                                            HomeTeam = gameToEdit.HomeTeam,
+                                            AwayTeam = gameToEdit.AwayTeam,
                                             Score = res.Score,
-                                            SportKey = gameDb.SportKey,
+                                            SportKey = gameToEdit.SportKey,
                                             EndedAt = DateTime.UtcNow
                                         });
-                                        Console.WriteLine($"🐰 [RABBITMQ] Evento de Fim de Jogo Publicado: {gameDb.ExternalId}");
                                     }
 
-                                    // Processa apostas simples (Sportbook)
                                     var betsForGame = await context.BetSelections
                                         .Include(b => b.Bet)
                                         .Where(b => b.MatchId == res.ActualId && b.Status == "pending")
@@ -189,10 +224,7 @@ namespace Magic_casino_sportbook.BackgroundServices
             }
         }
 
-        // ==============================================================================
-        // 📊 PARSER DE ESTATÍSTICAS (NOVO CÓDIGO)
-        // ==============================================================================
-        private async Task ProcessLiveStats(AppDbContext context, string gameId, JsonElement statsNode, string score, string timeStatus)
+        private async Task<LiveGameStat> ProcessAndReturnLiveStats(AppDbContext context, string gameId, JsonElement? statsNode, string score, string timeStatus)
         {
             var statDb = await context.Set<LiveGameStat>().FirstOrDefaultAsync(s => s.GameId == gameId);
             bool isNew = false;
@@ -212,57 +244,65 @@ namespace Magic_casino_sportbook.BackgroundServices
 
             statDb.IsFinished = (timeStatus == "3" || timeStatus == "4");
 
-            // Extração cega: Se não existir no JSON, retorna 0 com segurança.
-            statDb.HomeCorners = GetStatValueSafe(statsNode, "corners", 0);
-            statDb.AwayCorners = GetStatValueSafe(statsNode, "corners", 1);
+            // ✅ FIX: Verifica se é nulo antes de usar
+            if (statsNode.HasValue && statsNode.Value.ValueKind == JsonValueKind.Object)
+            {
+                // Converte para JsonElement não-nulo
+                JsonElement node = statsNode.Value;
 
-            statDb.HomeYellowCards = GetStatValueSafe(statsNode, "yellowcards", 0);
-            statDb.AwayYellowCards = GetStatValueSafe(statsNode, "yellowcards", 1);
-
-            statDb.HomeRedCards = GetStatValueSafe(statsNode, "redcards", 0);
-            statDb.AwayRedCards = GetStatValueSafe(statsNode, "redcards", 1);
-
-            statDb.HomeDangerousAttacks = GetStatValueSafe(statsNode, "dangerous_attacks", 0);
-            statDb.AwayDangerousAttacks = GetStatValueSafe(statsNode, "dangerous_attacks", 1);
-
-            statDb.HomeAttacks = GetStatValueSafe(statsNode, "attacks", 0);
-            statDb.AwayAttacks = GetStatValueSafe(statsNode, "attacks", 1);
-
-            statDb.HomePossession = GetStatValueSafe(statsNode, "possession_rt", 0);
-            statDb.AwayPossession = GetStatValueSafe(statsNode, "possession_rt", 1);
-
-            statDb.HomeOnTarget = GetStatValueSafe(statsNode, "on_target", 0);
-            statDb.AwayOnTarget = GetStatValueSafe(statsNode, "on_target", 1);
-
-            statDb.HomeOffTarget = GetStatValueSafe(statsNode, "off_target", 0);
-            statDb.AwayOffTarget = GetStatValueSafe(statsNode, "off_target", 1);
+                // Passa o objeto seguro para o método auxiliar
+                statDb.HomeCorners = GetStatValueSafe(node, "corners", 0);
+                statDb.AwayCorners = GetStatValueSafe(node, "corners", 1);
+                statDb.HomeYellowCards = GetStatValueSafe(node, "yellowcards", 0);
+                statDb.AwayYellowCards = GetStatValueSafe(node, "yellowcards", 1);
+                statDb.HomeRedCards = GetStatValueSafe(node, "redcards", 0);
+                statDb.AwayRedCards = GetStatValueSafe(node, "redcards", 1);
+                statDb.HomeDangerousAttacks = GetStatValueSafe(node, "dangerous_attacks", 0);
+                statDb.AwayDangerousAttacks = GetStatValueSafe(node, "dangerous_attacks", 1);
+                statDb.HomeAttacks = GetStatValueSafe(node, "attacks", 0);
+                statDb.AwayAttacks = GetStatValueSafe(node, "attacks", 1);
+                statDb.HomePossession = GetStatValueSafe(node, "possession_rt", 0);
+                statDb.AwayPossession = GetStatValueSafe(node, "possession_rt", 1);
+                statDb.HomeOnTarget = GetStatValueSafe(node, "on_target", 0);
+                statDb.AwayOnTarget = GetStatValueSafe(node, "on_target", 1);
+                statDb.HomeOffTarget = GetStatValueSafe(node, "off_target", 0);
+                statDb.AwayOffTarget = GetStatValueSafe(node, "off_target", 1);
+            }
 
             statDb.LastUpdated = DateTime.UtcNow;
 
             if (isNew) context.Set<LiveGameStat>().Add(statDb);
             else context.Entry(statDb).State = EntityState.Modified;
+
+            return statDb;
         }
 
+        private string GetGameStatusName(string timeStatus) => timeStatus switch
+        {
+            "1" => "Live",
+            "2" => "HT",
+            "3" => "FIM",
+            "4" => "Adiado",
+            "5" => "Cancelado",
+            "7" => "Interrompido",
+            _ => "Live"
+        };
+
+        // ✅ Método auxiliar espera JsonElement (obrigatório)
         private int GetStatValueSafe(JsonElement node, string key, int index)
         {
             try
             {
-                if (node.TryGetProperty(key, out var arr) && arr.ValueKind == JsonValueKind.Array)
+                if (node.TryGetProperty(key, out var arr) && arr.ValueKind == JsonValueKind.Array && arr.GetArrayLength() > index)
                 {
-                    if (arr.GetArrayLength() > index)
-                    {
-                        var valStr = arr[index].GetString();
-                        if (int.TryParse(valStr, out int val)) return val;
-                    }
+                    var valStr = arr[index].GetString();
+                    if (int.TryParse(valStr, out int val)) return val;
                 }
             }
             catch { }
             return 0;
         }
 
-        // ==============================================================================
-        // LÓGICA DE RESOLUÇÃO DE APOSTAS (MANTIDA ORIGINAL)
-        // ==============================================================================
         private void ProcessSelectionResult(BetSelection selection, string score)
         {
             if (selection.Status != "pending") return;
@@ -270,9 +310,7 @@ namespace Magic_casino_sportbook.BackgroundServices
             bool won = CheckWinner(selection.MarketName, selection.OutcomeName, score);
             selection.Status = won ? "Won" : "Lost";
             selection.IsWinner = won;
-
-            if (won) Console.WriteLine($"   ✅ Aposta VENCEDORA: {selection.MarketName} -> {selection.OutcomeName} (Placar: {score})");
-            else Console.WriteLine($"   ❌ Aposta PERDIDA: {selection.MarketName} -> {selection.OutcomeName} (Placar: {score})");
+            if (won) Console.WriteLine($"   ✅ Aposta VENCEDORA: {selection.MarketName} -> {selection.OutcomeName}");
         }
 
         private bool CheckWinner(string market, string outcome, string score)
@@ -324,7 +362,6 @@ namespace Magic_casino_sportbook.BackgroundServices
         private async Task CheckAndSettleTicketAsync(Bet ticket, AppDbContext context, CoreWalletService walletService, IPublishEndpoint publishEndpoint)
         {
             var allSelections = await context.BetSelections.Where(s => s.BetId == ticket.Id).ToListAsync();
-
             if (allSelections.Any(s => s.Status == "pending")) return;
 
             if (allSelections.Any(s => s.Status == "Lost"))
@@ -339,11 +376,9 @@ namespace Magic_casino_sportbook.BackgroundServices
 
             if (allSelections.All(s => s.Status == "Won") && ticket.Status != "Won")
             {
-                Console.WriteLine($"🏆 [BILHETE VENCEU] ID: {ticket.Id} - Enviando para pagamento...");
-
+                Console.WriteLine($"🏆 [BILHETE VENCEU] ID: {ticket.Id}");
                 ticket.Status = "Won";
                 context.Entry(ticket).State = EntityState.Modified;
-
                 await publishEndpoint.Publish(new BetWonEvent
                 {
                     BetId = ticket.Id,
@@ -359,26 +394,34 @@ namespace Magic_casino_sportbook.BackgroundServices
     {
         [JsonPropertyName("success")]
         public int Success { get; set; }
-
         [JsonPropertyName("results")]
         public List<B365ResultItem> Results { get; set; }
+    }
+
+    public class NumberToStringConverter : JsonConverter<string>
+    {
+        public override string Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.Number) return reader.TryGetInt64(out long l) ? l.ToString() : reader.GetDouble().ToString();
+            if (reader.TokenType == JsonTokenType.String) return reader.GetString();
+            using (JsonDocument document = JsonDocument.ParseValue(ref reader)) return document.RootElement.ToString();
+        }
+        public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options) => writer.WriteStringValue(value);
     }
 
     public class B365ResultItem
     {
         [JsonPropertyName("bet365_id")]
         public string Bet365Id { get; set; }
-
         [JsonPropertyName("id")]
         public string FallbackId { get; set; }
         public string ActualId => !string.IsNullOrEmpty(Bet365Id) ? Bet365Id : FallbackId;
-
         [JsonPropertyName("ss")]
+        [JsonConverter(typeof(NumberToStringConverter))]
         public string Score { get; set; }
-
         [JsonPropertyName("time_status")]
+        [JsonConverter(typeof(NumberToStringConverter))]
         public string TimeStatus { get; set; }
-
         [JsonPropertyName("stats")]
         public JsonElement? Stats { get; set; }
     }

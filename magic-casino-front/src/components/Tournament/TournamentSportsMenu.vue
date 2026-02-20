@@ -75,7 +75,6 @@ const availableSports = computed(() => {
     const rawGames = props.games || []; 
     const safeGames = Array.isArray(rawGames) ? rawGames : [];
 
-    // Se não tem jogos e temos um esporte selecionado (que não seja 'all'), mantemos ele.
     if (safeGames.length === 0) {
         if (props.selectedSport && props.selectedSport !== 'all') {
             const preSelected = ALL_SPORTS_CONFIG.find(s => s.key === props.selectedSport);
@@ -119,8 +118,6 @@ const availableSports = computed(() => {
     return result;
 });
 
-// --- LÓGICA DE LAYOUT COMPACTO ---
-// Se tiver 2 ou menos esportes, consideramos "compacto" e tentamos colocar na mesma linha.
 const isMobileCompact = computed(() => {
   return availableSports.value.length <= 2;
 });
@@ -254,7 +251,7 @@ const selectSport = (key: string) => {
                     v-for="sport in availableSports" 
                     :key="sport.key"
                     @click="selectSport(sport.key)"
-                    class="group flex flex-col items-center justify-center min-w-[50px] h-[50px] rounded-lg transition-all duration-300 relative flex-shrink-0 cursor-pointer"
+                    class="group flex flex-col items-center justify-center min-w-[65px] md:min-w-[50px] h-[50px] rounded-lg transition-all duration-300 relative flex-shrink-0 cursor-pointer"
                     :class="[
                         { 'pointer-events-none': isDragging },
                         selectedSport === sport.key 
@@ -274,7 +271,7 @@ const selectSport = (key: string) => {
                         />
                         <span 
                             v-if="sport.count > 0"
-                            class="absolute -top-2 -right-3 min-w-[14px] h-[14px] flex items-center justify-center bg-[#1e293b] text-[8px] font-bold rounded-full border border-white/10 shadow-sm transition-colors"
+                            class="absolute -top-2 -right-3 min-w-[14px] h-[14px] flex items-center justify-center bg-[#1e293b] text-[8px] font-bold rounded-full border border-white/10 shadow-sm transition-colors px-1"
                             :class="selectedSport === sport.key ? 'text-[#00FF7F] border-[#00FF7F]/30' : 'text-slate-400 group-hover:text-white'"
                         >
                             {{ sport.count }}
@@ -292,27 +289,63 @@ const selectSport = (key: string) => {
         </div>
 
         <div 
-            class="md:hidden order-2 relative z-40 transition-all duration-300 grid grid-cols-[1fr_auto_auto] items-center gap-1"
-            :class="isMobileCompact 
-                ? 'flex-1'
-                : 'w-full'"
+            class="md:hidden order-2 relative z-40 transition-all duration-300 flex items-center justify-between gap-2"
+            :class="isMobileCompact ? 'flex-1' : 'w-full'"
         >
             
-            <div class="w-full"></div>
+            <div v-if="activeMode === 'prematch'" class="relative flex-1 min-w-0">
+                <button 
+                    @click="toggleDateDropdown"
+                    class="w-full flex items-center justify-between bg-[#020617] border rounded-lg py-1.5 px-3 transition-all duration-300 group shadow-lg shadow-black/20"
+                    :class="isDateDropdownOpen ? 'border-blue-500/50 ring-1 ring-blue-500/20 text-white' : 'border-white/10 text-slate-300 hover:border-white/20'"
+                >   
+                    <div class="flex items-center gap-1.5 overflow-hidden">
+                        <Calendar class="w-3 h-3 text-blue-400 shrink-0" />
+                        <span class="text-[10px] font-bold uppercase tracking-wide whitespace-nowrap truncate">
+                           {{ selectedDateLabel }}
+                        </span>
+                    </div>
+                    <ChevronDown 
+                        class="w-3 h-3 text-slate-500 transition-transform duration-300 shrink-0 ml-1"
+                        :class="{ 'rotate-180 text-blue-400': isDateDropdownOpen }"
+                    />
+                </button>
+                
+                <div v-if="isDateDropdownOpen" class="fixed inset-0 z-40 bg-transparent" @click="closeDateDropdown"></div>
+                <div 
+                    v-if="isDateDropdownOpen"
+                    class="absolute top-[calc(100%+8px)] left-0 w-[160px] bg-[#0f172a]/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200"
+                >
+                    <div class="max-h-[250px] overflow-y-auto py-1 custom-scrollbar">
+                        <button
+                            v-for="opt in mobileDateOptions"
+                            :key="opt.value"
+                            @click="selectDateOption(opt.value)"
+                            class="w-full flex items-center justify-between px-4 py-2.5 text-[10px] font-bold uppercase transition-colors border-b border-white/5 last:border-0"
+                            :class="props.selectedDate === opt.value 
+                                ? 'bg-blue-500/10 text-[#00FF7F]' 
+                                : 'text-slate-300 hover:bg-white/5 hover:text-white'"
+                        >
+                            <span>{{ opt.label }}</span>
+                            <Check v-if="props.selectedDate === opt.value" class="w-3 h-3 text-[#00FF7F]" />
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <div v-else class="flex-1"></div>
 
-            <div 
-                class="flex items-center justify-center bg-[#020617] p-1 rounded-full border border-white/10 shadow-inner shrink-0 mx-auto"
-            >
+            <div class="flex items-center justify-center bg-[#020617] p-1 rounded-full border border-white/10 shadow-inner shrink-0">
               <button 
                 @click="handleModeSwitch('live')"
                 class="relative flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-full transition-all duration-300 text-[9px] font-bold uppercase tracking-wider border"
                 :class="activeMode === 'live' 
-                  ? 'bg-red-500/10 border-red-500/50 text-red-400 shadow-[0_0_10px_rgba(248,113,113,0.3)]' 
+                  ? 'bg-[#00FF7F]/10 border-[#00FF7F]/50 text-[#00FF7F] shadow-[0_0_10px_rgba(0,255,127,0.3)]' 
                   : 'bg-transparent border-transparent text-slate-500 hover:text-slate-300 hover:bg-white/5'"
               >
                 <div class="relative flex h-1.5 w-1.5">
-                    <span v-if="activeMode === 'live'" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                    <span class="relative inline-flex rounded-full h-1.5 w-1.5" :class="activeMode === 'live' ? 'bg-red-500' : 'bg-slate-600'"></span>
+                    <span v-if="activeMode === 'live'" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00FF7F] opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-1.5 w-1.5" :class="activeMode === 'live' ? 'bg-[#00FF7F]' : 'bg-slate-600'"></span>
                 </div>
                 Ao Vivo
               </button>
@@ -325,52 +358,8 @@ const selectSport = (key: string) => {
                   : 'bg-transparent border-transparent text-slate-500 hover:text-slate-300 hover:bg-white/5'"
               >
                 <CalendarDays class="w-3 h-3" :class="activeMode === 'prematch' ? 'drop-shadow-[0_0_5px_rgba(96,165,250,0.8)]' : ''" />
-                Pré Jogo
+                Pré
               </button>
-            </div>
-
-            <div class="flex justify-end min-w-0 w-full pl-1">
-                <div 
-                    v-if="activeMode === 'prematch'"
-                    class="relative w-auto"
-                >
-                    <button 
-                        @click="toggleDateDropdown"
-                        class="w-full flex items-center justify-between bg-[#020617] border rounded-lg py-2 pl-2 pr-2 transition-all duration-300 group shadow-lg shadow-black/20"
-                        :class="isDateDropdownOpen ? 'border-blue-500/50 ring-1 ring-blue-500/20 text-white' : 'border-white/10 text-slate-300 hover:border-white/20'"
-                    >   
-                        <div class="flex items-center gap-1.5">
-                            <Calendar class="w-3 h-3 text-blue-400 shrink-0" />
-                            <span class="text-[10px] font-bold uppercase tracking-wide whitespace-nowrap">
-                               {{ selectedDateLabel }}
-                            </span>
-                        </div>
-                        <ChevronDown 
-                            class="w-3 h-3 text-slate-500 transition-transform duration-300 shrink-0 ml-1"
-                            :class="{ 'rotate-180 text-blue-400': isDateDropdownOpen }"
-                        />
-                    </button>
-                    <div v-if="isDateDropdownOpen" class="fixed inset-0 z-40 bg-transparent" @click="closeDateDropdown"></div>
-                    <div 
-                        v-if="isDateDropdownOpen"
-                        class="absolute top-[calc(100%+8px)] right-0 w-[160px] bg-[#0f172a]/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200"
-                    >
-                        <div class="max-h-[250px] overflow-y-auto py-1 custom-scrollbar">
-                            <button
-                                v-for="opt in mobileDateOptions"
-                                :key="opt.value"
-                                @click="selectDateOption(opt.value)"
-                                class="w-full flex items-center justify-between px-4 py-2.5 text-[10px] font-bold uppercase transition-colors border-b border-white/5 last:border-0"
-                                :class="props.selectedDate === opt.value 
-                                    ? 'bg-blue-500/10 text-[#00FF7F]' 
-                                    : 'text-slate-300 hover:bg-white/5 hover:text-white'"
-                            >
-                                <span>{{ opt.label }}</span>
-                                <Check v-if="props.selectedDate === opt.value" class="w-3 h-3 text-[#00FF7F]" />
-                            </button>
-                        </div>
-                    </div>
-                </div>
             </div>
         </div>
 
@@ -380,12 +369,12 @@ const selectSport = (key: string) => {
                 @click="handleModeSwitch('live')"
                 class="relative flex items-center justify-center gap-2 px-4 py-1.5 rounded-full transition-all duration-300 text-[10px] font-bold uppercase tracking-wider border"
                 :class="activeMode === 'live' 
-                  ? 'bg-red-500/10 border-red-500/50 text-red-400 shadow-[0_0_10px_rgba(248,113,113,0.3)]' 
+                  ? 'bg-[#00FF7F]/10 border-[#00FF7F]/50 text-[#00FF7F] shadow-[0_0_10px_rgba(0,255,127,0.3)]' 
                   : 'bg-transparent border-transparent text-slate-500 hover:text-slate-300 hover:bg-white/5'"
               >
                 <div class="relative flex h-2 w-2">
-                    <span v-if="activeMode === 'live'" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                    <span class="relative inline-flex rounded-full h-2 w-2" :class="activeMode === 'live' ? 'bg-red-500' : 'bg-slate-600'"></span>
+                    <span v-if="activeMode === 'live'" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00FF7F] opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2" :class="activeMode === 'live' ? 'bg-[#00FF7F]' : 'bg-slate-600'"></span>
                 </div>
                 Ao Vivo
               </button>

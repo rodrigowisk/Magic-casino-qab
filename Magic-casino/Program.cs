@@ -147,6 +147,7 @@ builder.Services.AddMassTransit(x =>
 {
     // Registra o consumidor de email
     x.AddConsumer<EmailConsumer>();
+    x.AddConsumer<SendMessageConsumer>(); 
 
     x.UsingRabbitMq((context, cfg) =>
     {

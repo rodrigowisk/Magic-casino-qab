@@ -26,8 +26,8 @@ const stakeError = ref(false);
 // --- TIMER STATES ---
 const isProcessingLive = ref(false);
 const showCancelledOverlay = ref(false);
-const countdown = ref(12);
-const countdownTotal = 12;
+const countdown = ref(6);
+const countdownTotal = 6;
 let timerInterval: any = null;
 let connection: HubConnection | null = null;
 
@@ -164,6 +164,22 @@ const handlePlaceBet = async (forceSubmit = false) => {
   if (!stake.value || stake.value <= 0) { stakeError.value = true; setTimeout(() => stakeError.value = false, 3000); return; }
 
   const totalCost = stake.value; 
+  
+  // ----------------------------------------------------
+  // VALIDAÇÃO: LIMITE MÁXIMO DE 10.000
+  // ----------------------------------------------------
+  if (totalCost > 10000) {
+      Swal.fire({ 
+          title: 'Limite Excedido!', 
+          text: 'O valor máximo por aposta é de 10.000 fichas.', 
+          icon: 'warning', 
+          background: '#162032', 
+          color: '#fff' 
+      });
+      return;
+  }
+
+  // VALIDAÇÃO: SALDO INSUFICIENTE
   if (totalCost > props.fantasyBalance) {
       Swal.fire({ title: 'Saldo Insuficiente!', text: `Você precisa de ${formatCurrency(totalCost)} fichas.`, icon: 'warning', background: '#162032', color: '#fff' });
       return;
@@ -197,7 +213,6 @@ const submitBetToApi = async () => {
       const stored = localStorage.getItem('user') || localStorage.getItem('user_data') || localStorage.getItem('session');
       if (stored) {
           const u = JSON.parse(stored);
-          //const raw = u.Code || u.code || u.Cpf || u.cpf || u.id || '';
           const raw = u.id || u.Id || u.userId || u.userName || u.user_name || u.Code || u.code || u.Cpf || u.cpf || '';
           currentUserId = String(raw).trim();
 
@@ -328,13 +343,16 @@ const submitBetToApi = async () => {
          <span class="text-blue-400 text-[10px] font-bold uppercase tracking-widest">{{ store.count === 1 ? 'Aposta Simples' : 'Aposta Múltipla' }}</span>
     </div>
 
-    <div class="flex flex-col flex-1 overflow-hidden bg-[#0f172a]">
+    <div class="flex flex-col bg-[#0f172a]" :class="!isMobile ? 'flex-1 overflow-hidden' : ''">
         <div v-if="store.count === 0" class="flex-1 flex flex-col items-center justify-center opacity-40 p-6 text-center">
             <Trophy class="w-10 h-10 text-slate-500 mb-2" />
             <p class="text-slate-400 text-xs font-bold uppercase">Selecione jogos</p>
         </div>
 
-        <div v-else ref="selectionsContainer" class="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
+        <div v-else ref="selectionsContainer" 
+             class="overflow-y-auto p-2 space-y-2 custom-scrollbar"
+             :class="isMobile ? 'max-h-[140px] border-b border-white/5' : 'flex-1'">
+             
             <div v-for="item in store.selections" :key="item.id" class="bg-[#1e293b] rounded border border-slate-700/50 relative overflow-hidden group">
                 <button @click="store.removeSelection(item.id)" class="absolute top-0 right-0 p-1.5 text-slate-600 hover:text-red-500 transition-colors z-10"><X class="w-3.5 h-3.5" /></button>
                 <div class="p-2.5">

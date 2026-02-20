@@ -2,23 +2,28 @@
 {
     public class TournamentRankingDto
     {
-        public int Posicao { get; set; }        // 1º, 2º, 3º...
+        // --- Identificação ---
+        public required string UserId { get; set; }
+        public required string UserName { get; set; }
+        public required string Avatar { get; set; }
 
-        // ✅ CORREÇÃO: 'required' adicionado para evitar erro de nulo (CS8618)
-        public required string UserId { get; set; }      // Identificador único (GUID/CPF)
-        public required string UserName { get; set; }    // Nome de exibição
-        public required string Avatar { get; set; }      // URL da imagem
+        // --- Ranking e Posição ---
+        public int Posicao { get; set; }  // Usado pelo Front
+        public int Rank { get; set; }     // Usado pelo Service (CS1656)
 
-        // Dados Financeiros
-        public decimal SaldoAtual { get; set; }    // O que ele tem garantido agora (FantasyBalance)
-        public decimal SaldoPossivel { get; set; } // Saldo Atual + Potencial das apostas em aberto
+        // --- Dados Financeiros ---
+        public decimal SaldoAtual { get; set; }
+        public decimal SaldoPossivel { get; set; }
+        public decimal Points { get; set; } // Necessário para o Service (CS0117)
 
-        // Controle de Bilhetes
-        // ✅ CORREÇÃO: 'required' adicionado aqui também
-        public required string ProgressoBilhetes { get; set; } // String formatada: "3/10" (Finalizados / Total)
-
-        // (Opcional) Mando também os números crus caso o front queira fazer uma barra de progresso
+        // --- Controle de Bilhetes (Front) ---
+        public required string ProgressoBilhetes { get; set; }
         public int BilhetesFinalizados { get; set; }
         public int BilhetesTotais { get; set; }
+
+        // --- Controle de Bilhetes (Backend/Legado) ---
+        // Estas propriedades são vitais porque o SQL do Service grava nelas
+        public int MyTicketCount { get; set; }     // (CS0117)
+        public int MyFinishedTickets { get; set; } // (CS0117)
     }
 }

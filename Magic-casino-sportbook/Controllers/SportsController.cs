@@ -1,4 +1,5 @@
 ﻿using Magic_casino_sportbook.Services;
+using Magic_casino_sportbook.Services.Prematch;
 using Magic_casino_sportbook.Data;
 using Magic_casino_sportbook.DTOs;
 using Magic_casino_sportbook.Data.Models;
@@ -18,23 +19,57 @@ namespace Magic_casino_sportbook.Controllers
     {
         private readonly AppDbContext _context;
         private readonly IServiceScopeFactory _scopeFactory;
+        private readonly IScheduleService _scheduleService;
+        private readonly IPrematchOddsService _oddsService;
 
-        public SportsController(AppDbContext context, IServiceScopeFactory scopeFactory)
+        public SportsController(
+            AppDbContext context,
+            IServiceScopeFactory scopeFactory,
+            IScheduleService scheduleService,
+            IPrematchOddsService oddsService)
         {
             _context = context;
             _scopeFactory = scopeFactory;
+            _scheduleService = scheduleService;
+            _oddsService = oddsService;
         }
 
-        // ... (Os métodos ForceUpdate, GetRawJson, GetEventById continuam iguais) ...
+        // 1. Atualizar Grade (Jogos)
         [HttpPost("force-update")]
         public IActionResult ForceUpdate()
         {
             _ = Task.Run(async () => {
-                try { using (var scope = _scopeFactory.CreateScope()) { await scope.ServiceProvider.GetRequiredService<PreMatchService>().SyncUpcomingGames(); } }
+                try
+                {
+                    using (var scope = _scopeFactory.CreateScope())
+                    {
+                        await scope.ServiceProvider.GetRequiredService<IScheduleService>().SyncEventsSchedule();
+                    }
+                }
                 catch (Exception ex) { Console.WriteLine($"🔥 Erro: {ex.Message}"); }
             });
-            return Ok(new { message = "Atualização iniciada." });
+            return Ok(new { message = "Atualização de GRADE iniciada." });
         }
+
+        // 2. ✅ O MÉTODO QUE FALTAVA: Atualizar Odds
+        [HttpPost("sync/odds")]
+        public IActionResult ForceUpdateOdds()
+        {
+            _ = Task.Run(async () => {
+                try
+                {
+                    using (var scope = _scopeFactory.CreateScope())
+                    {
+                        // Chama o serviço de Odds novo
+                        await scope.ServiceProvider.GetRequiredService<IPrematchOddsService>().SyncPrematchOdds();
+                    }
+                }
+                catch (Exception ex) { Console.WriteLine($"🔥 Erro SyncOdds: {ex.Message}"); }
+            });
+            return Ok(new { message = "Atualização de ODDS iniciada." });
+        }
+
+        // ... (O resto dos métodos GetRawJson, GetEventById, GetActiveSports, etc continuam iguais) ...
 
         [HttpGet("debug-json/{eventId}")]
         public async Task<IActionResult> GetRawJson(string eventId)
@@ -56,8 +91,6 @@ namespace Magic_casino_sportbook.Controllers
 
             if (e == null) return NotFound(new { error = "Evento não encontrado." });
 
-            // 🔥 CORREÇÃO: Aplica a mesma lógica de cálculo de odds do GetEvents
-            // Se as odds principais estiverem zeradas, tenta recuperar das odds detalhadas
             if (e.RawOddsHome <= 0 || e.RawOddsDraw <= 0 || e.RawOddsAway <= 0)
             {
                 decimal oddHome = 0, oddDraw = 0, oddAway = 0;
@@ -66,7 +99,7 @@ namespace Magic_casino_sportbook.Controllers
                     o.MarketName == "Resultado Final" ||
                     o.MarketName == "Vencedor da Partida" ||
                     o.MarketName == "Money Line" ||
-                    o.MarketName == "1X2" // Garantia extra
+                    o.MarketName == "1X2"
                 ).ToList();
 
                 foreach (var odd in mainMarkets)
@@ -76,7 +109,6 @@ namespace Magic_casino_sportbook.Controllers
                     else if (IsAway(odd.OutcomeName, e.AwayTeam)) oddAway = odd.Price;
                 }
 
-                // Só sobrescreve se encontrou valor válido e o original estava zerado
                 if (e.RawOddsHome <= 0 && oddHome > 0) e.RawOddsHome = oddHome;
                 if (e.RawOddsDraw <= 0 && oddDraw > 0) e.RawOddsDraw = oddDraw;
                 if (e.RawOddsAway <= 0 && oddAway > 0) e.RawOddsAway = oddAway;
@@ -84,11 +116,6 @@ namespace Magic_casino_sportbook.Controllers
 
             return Ok(e);
         }
-
-
-        // =================================================================================
-        // 🚀 MÉTODOS PÚBLICOS (MODO ESTRITO: SÓ FUTURO)
-        // =================================================================================
 
         [HttpGet("active-sports")]
         public async Task<IActionResult> GetActiveSports()
@@ -100,10 +127,9 @@ namespace Magic_casino_sportbook.Controllers
 
                 var stats = await _context.SportsEvents
                     .AsNoTracking()
-                    // 🔒 FILTRO: Conta apenas jogos PREMATCH que AINDA NÃO ACONTECERAM
                     .Where(e =>
                         e.Status == "Prematch" &&
-                        e.CommenceTime > agora // Tolerância ZERO
+                        e.CommenceTime > agora
                     )
                     .Where(e => e.CommenceTime <= limiteFuturo)
                     .GroupBy(e => e.SportKey)
@@ -118,15 +144,12 @@ namespace Magic_casino_sportbook.Controllers
             }
         }
 
-
         [HttpGet("debug-live-soccer")]
         public async Task<IActionResult> DebugLiveSoccer()
         {
             try
             {
                 var token = Environment.GetEnvironmentVariable("BETSAPI_TOKEN") ?? "SEU_TOKEN_SE_ENV_FALHAR";
-
-                // 1. Consulta a API da BetsAPI (Endpoint INPLAY)
                 using var client = new HttpClient();
                 var url = $"https://api.b365api.com/v1/events/inplay?sport_id=1&token={token}";
                 var response = await client.GetAsync(url);
@@ -143,7 +166,6 @@ namespace Magic_casino_sportbook.Controllers
 
                 foreach (var item in results.EnumerateArray())
                 {
-                    // Filtra ligas virtuais (opcional, mas bom para limpar a vista)
                     var league = item.GetProperty("league").GetProperty("name").GetString();
                     if (league.Contains("Esoccer") || league.Contains("Virtual")) continue;
 
@@ -151,20 +173,18 @@ namespace Magic_casino_sportbook.Controllers
                     string home = item.GetProperty("home").GetProperty("name").GetString();
                     string away = item.GetProperty("away").GetProperty("name").GetString();
                     string time = item.TryGetProperty("timer", out var t) && t.TryGetProperty("tm", out var tm)
-                                  ? tm.GetInt32().ToString()
-                                  : "0";
+                                    ? tm.GetInt32().ToString()
+                                    : "0";
 
                     apiIds.Add(id);
                     apiGames.Add(new { Id = id, League = league, Match = $"{home} vs {away}", Time = time });
                 }
 
-                // 2. Consulta o Banco de Dados
                 var dbGames = await _context.SportsEvents
                     .Where(e => e.Status == "Live" && e.SportKey == "soccer")
                     .Select(e => e.ExternalId)
                     .ToListAsync();
 
-                // 3. Compara
                 var missingInDb = apiIds.Except(dbGames).ToList();
 
                 return Ok(new
@@ -172,7 +192,7 @@ namespace Magic_casino_sportbook.Controllers
                     TotalNaApi_FutebolReal = apiIds.Count,
                     TotalNoBanco_Live = dbGames.Count,
                     FaltandoNoBanco = missingInDb.Count,
-                    ListaJogosApi = apiGames, // Mostra quem são
+                    ListaJogosApi = apiGames,
                     IdsFaltantes = missingInDb
                 });
             }
@@ -181,8 +201,6 @@ namespace Magic_casino_sportbook.Controllers
                 return BadRequest(new { error = ex.Message });
             }
         }
-
-
 
         [HttpGet("events")]
         public async Task<ActionResult<IEnumerable<SportsEventDto>>> GetEvents(
@@ -197,14 +215,9 @@ namespace Magic_casino_sportbook.Controllers
                 var query = _context.SportsEvents
                     .Include(e => e.Odds)
                     .AsNoTracking()
-                    // 🛑 MUDANÇA CRÍTICA AQUI 🛑
-                    // Removemos "OR e.Status == Live".
-                    // Agora, só retorna se for PREMATCH e estiver NO FUTURO.
-                    // Se virou Live? Some daqui.
-                    // Se passou do horário e não virou Live? Some daqui (Limbo).
                     .Where(e =>
                         e.Status == "Prematch" &&
-                        e.CommenceTime > agora // Exatamente agora. 1 segundo depois já some.
+                        e.CommenceTime > agora
                     )
                     .Where(e => e.CommenceTime <= agora.AddDays(4))
                     .AsQueryable();
@@ -215,7 +228,6 @@ namespace Magic_casino_sportbook.Controllers
                     query = query.Where(e => e.SportKey.ToLower() == sportTerm);
                 }
 
-                // Ordenação: Apenas por horário, já que não tem mais Live misturado
                 var rawEvents = await query
                     .OrderBy(e => e.CommenceTime)
                     .Skip((page - 1) * pageSize)
@@ -226,7 +238,6 @@ namespace Magic_casino_sportbook.Controllers
 
                 foreach (var e in rawEvents)
                 {
-                    // Placar
                     int? hScore = null, aScore = null;
                     if (!string.IsNullOrEmpty(e.Score) && e.Score.Contains("-"))
                     {
@@ -237,7 +248,6 @@ namespace Magic_casino_sportbook.Controllers
                         }
                     }
 
-                    // Odds
                     decimal oddHome = 0, oddDraw = 0, oddAway = 0;
                     var mainMarkets = e.Odds.Where(o =>
                         o.MarketName == "Resultado Final" ||
@@ -288,7 +298,6 @@ namespace Magic_casino_sportbook.Controllers
             }
         }
 
-        // 👇 Comparadores
         private bool IsHome(string outcomeName, string homeTeam)
         {
             if (string.IsNullOrEmpty(outcomeName)) return false;

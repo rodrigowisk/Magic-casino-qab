@@ -1,8 +1,11 @@
 ﻿using Magic_casino_sportbook.Data;
-using Magic_casino_sportbook.Services;
 using Magic_casino_sportbook.Hubs;
+using Magic_casino_sportbook.Services;
+using Magic_casino_sportbook.Data;
+using Magic_casino_sportbook.Services.Live;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using static Microsoft.EntityFrameworkCore.DbLoggerCategory;
 
 namespace Magic_casino_sportbook.BackgroundServices
 {
@@ -11,8 +14,12 @@ namespace Magic_casino_sportbook.BackgroundServices
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<LiveOddsWorker> _logger;
 
-        // Tempo entre ciclos (10 segundos)
-        private const int DELAY_LIVE_MS = 20000;
+        // Tempo entre ciclos (5 segundos)
+        private const int DELAY_LIVE_MS = 5000;
+
+        // ⏱️ Controle de Auditoria (Salvar no SQL)
+        private DateTime _lastDbSave = DateTime.MinValue;
+        private const int SQL_SAVE_INTERVAL_MINUTES = 2;
 
         public LiveOddsWorker(IServiceProvider serviceProvider, ILogger<LiveOddsWorker> logger)
         {
@@ -38,7 +45,8 @@ namespace Magic_casino_sportbook.BackgroundServices
                 using (var scope = _serviceProvider.CreateScope())
                 {
                     var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                    var liveService = scope.ServiceProvider.GetRequiredService<LiveSportService>();
+                    var updater = scope.ServiceProvider.GetRequiredService<LiveGameUpdater>();
+                    var cleanup = scope.ServiceProvider.GetRequiredService<LiveCleanupService>();
                     var hub = scope.ServiceProvider.GetRequiredService<IHubContext<GameHub>>();
 
                     // 1. Pega APENAS os jogos que estão marcados como AO VIVO no banco
@@ -49,10 +57,19 @@ namespace Magic_casino_sportbook.BackgroundServices
 
                     if (liveGames.Any())
                     {
+
+                        bool shouldSaveToSql = (DateTime.UtcNow - _lastDbSave).TotalMinutes >= SQL_SAVE_INTERVAL_MINUTES;
+
+                        if (shouldSaveToSql)
+                        {
+                            _logger.LogInformation("💾 [AUDITORIA] Ciclo de persistência no PostgreSQL disparado.");
+                            _lastDbSave = DateTime.UtcNow; // Reseta o cronômetro
+                        }
+
                         // 2. Atualiza Odds/Placar usando a API Externa
                         // O Serviço agora salva no Redis e marca o jogo como "dirty"
                         // NÃO SALVAMOS NO SQL AQUI! (Isso remove o gargalo)
-                        var idsToRemove = await liveService.UpdateLiveGamesAsync(liveGames, context);
+                        var idsToRemove = await updater.UpdateLiveGamesAsync(liveGames, context);
 
                         // 3. Se algum jogo acabou ou sumiu, avisamos o Frontend para remover da tela
                         if (idsToRemove != null && idsToRemove.Any())
@@ -72,7 +89,8 @@ namespace Magic_casino_sportbook.BackgroundServices
 
                     if (recentlyEnded.Any())
                     {
-                        await liveService.CleanupZombiesAsync(recentlyEnded);
+                        // Garante que eles sumam da tela
+                        await cleanup.CleanupZombiesAsync(recentlyEnded);
                     }
                 }
             }

@@ -10,83 +10,68 @@ import sportbookService from '../../services/Sportbook/SportbookService';
 import TeamLogo from '../../components/TeamLogo.vue';
 import { normalizeCountryName } from '../../utils/countryTranslations';
 import { getFlag } from '../../utils/flags';
-import TournamentSportsMenu from '../../components/Tournament/TournamentSportsMenu.vue';
+import TournamentSportsMenu from '../../components/Tournament/TournamentSportsMenu.vue'; 
 import { useFavoritesStore } from '../../stores/useFavoritesStore';
-import PageLoader from '../../components/PageLoader.vue';
-import { usePageLoader } from '../../composables/usePageLoader';
 
 const route = useRoute();
 const router = useRouter();
 const store = useBetStore();
 const favStore = useFavoritesStore();
-const emit = defineEmits(['update-header']);
 
-const { isLoading, loadingProgress, startLoader, finishLoader } = usePageLoader();
+// ✅ EMIT PARA CONTROLAR O LOADER NO PAI
+const emit = defineEmits(['loading-start', 'loading-end', 'update-header']);
 
 const tournamentId = ref(Number(route.params.id));
 const sportKey = ref('soccer');
 const currentUser = ref('');
 const tournamentEnd = ref<number>(0);
 
+// 👇 Variável correta usada no template (isLoadingGames). 
+// As variáveis "isLoading" e "loadingProgress" foram removidas pois causavam erro.
 const isLoadingGames = ref(true);
 const isTournamentDataLoaded = ref(false); 
 const games = ref<any[]>([]);
 const openLeagues = ref<Set<string>>(new Set());
 
-// Estado visual do botão de modo (Pré/Live)
 const activeMode = ref<'prematch' | 'live'>('prematch');
 const selectedSport = ref<string>(''); 
 const dataSelecionada = ref<string>('all');
 
-const showMenu = computed(() => {
-    return isTournamentDataLoaded.value && (isLoadingGames.value || games.value.length > 0);
-});
-
 let connection: HubConnection | null = null;
 
-// Garante que o botão esteja em "Pré-Jogo" ao entrar na aba
-onActivated(() => {
-    activeMode.value = 'prematch';
-});
+onActivated(() => { activeMode.value = 'prematch'; });
 
-// Navegação para a rota Live
 watch(activeMode, (newVal) => {
-    if (newVal === 'live') {
-        router.push(`/tournament/${tournamentId.value}/live`);
-    }
+    if (newVal === 'live') router.push(`/tournament/${tournamentId.value}/live`);
 });
 
 const getGameId = (game: any): string => {
     const validId = game.id || game.Id || game.gameId || game.externalId || game.ExternalId;
-    if (validId) {
-        return String(validId).trim();
-    }
-    return '';
+    return validId ? String(validId).trim() : '';
 };
 
-// ✅ FUNÇÃO DE NAVEGAÇÃO PARA DETALHES
 const goToGame = (game: any) => {
     const id = getGameId(game);
     if (!id) return;
-    // Redireciona para a rota de detalhes dentro do contexto do torneio
     router.push(`/tournament/${tournamentId.value}/match/${id}`);
 };
 
 onMounted(async () => {
     favStore.fetchFavorites();
     loadCurrentUser();
-    startLoader();
+    
+    // ✅ INICIA LOADER NO PAI
+    emit('loading-start');
     try {
         await loadTournamentData();
         setupSignalR();
     } finally {
-        finishLoader();
+        // ✅ FINALIZA LOADER NO PAI
+        emit('loading-end');
     }
 });
 
-onUnmounted(() => {
-    if (connection) connection.stop();
-});
+onUnmounted(() => { if (connection) connection.stop(); });
 
 watch(() => route.params.id, async (newId) => {
     if (newId) {
@@ -95,11 +80,12 @@ watch(() => route.params.id, async (newId) => {
         isLoadingGames.value = true;
         isTournamentDataLoaded.value = false;
         openLeagues.value.clear();
-        startLoader();
+        
+        emit('loading-start');
         try {
             await loadTournamentData();
         } finally {
-            finishLoader();
+            emit('loading-end');
         }
     }
 });
@@ -125,20 +111,51 @@ const setupSignalR = async () => {
         .configureLogging(LogLevel.Information)
         .build();
 
-    connection.on("RemoveGames", (idsToRemove: any[]) => {
-        if (!idsToRemove || idsToRemove.length === 0) return;
-        const idsSet = new Set(idsToRemove.map(id => String(id).trim()));
-        if (games.value.length > 0) {
-            games.value = games.value.filter(game => !idsSet.has(getGameId(game)));
+// Dentro de setupSignalR()
+
+connection.on("RemoveGames", (idsToRemove: any[]) => {
+    // Debug para você ver no Console do navegador a lista chegando cheia!
+    console.log("🔥 [SIGNALR] Removendo Lote de Jogos:", idsToRemove); 
+
+    if (!idsToRemove || idsToRemove.length === 0) return;
+
+    // 1. Normalização Blindada:
+    // Aceita tanto ["123", "456"] (Novo Backend) quanto [{id: "123"}] (Legado)
+    const idsSet = new Set(idsToRemove.map(item => {
+        if (typeof item === 'object' && item !== null) {
+            // Se vier objeto, extrai o ID
+            return String(item.externalId || item.ExternalId || item.id || item.Id || '').trim();
         }
+        // Se vier string/numero direto (o que fizemos no Worker), usa direto
+        return String(item).trim();
+    }));
+
+    // 2. REMOÇÃO EM MASSA (A Mágica acontece aqui)
+    // O filter passa por todos os jogos na tela. Se o ID estiver no Set, ele some.
+    // Isso remove 1, 10 ou 100 jogos instantaneamente na mesma renderização.
+    if (games.value.length > 0) {
+        games.value = games.value.filter(game => {
+            const currentGameId = getGameId(game);
+            return !idsSet.has(currentGameId); // Mantém apenas se NÃO estiver na lista de remoção
+        });
+    }
+
+    // 3. Limpeza do Cupom (Mantendo sua lógica original)
+    idsSet.forEach(rawId => {
+        store.selections.forEach(selection => {
+            const selIdStr = String(selection.id);
+            // Verifica se a aposta é desse jogo
+            if (selIdStr === rawId || selIdStr.startsWith(rawId + '_')) {
+                store.removeSelection(selection.id);
+            }
+        });
     });
+});
 
     connection.on("GameWentLive", (liveGames: any[]) => {
         if (!liveGames || liveGames.length === 0) return;
         const liveIdsSet = new Set(liveGames.map(g => String(g.externalId || g.ExternalId || g.id || g.Id).trim()));
-        if (games.value.length > 0) {
-            games.value = games.value.filter(game => !liveIdsSet.has(getGameId(game)));
-        }
+        if (games.value.length > 0) games.value = games.value.filter(game => !liveIdsSet.has(getGameId(game)));
     });
 
     connection.on('LiveOddsUpdate', (updatedGames: any[]) => {
@@ -178,10 +195,7 @@ const loadTournamentData = async () => {
         const tournamentPromise = tournamentService.getTournament(tournamentId.value, currentUser.value);
         const gamesPromise = sportbookService.getEventsBySport('soccer', 1000); 
 
-        const [resTournament, resGames] = await Promise.all([
-            tournamentPromise,
-            gamesPromise
-        ]);
+        const [resTournament, resGames] = await Promise.all([tournamentPromise, gamesPromise]);
 
         let rules = null;
         if (resTournament.data) {
@@ -194,28 +208,18 @@ const loadTournamentData = async () => {
             selectedSport.value = sportKey.value;
             isTournamentDataLoaded.value = true;
             tournamentEnd.value = new Date(resTournament.data.endDate).getTime();
-            
-            if (resTournament.data.filterRules) { 
-                try { rules = JSON.parse(resTournament.data.filterRules); } catch (e) { } 
-            }
+            if (resTournament.data.filterRules) { try { rules = JSON.parse(resTournament.data.filterRules); } catch (e) { } }
         }
 
-        if (sportKey.value === 'soccer') {
-            processGamesList(resGames.data || [], rules);
-        } else {
-            await loadRealGames(sportKey.value, rules);
-        }
+        if (sportKey.value === 'soccer') processGamesList(resGames.data || [], rules);
+        else await loadRealGames(sportKey.value, rules);
 
-    } catch (error: any) { 
-        console.error(error); 
-    }
+    } catch (error: any) { console.error(error); }
 };
 
 const processGamesList = (allGames: any[], filterRules: any) => {
     let filtered = allGames;
-
-    const startOfLocalDay = new Date();
-    startOfLocalDay.setHours(0, 0, 0, 0);
+    const startOfLocalDay = new Date(); startOfLocalDay.setHours(0, 0, 0, 0);
     const minTime = startOfLocalDay.getTime();
 
     if (filterRules?.sports) {
@@ -279,7 +283,6 @@ const handleBetClick = (game: any, type: BetType) => {
     const selectionName = type === '1' ? hTeam : type === '2' ? aTeam : 'Empate';
     const time = game.commenceTime || game.CommenceTime || new Date().toISOString();
     
-    // ✅ CORREÇÃO: Cast (store as any) para evitar erro TS2554 (8 argumentos)
     (store as any).addOrReplaceSelection(gameId, hTeam, aTeam, selectionName, price, type, time, {
         isTournament: true,
         tournamentId: tournamentId.value
@@ -292,17 +295,26 @@ const sortedGroups = computed(() => {
 
     games.value.forEach(game => {
         if (!getGameId(game)) return;
+
+        // 🔥 FILTRO DE ODDS VÁLIDAS (ADICIONE ISSO AQUI)
+        // Se a odd da casa ou fora for menor ou igual a 1.01 (ou 0), esconde o jogo.
+        const hOdd = Number(game.rawOddsHome ?? game.RawOddsHome ?? 0);
+        const aOdd = Number(game.rawOddsAway ?? game.RawOddsAway ?? 0);
         
+        // Se não tem odd válida, pula para o próximo (não exibe na lista)
+        if (hOdd <= 1.01 || aOdd <= 1.01) return; 
+
+        // -----------------------------------------------------------
+
         if (dataSelecionada.value !== 'all') {
             const d = new Date(game.commenceTime);
             const year = d.getFullYear();
             const month = String(d.getMonth() + 1).padStart(2, '0');
             const day = String(d.getDate()).padStart(2, '0');
             const gameDate = `${year}-${month}-${day}`;
-            
             if (gameDate !== dataSelecionada.value) return;
         }
-
+        
         if (selectedSport.value !== 'all' && selectedSport.value !== '') {
             const gSport = (game.sportKey || game.Sport || game.sport || 'soccer').toLowerCase();
             if (!gSport.includes(selectedSport.value.toLowerCase())) return;
@@ -331,11 +343,8 @@ const sortedGroups = computed(() => {
         return { key: key, displayName: meta.displayName, country: meta.country, countryCode: meta.countryCode, rawLeague: meta.rawLeague, games: group, isFavorite: favStore.isFavorite(meta.rawLeague) };
     });
 
-    if (activeLeagueQuery && result.length > 0) {
-        result.forEach(g => openLeagues.value.add(g.key));
-    } else if (openLeagues.value.size === 0 && result.length > 0) {
-        result.forEach(g => openLeagues.value.add(g.key));
-    }
+    if (activeLeagueQuery && result.length > 0) result.forEach(g => openLeagues.value.add(g.key));
+    else if (openLeagues.value.size === 0 && result.length > 0) result.forEach(g => openLeagues.value.add(g.key));
 
     return result.sort((a, b) => (a.isFavorite === b.isFavorite ? a.key.localeCompare(b.key) : a.isFavorite ? -1 : 1));
 });
@@ -357,25 +366,22 @@ const handleImageError = (event: Event) => { (event.target as HTMLImageElement).
 </script>
 
 <template>
-    <div class="flex h-full bg-[#0f172a] text-slate-300 font-sans relative overflow-hidden">
+    <div class="flex flex-col h-full bg-[#0f172a] text-slate-300 font-sans relative overflow-hidden">
         
-        <PageLoader 
-            :is-loading="isLoading" 
-            :progress="loadingProgress" 
-            :is-absolute="true" 
-            loading-text="Carregando Jogos..."
-        />
+        <div class="flex-shrink-0 z-20 w-full">
+            <TournamentSportsMenu 
+                :games="games" 
+                v-model:activeMode="activeMode"
+                v-model:selectedSport="selectedSport" 
+                v-model:selectedDate="dataSelecionada" 
+            />
+        </div>
 
-        <div class="flex-1 flex flex-col h-full overflow-y-auto custom-scrollbar relative">
+        <div class="flex-1 flex flex-col h-full overflow-y-auto custom-scrollbar relative bg-[#0f172a]">
             
-            <div v-if="showMenu" class="sticky top-0 z-30 shadow-xl border-b border-white/5 bg-[#0f172a]">
-                <TournamentSportsMenu :games="games" v-model:activeMode="activeMode"
-                    v-model:selectedSport="selectedSport" v-model:selectedDate="dataSelecionada" />
-            </div>
-
-            <div class="max-w-[1200px] mx-auto px-2 md:px-4 space-y-3 w-full pb-20 pt-2">
+            <div class="max-w-[1200px] mx-auto px-2 md:px-4 space-y-3 w-full pb-20 pt-4">
                 
-                <div v-if="isLoadingGames && !isLoading" class="space-y-3 pt-2">
+                <div v-if="isLoadingGames" class="space-y-3 pt-2">
                     <div v-for="i in 5" :key="i" class="bg-[#1a2c38] h-20 rounded animate-pulse border border-white/5"></div>
                 </div>
 
@@ -449,13 +455,12 @@ const handleImageError = (event: Event) => { (event.target as HTMLImageElement).
                                     </button>
                                 </div>
                             </div>
-
                         </div>
                     </div>
                 </div>
             </div>
         </div>
-        </div>
+    </div>
 </template>
 
 <style scoped>

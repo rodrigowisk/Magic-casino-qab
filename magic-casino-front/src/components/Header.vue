@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { Menu, Search, Loader2, X, MapPin, Calendar, Trophy } from 'lucide-vue-next';
+import { Search, Loader2, X, MapPin, Calendar, Trophy } from 'lucide-vue-next';
 import { useAuthStore } from '../stores/useAuthStore';
 import SportsService from '../services/SportsService';
-import TournamentService from '../services/Tournament/TournamentService'; // Importando serviço de torneios
+import TournamentService from '../services/Tournament/TournamentService'; 
 
 import AuthModal from './AuthModal.vue';
 import WalletDropdown from './WalletDropdown.vue';
@@ -13,10 +13,9 @@ import UserDropdown from './UserDropdown.vue';
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
-const emit = defineEmits(['toggle-sidebar']);
+// emit removido pois o menu lateral não é mais acionado daqui
 
 // --- CONTEXTO DA BUSCA ---
-// Verifica se está dentro de uma página de torneio (exceto o lobby)
 const isTournamentContext = computed(() => {
     return route.path.includes('/tournament/') && route.name !== 'TournamentLobby';
 });
@@ -60,7 +59,6 @@ const formatDate = (dateString: string) => {
            date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 };
 
-// Pega ID de forma segura para jogos ou torneios
 const getItemId = (item: any) => {
     return item.id || item.Id || item.externalId || item.gameId;
 };
@@ -81,7 +79,6 @@ const handleInput = () => {
         try {
             const term = searchQuery.value.toLowerCase();
 
-            // --- MODO 1: BUSCAR JOGOS (DENTRO DE TORNEIO) ---
             if (isTournamentContext.value) {
                 const events = await SportsService.getEvents('soccer', 1, 300);
                 if (events && Array.isArray(events)) {
@@ -90,14 +87,12 @@ const handleInput = () => {
                         const away = (e.awayTeam || e.AwayTeam || '').toLowerCase();
                         const league = (e.league || e.League || '').toLowerCase();
                         return home.includes(term) || away.includes(term) || league.includes(term);
-                    }).slice(0, 8).map(e => ({ ...e, type: 'game' })); // Adiciona tipo
+                    }).slice(0, 8).map(e => ({ ...e, type: 'game' })); 
                 } else {
                     searchResults.value = [];
                 }
             } 
-            // --- MODO 2: BUSCAR TORNEIOS (FORA DE TORNEIO) ---
             else {
-                // Pega ID do usuário se logado, senão string vazia (API deve suportar listagem pública)
                 const userId = authStore.user?.id || ''; 
                 const res = await TournamentService.listTournaments(userId);
                 
@@ -106,7 +101,7 @@ const handleInput = () => {
                         const name = (t.name || '').toLowerCase();
                         const id = String(t.id || '');
                         return name.includes(term) || id.includes(term);
-                    }).slice(0, 8).map(t => ({ ...t, type: 'tournament' })); // Adiciona tipo
+                    }).slice(0, 8).map(t => ({ ...t, type: 'tournament' })); 
                 } else {
                     searchResults.value = [];
                 }
@@ -132,10 +127,8 @@ const goToResult = (item: any) => {
     if (!id) return;
 
     if (item.type === 'tournament') {
-        // Navega para o torneio
         router.push(`/tournament/${id}/play`);
     } else {
-        // Navega para o jogo
         router.push(`/event/${id}`);
     }
     
@@ -143,7 +136,6 @@ const goToResult = (item: any) => {
     clearSearch(); 
 };
 
-// Limpa busca ao trocar de rota (ex: sair do torneio para o lobby)
 watch(() => route.path, () => {
     clearSearch();
 });
@@ -163,13 +155,9 @@ onUnmounted(() => { document.removeEventListener('click', handleClickOutsideSear
       />
 
       <div class="flex items-center">
-        <button @click="emit('toggle-sidebar')" class="hover:text-white transition-colors mr-1 md:mr-2">
-            <Menu class="w-6 h-6" />
-        </button>
-        
         <div 
             @click="router.push('/')" 
-            class="w-auto md:w-56 flex justify-start md:justify-center cursor-pointer select-none hover:brightness-110 transition-all group"
+            class="w-auto md:w-56 flex justify-start cursor-pointer select-none hover:brightness-110 transition-all group"
             style="font-family: 'Montserrat', sans-serif;"
         >
             <img src="/logo.png?v=4" alt="Logo" class="h-8 md:h-14 object-contain" />

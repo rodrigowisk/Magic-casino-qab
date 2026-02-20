@@ -1,188 +1,456 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'; 
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'; 
 import { useRouter } from 'vue-router';
 import Swal from 'sweetalert2';
-import { Trophy, Gamepad2, Dribbble, Gem } from 'lucide-vue-next'; 
 
 import PageLoader from '../../components/PageLoader.vue';
 import { usePageLoader } from '../../composables/usePageLoader';
 import tournamentService from '../../services/Tournament/TournamentService';
+// 👇 Importação do Serviço SignalR (Singleton)
+import tournamentSignal from '../../services/Tournament/TournamentSignalService';
 import { useAuthStore } from '../../stores/useAuthStore';
 
-// ✅ IMPORTANDO OS COMPONENTES REUTILIZÁVEIS
+// Componentes
 import BannerCarousel from '../../components/Tournament/BannerCarousel.vue';
 import TournamentCarousel from '../../components/Tournament/TournamentCarousel.vue';
+import TournamentFilters from '../../components/Tournament/TournamentFilters.vue';
+import TournamentInfoModal from '../../components/Tournament/TournamentInfoModal.vue';
 
+// --- TIPAGENS (TypeScript) ---
+interface Tournament {
+  id: number;
+  sport?: string;
+  entryFee: number;
+  isJoined?: boolean;
+  participantsCount?: number;
+  houseFeePercent?: number;
+  prizePool?: number;
+  isFinished?: boolean;
+  isActive?: boolean;
+  isFavorite?: boolean;
+  category?: string;
+  Category?: string;
+  name?: string;
+  description?: string;
+  startDate?: string;
+  maxParticipants?: number;
+  status?: string; 
+  fixedPrize?: number;
+  [key: string]: any;
+}
+
+// --- SETUP ---
 const router = useRouter();
 const authStore = useAuthStore();
 const { isLoading, loadingProgress, isContentReady, startLoader, finishLoader } = usePageLoader();
 
 // --- ESTADOS ---
-const processingId = ref<number | null>(null);
-const activeFilter = ref('all');
-const currentUserId = ref('');
-const tournaments = ref<any[]>([]);
+const processingId = ref<number | null>(null); // ID do torneio sendo processado (Loading)
+const activeFilter = ref<string>('all');
+const currentUserId = ref<string>('');
+const tournaments = ref<Tournament[]>([]);
 
-const filters = [
-  { id: 'all', label: 'Todos', icon: Trophy },
-  { id: 'soccer', label: 'Futebol', icon: Gamepad2 },
-  { id: 'nba', label: 'Basquete', icon: Dribbble },
-  { id: 'high', label: 'High Roller', icon: Gem }
-];
+// Estados do Modal de Info
+const showInfoModal = ref(false);
+const selectedTournament = ref<Tournament | null>(null);
 
-// --- COMPUTED (FILTROS) ---
-// Lista 1: Filtrada pelos botões (Padrão)
-const filteredTournaments = computed(() => {
-  let list = tournaments.value;
-  if (activeFilter.value === 'high') {
-      list = list.filter((t: any) => t.entryFee >= 100);
-  } else if (activeFilter.value === 'soccer') {
-      list = list.filter((t:any) => t.sport?.toLowerCase().includes('soccer') || t.sport?.toLowerCase().includes('futebol'));
-  } else if (activeFilter.value === 'nba') {
-      list = list.filter((t:any) => t.sport?.toLowerCase().includes('basket'));
-  }
-  return list; 
-});
-
-// Lista 2: Exemplo de "Meus Torneios" ou "Destaques" (Opcional)
-const myTournaments = computed(() => {
-    return tournaments.value.filter(t => t.isJoined);
-});
-
-// --- MÉTODOS DE NEGÓCIO (API / AUTH) ---
-// O componente visual apenas "emite" o pedido. O Lobby executa a ação.
-
-const loadCurrentUser = () => {
-    if (authStore.user) {
-        const u = authStore.user;
-        const rawId = u.cpf || u.Cpf || u.code || u.Code || '';
-        currentUserId.value = String(rawId).replace(/\D/g, ''); 
+// ✅ CORREÇÃO: Monitora Login/Logout para atualizar a lista em tempo real
+watch(() => authStore.user, async (newUser) => {
+    // 1. Atualiza o ID do usuário local
+    if (newUser) {
+        currentUserId.value = extractUserId(newUser);
     } else {
-        try {
-            const storedString = localStorage.getItem('user') || localStorage.getItem('user_data') || localStorage.getItem('session');
-            if (storedString) {
-                const userData = JSON.parse(storedString);
-                const rawId = userData.cpf || userData.Cpf || userData.code || userData.Code || '';
-                currentUserId.value = String(rawId).replace(/\D/g, ''); 
-            }
-        } catch (e) { console.error("Erro user:", e); }
+        currentUserId.value = '';
     }
-};
 
-const loadTournaments = async () => {
-    startLoader();
-    try {
-        const res = await tournamentService.listTournaments(currentUserId.value);
-        tournaments.value = res.data || [];
-    } catch (error) {
-        console.error(error);
-        tournaments.value = [];
-    } finally {
-        finishLoader();
-    }
-};
+    // 2. Recarrega os torneios. 
+    await loadTournaments();
+});
 
-const enterTournament = (id: number) => {
-    router.push({ name: 'TournamentPlay', params: { id: id } });
-};
 
-const processJoin = async (id: number) => {
-    if (!authStore.isAuthenticated && !currentUserId.value) {
-        Swal.fire({ title: 'Login Necessário', text: 'Por favor, entre na sua conta.', icon: 'warning', background: '#0f172a', color: '#fff' });
+// --- LÓGICA SIGNALR (USANDO O SERVIÇO) ---
+// Função que processa o dado recebido do SignalR (Lista/Lobby)
+const handleRealTimeUpdate = (data: any) => {
+    // Se for um comando de remoção explícita
+    if (data.status === 'Deleted' || data.deletedId) {
+        const idToRemove = data.id || data.deletedId;
+        tournaments.value = tournaments.value.filter(t => t.id !== idToRemove);
         return;
     }
 
-    processingId.value = id;
-    try {
-        const userName = authStore.user?.name || authStore.user?.Name || 'Jogador';
-        const userAvatar = authStore.user?.avatar || authStore.user?.Avatar || ''; 
-        const userId = currentUserId.value;
+    const updatedTournament = data as Tournament;
+    const index = tournaments.value.findIndex(t => t.id === updatedTournament.id);
+    
+    // Checa se o status indica que o torneio deve sair da lista (Cancelado/Finalizado/Inativo)
+    const isFinishedStatus = updatedTournament.status === 'Cancelled' || 
+                             updatedTournament.status === 'Finished' || 
+                             updatedTournament.isActive === false;
 
-        await tournamentService.joinTournament(id, userId, userName, userAvatar);
-        
-        // Atualiza estado local
-        const localTournament = tournaments.value.find(t => t.id === id);
-        if (localTournament) {
-            localTournament.participantsCount = (localTournament.participantsCount || 0) + 1;
-            localTournament.isJoined = true;
-            if (localTournament.entryFee > 0) {
-                const feePercent = localTournament.houseFeePercent || 10;
-                const houseCut = localTournament.entryFee * (feePercent / 100);
-                localTournament.prizePool = (localTournament.prizePool || 0) + (localTournament.entryFee - houseCut);
-            }
-        }
-
-        Swal.fire({
-            toast: true, position: 'top-end', icon: 'success', title: 'Inscrição Confirmada!',
-            showConfirmButton: false, timer: 2000, background: '#0f172a', color: '#fff'
-        });
-        enterTournament(id);
-
-    } catch (error: any) {
-        const errorData = error.response?.data;
-        const errorMsg = (typeof errorData === 'string' ? errorData : errorData?.error || errorData?.message || '').toLowerCase();
-        
-        if (errorMsg.includes('já inscrito') || errorMsg.includes('already joined')) {
-            const localTournament = tournaments.value.find(t => t.id === id);
-            if (localTournament) localTournament.isJoined = true;
-            enterTournament(id);
+    if (index !== -1) {
+        // --- JÁ EXISTE NA LISTA ---
+        if (isFinishedStatus) {
+            // Se virou finalizado, remove
+            tournaments.value.splice(index, 1);
         } else {
-            Swal.fire({ title: 'Erro', text: errorMsg || 'Não foi possível entrar.', icon: 'error', background: '#0f172a', color: '#fff' });
+            // Se continua ativo, atualiza os dados preservando o objeto local
+            tournaments.value[index] = { ...tournaments.value[index], ...updatedTournament };
         }
-    } finally {
-        processingId.value = null;
+    } else {
+        // --- NÃO EXISTE (É NOVO) ---
+        if (!isFinishedStatus) {
+            // Adiciona no topo da lista
+            tournaments.value.unshift(updatedTournament);
+        }
     }
 };
 
+// --- LIFECYCLE ---
 onMounted(async () => {
-    loadCurrentUser();
-    await loadTournaments();
+  loadCurrentUser();
+  
+  // 1. Carrega a lista inicial via API REST
+  await loadTournaments();
+
+  // 2. Configura o "Ouvinte" no serviço compartilhado (Lobby Updates)
+  tournamentSignal.setTournamentListListener((data: any) => {
+      console.log('🔔 Lobby recebeu update:', data);
+      handleRealTimeUpdate(data);
+  });
+
+  // 3. Configura o "Ouvinte" específico para a mudança de inscritos (Contador)
+  tournamentSignal.setParticipantCountListener((tournamentId: number, count: number) => {
+      const tournament = tournaments.value.find(t => t.id === tournamentId);
+      if (tournament) {
+          // Descobre quantos jogadores novos entraram via SignalR
+          const addedPlayers = count - (tournament.participantsCount || 0);
+          
+          // Atualiza o número de inscritos no card
+          tournament.participantsCount = count;
+          
+          // Se entrou gente nova, o torneio cobra entrada, e NÃO tem prêmio fixo
+          if (addedPlayers > 0 && tournament.entryFee > 0 && !tournament.fixedPrize) {
+              const feePercent = tournament.houseFeePercent || 10; // Padrão 10%
+              const houseCut = tournament.entryFee * (feePercent / 100);
+              const prizeToAdd = (tournament.entryFee - houseCut) * addedPlayers;
+              
+              // Atualiza o prêmio, e o Vue injeta no Card automaticamente!
+              tournament.prizePool = (tournament.prizePool || 0) + prizeToAdd;
+          }
+      }
+  });
+
+  // ✅ 4. Configura o Ouvinte do Resultado da Inscrição (RabbitMQ)
+  // Serve apenas para tratamento de erro tardio, já que o fluxo principal é otimista
+  if (tournamentSignal.setJoinResultListener) {
+      tournamentSignal.setJoinResultListener((data: any) => {
+          console.log('📨 Resposta da Inscrição (RabbitMQ):', data);
+          
+          // Se houver erro E o botão ainda estiver travado (o que não deve acontecer no fluxo novo)
+          if ((data.Status !== 'Success' && data.status !== 'Success') && processingId.value) {
+                showAlert('Atenção', data.Message || 'Erro no processamento da fila.', 'error');
+                processingId.value = null;
+          }
+      });
+  }
+
+  // 5. Inicia a conexão
+  await tournamentSignal.start();
+
+  // 6. Fala para o backend que este usuário está na tela do Lobby
+  await tournamentSignal.joinLobby();
 });
+
+onUnmounted(async () => {
+  // Sai do Lobby antes de desconectar ou mudar de página
+  await tournamentSignal.leaveLobby();
+  await tournamentSignal.stop();
+});
+
+// --- COMPUTEDS (LISTAS ESPECÍFICAS) ---
+
+// 1. Torneios em Destaque
+const featuredTournamentsList = computed(() => {
+  return tournaments.value.filter(t => {
+    const cat = (t.category || t.Category || '').toLowerCase();
+    return (cat.includes('destaque')) && !isItemFinished(t);
+  });
+});
+
+// 2. Torneios Disponíveis
+const allActiveTournamentsList = computed(() => {
+  return tournaments.value.filter(t => !isItemFinished(t));
+});
+
+// 3. Torneios Grátis
+const freeTournamentsList = computed(() => {
+  return tournaments.value.filter(t => t.entryFee === 0 && !isItemFinished(t));
+});
+
+// 4. Torneios que Participo
+const myJoinedTournamentsList = computed(() => {
+  return tournaments.value.filter(t => t.isJoined && !isItemFinished(t));
+});
+
+// --- COMPUTED (FILTRAGEM GERAL) ---
+const filteredTournaments = computed(() => {
+  const list = tournaments.value.filter(t => !isItemFinished(t)); 
+  
+  switch (activeFilter.value) {
+    case 'featured': 
+      return list.filter(t => {
+        const cat = (t.category || t.Category || '').toLowerCase();
+        return cat.includes('destaque');
+      });
+      
+    case 'favorites': 
+      return list.filter(t => t.isFavorite === true);
+      
+    case 'free': 
+      return list.filter(t => t.entryFee === 0);
+
+    case 'soccer':
+      return list.filter(t => t.sport?.toLowerCase().match(/soccer|futebol/));
+
+    case 'nba':
+      return list.filter(t => t.sport?.toLowerCase().includes('basket'));
+      
+    case 'all': 
+    default:
+      return list; 
+  }
+});
+
+// --- MÉTODOS AUXILIARES ---
+
+const isItemFinished = (t: Tournament) => {
+    if (t.isFinished === true) return true;
+    if (String(t.status || '').toUpperCase() === 'FINISHED') return true;
+    if (t.isActive === false) return true; 
+    return false;
+};
+
+const extractUserId = (userData: any): string => {
+  if (!userData) return '';
+  const rawId = userData.cpf || userData.Cpf || userData.code || userData.Code || '';
+  return String(rawId).replace(/\D/g, ''); 
+};
+
+const showAlert = (title: string, text: string, icon: 'warning' | 'error' | 'success') => {
+  Swal.fire({ title, text, icon, background: '#0f172a', color: '#fff' });
+};
+
+// 👇 ESCUTA O EVENTO DO CORAÇÃO E ATUALIZA A TELA NA HORA
+const handleFavoriteToggle = (payload: { id: number, isFavorite: boolean }) => {
+    const t = tournaments.value.find(x => x.id === payload.id);
+    if (t) {
+        t.isFavorite = payload.isFavorite;
+    }
+};
+
+// --- MÉTODOS DE MODAL ---
+const openInfoModal = (tournament: Tournament) => {
+    selectedTournament.value = tournament;
+    showInfoModal.value = true;
+};
+
+const closeInfoModal = () => {
+    showInfoModal.value = false;
+    setTimeout(() => { selectedTournament.value = null; }, 300); // Limpa após animação
+};
+
+const handleJoinFromModal = (id: number) => {
+    closeInfoModal();
+    // Pequeno delay para a UI fluir melhor
+    setTimeout(() => {
+        processJoin(id);
+    }, 100);
+};
+
+// --- MÉTODOS DE NEGÓCIO ---
+const loadCurrentUser = () => {
+  if (authStore.user) {
+    currentUserId.value = extractUserId(authStore.user);
+    return;
+  } 
+
+  try {
+    const storedString = localStorage.getItem('user') || localStorage.getItem('user_data') || localStorage.getItem('session');
+    if (storedString) {
+      currentUserId.value = extractUserId(JSON.parse(storedString));
+    }
+  } catch (error) { 
+    console.error("Erro ao analisar dados do usuário no localStorage:", error); 
+  }
+};
+
+const loadTournaments = async () => {
+  startLoader();
+  try {
+    const res = await tournamentService.listTournaments(currentUserId.value);
+    tournaments.value = res.data || [];
+  } catch (error) {
+    console.error("Erro ao buscar torneios:", error);
+    tournaments.value = [];
+  } finally {
+    finishLoader();
+  }
+};
+
+const enterTournament = (id: number) => {
+  router.push({ name: 'TournamentPlay', params: { id } });
+};
+
+const updateLocalTournamentState = (id: number) => {
+  const localTournament = tournaments.value.find(t => t.id === id);
+  if (!localTournament) return;
+
+  // Atualiza apenas o estado visual de 'Inscrito'
+  localTournament.isJoined = true;
+};
+
+// ✅ MÉTODO DE INSCRIÇÃO CORRIGIDO (Otimista + Seguro)
+const processJoin = async (id: number) => {
+  if (!authStore.isAuthenticated && !currentUserId.value) {
+    showAlert('Login Necessário', 'Por favor, entre na sua conta para participar.', 'warning');
+    return;
+  }
+
+  // 1. Ativa o Loading no botão (Feedback visual imediato)
+  processingId.value = id;
+  
+  try {
+    const userName = authStore.user?.name || authStore.user?.Name || 'Jogador';
+    const userAvatar = authStore.user?.avatar || authStore.user?.Avatar || ''; 
+
+    // 2. Envia para o Backend (HTTP)
+    // Se falhar aqui (ex: sem saldo, erro 500), vai para o CATCH.
+    // Se passar (200 OK), significa que o pedido foi aceito e está na fila.
+    await tournamentService.joinTournament(id, currentUserId.value, userName, userAvatar);
+    
+    // -----------------------------------------------------------
+    // 🚀 SUCESSO DO ENVIO: UI OTIMISTA
+    // -----------------------------------------------------------
+    
+    // 3. Atualiza estado local (Card fica verde/Inscrito)
+    updateLocalTournamentState(id);
+    
+    // 4. Mostra sucesso rápido
+    const Toast = Swal.mixin({
+        toast: true, position: 'top-end', showConfirmButton: false, timer: 1500, background: '#0f172a', color: '#fff'
+    });
+    Toast.fire({ icon: 'success', title: 'Inscrição Confirmada!' });
+
+    // 5. Redireciona para o jogo (Não espera o RabbitMQ terminar)
+    enterTournament(id);
+
+  } catch (error: any) {
+    // --- TRATAMENTO DE ERRO (Só entra aqui se a API recusar) ---
+    const errorData = error.response?.data;
+    const errorMsg = (typeof errorData === 'string' ? errorData : errorData?.error || errorData?.message || '').toLowerCase();
+    
+    // Edge Case: Se a API disser "Usuário já inscrito" (erro 400), 
+    // consideramos sucesso e entramos.
+    if (errorMsg.includes('já inscrito') || errorMsg.includes('already joined')) {
+      updateLocalTournamentState(id);
+      enterTournament(id);
+    } else {
+      // Erro real (ex: Saldo insuficiente)
+      showAlert('Atenção', errorData?.message || 'Não foi possível enviar a solicitação.', 'error');
+    }
+  } finally {
+    // 6. Destrava o botão sempre
+    processingId.value = null;
+  }
+};
 </script>
 
 <template>
-  <div class="lobby-wrapper">
+  <div class="px-3 pb-3 pt-1 md:px-6 md:pb-6 md:pt-2 bg-transparent min-h-full overflow-x-hidden">
     
+    <TournamentInfoModal 
+        :show="showInfoModal"
+        :tournament="selectedTournament"
+        @close="closeInfoModal"
+        @join="handleJoinFromModal"
+    />
+
     <PageLoader 
         :is-loading="isLoading" 
         :progress="loadingProgress" 
         loading-text="Carregando Torneios..." 
     />
 
-    <div class="content-container transition-opacity duration-700" :class="isContentReady ? 'opacity-100' : 'opacity-0'">
+    <div class="transition-opacity duration-700 w-full" :class="isContentReady ? 'opacity-100' : 'opacity-0'">
         
         <BannerCarousel />
 
-        <div class="flex items-center gap-2 mb-4 overflow-x-auto pb-2 scrollbar-hide pl-1">
-             <button 
-                v-for="filter in filters" 
-                :key="filter.id"
-                @click="activeFilter = filter.id"
-                class="flex items-center gap-1.5 px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-widest transition-all border"
-                :class="activeFilter === filter.id 
-                    ? 'bg-white text-black border-white shadow-[0_0_10px_rgba(255,255,255,0.2)]' 
-                    : 'bg-transparent text-gray-400 border-gray-800 hover:border-gray-500 hover:text-white'"
-            >
-                <component :is="filter.icon" class="w-3 h-3" />
-                {{ filter.label }}
-            </button>
+        <div v-if="activeFilter === 'all' && featuredTournamentsList.length > 0" class="mt-4 md:mt-6">
+            <TournamentCarousel 
+                title="Torneios em Destaque"
+                :tournaments="featuredTournamentsList"
+                :processingId="processingId"
+                viewAllType="featured" 
+                @join="processJoin"
+                @enter="enterTournament"
+                @info="openInfoModal" 
+                @favorite="handleFavoriteToggle"
+            />
         </div>
 
-        <TournamentCarousel 
-            title="Torneios Disponíveis"
-            :tournaments="filteredTournaments"
-            :processingId="processingId"
-            @join="processJoin"
-            @enter="enterTournament"
-        />
+        <div class="my-4">
+            <TournamentFilters v-model="activeFilter" />
+        </div>
 
-        <div v-if="myTournaments.length > 0" class="mt-8">
+        <div v-if="activeFilter === 'all'" class="space-y-3 md:space-y-8">
+            
             <TournamentCarousel 
-                title="Minhas Inscrições"
-                :tournaments="myTournaments"
+                title="Torneios Disponíveis"
+                :tournaments="allActiveTournamentsList"
+                :processingId="processingId"
+                viewAllType="all"
+                @join="processJoin"
+                @enter="enterTournament"
+                @info="openInfoModal"
+                @favorite="handleFavoriteToggle"
+            />
+
+            <TournamentCarousel 
+                v-if="freeTournamentsList.length > 0"
+                title="Torneios Grátis"
+                :tournaments="freeTournamentsList"
+                :processingId="processingId"
+                viewAllType="free"
+                @join="processJoin"
+                @enter="enterTournament"
+                @info="openInfoModal"
+                @favorite="handleFavoriteToggle"
+            />
+
+            <TournamentCarousel 
+                v-if="myJoinedTournamentsList.length > 0"
+                title="Torneios que Participo"
+                :tournaments="myJoinedTournamentsList"
+                :processingId="processingId"
+                viewAllType="mine"
+                @join="processJoin"
+                @enter="enterTournament"
+                @info="openInfoModal"
+                @favorite="handleFavoriteToggle"
+            />
+        </div>
+
+        <div v-else>
+            <TournamentCarousel 
+                :title="activeFilter === 'favorites' ? 'Meus Favoritos' : 
+                        activeFilter === 'free' ? 'Torneios Grátis' : 
+                        activeFilter === 'featured' ? 'Em Destaque' : 
+                        'Torneios Filtrados'"
+                :tournaments="filteredTournaments"
                 :processingId="processingId"
                 @join="processJoin"
                 @enter="enterTournament"
+                @info="openInfoModal"
+                @favorite="handleFavoriteToggle"
             />
         </div>
 
@@ -191,14 +459,11 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.lobby-wrapper {
-    padding: 1.5rem;
-    background-color: #141414;
-    min-height: 100vh;
-    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-    color: #fff;
-    overflow-x: hidden;
+.scrollbar-hide::-webkit-scrollbar { 
+    display: none; 
 }
-.scrollbar-hide::-webkit-scrollbar { display: none; }
-.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+.scrollbar-hide { 
+    -ms-overflow-style: none; 
+    scrollbar-width: none; 
+}
 </style>

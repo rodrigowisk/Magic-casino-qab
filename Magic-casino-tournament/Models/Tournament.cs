@@ -67,5 +67,8 @@ namespace Magic_casino_tournament.Models
 
         [NotMapped]
         public int? Rank { get; set; }
+
+        [NotMapped]
+        public bool IsFavorite { get; set; }
     }
 }

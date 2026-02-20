@@ -1,5 +1,6 @@
 ﻿using Magic_casino_sportbook.Data;
 using Magic_casino_sportbook.Services;
+using Magic_casino_sportbook.Services.Live;
 using Magic_casino_sportbook.Hubs;
 using Magic_casino_sportbook.Models;
 using Microsoft.AspNetCore.SignalR;
@@ -12,7 +13,7 @@ namespace Magic_casino_sportbook.BackgroundServices
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<GameStatusWorker> _logger;
 
-        // Diminuí levemente o delay para ele ser mais ágil na virada do minuto
+        // Mantemos os 10s que você já configurou
         private const int DELAY_HOT_MS = 10000;
 
         public GameStatusWorker(IServiceProvider serviceProvider, ILogger<GameStatusWorker> logger)
@@ -23,7 +24,7 @@ namespace Magic_casino_sportbook.BackgroundServices
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("🚦 [GAME STATUS WORKER] Iniciado v6.0 (Tolerância 1min).");
+            _logger.LogInformation("🚦 [GAME STATUS] Worker Iniciado (Limpeza Imediata + Verificação).");
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -39,64 +40,83 @@ namespace Magic_casino_sportbook.BackgroundServices
                 using (var scope = _serviceProvider.CreateScope())
                 {
                     var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                    var liveService = scope.ServiceProvider.GetRequiredService<LiveSportService>();
+                    var hotZoneService = scope.ServiceProvider.GetRequiredService<HotZoneService>();
                     var hub = scope.ServiceProvider.GetRequiredService<IHubContext<GameHub>>();
 
-                    // ====================================================================================
-                    // 🔥 LÓGICA CORRIGIDA - TOLERÂNCIA DE 1 MINUTO
-                    // ====================================================================================
-                    // 1. Prematch: Só pegamos se JÁ PASSOU 1 minuto do início (UtcNow.AddMinutes(-1)).
-                    //    Isso evita marcar como "Delayed" jogos que começaram agora (ex: 18:00:05).
-                    //    Damos 60 segundos para o LiveOddsWorker detectar o "In Play" primeiro.
-                    //
-                    // 2. WaitingLive: Pegamos sempre para continuar monitorando se virou Live ou encerrou.
-                    // ====================================================================================
+                    var agora = DateTime.UtcNow;
 
-                    var toleranceThreshold = DateTime.UtcNow.AddMinutes(-1); // 1 minuto ATRÁS
-                    var lookbackLimit = DateTime.UtcNow.AddHours(-4); // Não olhar jogos muito velhos
+                    // ==============================================================================
+                    // 1. A GUILHOTINA (Limpeza de Pré-Jogo Vencido)
+                    // ==============================================================================
+                    var jogosVencidos = await context.SportsEvents
+                        .Where(g => g.Status == "Prematch" && g.CommenceTime <= agora)
+                        .Take(100)
+                        .ToListAsync(ct);
+
+                    if (jogosVencidos.Any())
+                    {
+                        var idsRemover = new List<string>();
+
+                        foreach (var jogo in jogosVencidos)
+                        {
+                            jogo.Status = "WaitingLive";
+                            jogo.LastUpdate = DateTime.UtcNow;
+                            idsRemover.Add(jogo.ExternalId);
+                        }
+
+                        await context.SaveChangesAsync(ct);
+                        await hub.Clients.All.SendAsync("RemoveGames", idsRemover, ct);
+                        _logger.LogInformation($"🔪 [LIMPEZA] {idsRemover.Count} jogos vencidos removidos da tela.");
+                    }
+
+                    // ==============================================================================
+                    // 2. A VERIFICAÇÃO (Com Rotação de Fila)
+                    // ==============================================================================
+
+                    var lookbackLimit = DateTime.UtcNow.AddHours(-4);
+
+                    // ✅ FIX DO ERRO DE BUILD: Definição das variáveis de tempo
+                    var toleranceThreshold = DateTime.UtcNow.AddMinutes(-1);
+                    var cooldownLimit = DateTime.UtcNow.AddMinutes(-2);
 
                     var gamesToCheck = await context.SportsEvents
                         .AsNoTracking()
                         .Where(g =>
-                            // CASO A: Jogos que já estão no limbo "WaitingLive" (verificar sempre)
-                            (g.Status == "WaitingLive" && g.CommenceTime > lookbackLimit)
-                            ||
-                            // CASO B: Jogos Prematch que DEVERIAM ter começado há mais de 1 minuto
-                            (g.Status == "Prematch" && g.CommenceTime <= toleranceThreshold && g.CommenceTime > lookbackLimit)
+                            // 👇 MÁGICA: Ignora quem foi verificado recentemente (Rotação de Fila)
+                            g.LastUpdate < cooldownLimit
+                            &&
+                            (
+                                // CASO A: Jogos que já estão no limbo "WaitingLive"
+                                (g.Status == "WaitingLive" && g.CommenceTime > lookbackLimit)
+                                ||
+                                // CASO B: Jogos Prematch atrasados
+                                (g.Status == "Prematch" && g.CommenceTime <= toleranceThreshold && g.CommenceTime > lookbackLimit)
+                            )
                         )
                         .OrderBy(g => g.CommenceTime)
-                        .Take(60)
+                        .Take(50)
                         .ToListAsync(ct);
 
                     if (gamesToCheck.Any())
                     {
-                        // Verifica na API. Se não estiver Live, o serviço deve marcar como WaitingLive/Delayed.
-                        var idsToRemoveFromPreMatch = await liveService.VerifyKickoffWithApiAsync(gamesToCheck, scope.ServiceProvider);
+                        // O HotZoneService atualiza o LastUpdate de todos, garantindo a rotação
+                        var idsProcessados = await hotZoneService.VerifyKickoffWithApiAsync(gamesToCheck, scope.ServiceProvider);
 
-                        if (idsToRemoveFromPreMatch.Any())
+                        var reallyLiveGames = await context.SportsEvents
+                            .AsNoTracking()
+                            .Where(g => idsProcessados.Contains(g.ExternalId) && g.Status == "Live")
+                            .ToListAsync(ct);
+
+                        if (reallyLiveGames.Any())
                         {
-                            _logger.LogInformation($"🔥 [HOTZONE] Atualizado: {idsToRemoveFromPreMatch.Count} jogos processados (Live ou Delay).");
-
-                            // 1. Busca quem virou REALMENTE LIVE para avisar o Frontend (Aparecer na aba Ao Vivo)
-                            var reallyLiveGames = await context.SportsEvents
-                                .AsNoTracking()
-                                .Where(g => idsToRemoveFromPreMatch.Contains(g.ExternalId) && g.Status == "Live")
-                                .ToListAsync(ct);
-
-                            if (reallyLiveGames.Any())
-                            {
-                                await hub.Clients.All.SendAsync("GameWentLive", reallyLiveGames, ct);
-                            }
-
-                            // 2. Remove TODOS da lista de Pré-Jogo (Seja porque virou Live ou Delayed)
-                            await hub.Clients.All.SendAsync("RemoveGames", idsToRemoveFromPreMatch, ct);
+                            await hub.Clients.All.SendAsync("GameWentLive", reallyLiveGames, ct);
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Erro GameStatusWorker: {ex.Message}");
+                _logger.LogError($"❌ Erro GameStatusWorker: {ex.Message}");
             }
         }
     }

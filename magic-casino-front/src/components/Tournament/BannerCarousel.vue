@@ -53,7 +53,7 @@ const prevSlide = () => {
 onMounted(() => {
     updateLayout();
     window.addEventListener('resize', updateLayout);
-    autoPlayInterval = setInterval(nextSlide, 5000);
+    autoPlayInterval = setInterval(nextSlide, 7000);
 });
 
 onUnmounted(() => {

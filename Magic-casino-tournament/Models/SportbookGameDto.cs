@@ -18,6 +18,9 @@ namespace Magic_casino_tournament.Models
         [JsonPropertyName("awayTeam")]
         public string AwayTeam { get; set; } = string.Empty;
 
+        [JsonPropertyName("sportTitle")]
+        public string League { get; set; } = string.Empty;
+
         // As odds de resumo (que vêm zeradas em alguns jogos)
         [JsonPropertyName("rawOddsHome")]
         public decimal RawOddsHome { get; set; }

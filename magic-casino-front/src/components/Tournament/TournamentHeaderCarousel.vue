@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { ChevronLeft, ChevronRight, Trophy, Ticket, Medal, Info, Play } from 'lucide-vue-next';
+import { 
+    ChevronLeft, ChevronRight, Trophy, Ticket, 
+    Medal, Info, Play, ArrowLeft, Lock 
+} from 'lucide-vue-next';
+import tournamentSignal from '../../services/Tournament/TournamentSignalService';
 
 export interface Tournament {
   id: number;
@@ -12,6 +16,8 @@ export interface Tournament {
   prizePool?: number;
   entryFee?: number;
   participants?: number;
+  isFinished?: boolean;
+  isActive?: boolean;
 }
 
 const props = defineProps<{
@@ -29,7 +35,6 @@ const emit = defineEmits<{
 
 const router = useRouter();
 
-// --- DETECÇÃO MOBILE ---
 const isMobile = ref(false);
 
 const checkScreenSize = () => {
@@ -38,16 +43,36 @@ const checkScreenSize = () => {
     }
 };
 
+// --- CONTROLE DE TEMPO ---
+const now = ref(tournamentSignal.getCorrectedNow());
+let timer: any = null;
+
+// 🔥 CORREÇÃO DA TRAVA DO BOTÃO 🔥
+const isItemLocked = (item: Tournament) => {
+    // 1. Prioridade total para flags de encerramento do Wrapper
+    if (item.isFinished || item.isActive === false) return true;
+    if (!item.endDate) return false;
+    
+    // 2. Cálculo idêntico ao do Overlay (Arredonda para baixo)
+    const secondsLeft = Math.floor((new Date(item.endDate).getTime() - now.value) / 1000);
+    
+    return secondsLeft <= 0;
+};
+
 onMounted(() => {
     checkScreenSize();
     window.addEventListener('resize', checkScreenSize);
+    timer = setInterval(() => { 
+        now.value = tournamentSignal.getCorrectedNow(); 
+    }, 1000);
 });
 
 onUnmounted(() => {
     window.removeEventListener('resize', checkScreenSize);
+    if (timer) clearInterval(timer);
 });
 
-// --- LÓGICA DO CARROSSEL ---
+// --- CARROSSEL ---
 const getCircularIndex = (baseIndex: number, offset: number, length: number) => {
   if (length === 0) return 0;
   return (((baseIndex + offset) % length) + length) % length;
@@ -132,11 +157,13 @@ const selectItem = (item: any) => {
     <div class="relative w-full py-4 select-none h-[160px] flex items-center justify-center z-10">
         <div class="w-full max-w-[1050px] relative h-full flex items-center justify-center px-2">
             
-            <button v-if="tournaments.length > 1" @click.stop="navigate('prev')" class="hidden md:flex absolute left-0 md:-left-4 top-1/2 -translate-y-1/2 z-50 p-2 bg-slate-800/50 hover:bg-blue-600 rounded-full text-white transition-all backdrop-blur-md border border-white/5 hover:border-blue-400 shadow-lg cursor-pointer items-center justify-center group">
+            <button v-if="tournaments.length > 1" @click.stop="navigate('prev')" 
+                class="absolute left-1 md:-left-4 top-[72%] md:top-1/2 -translate-y-1/2 z-50 p-2 bg-slate-800/50 hover:bg-blue-600 rounded-full text-white transition-all backdrop-blur-md border border-white/5 hover:border-blue-400 shadow-lg cursor-pointer flex items-center justify-center group">
               <ChevronLeft class="w-5 h-5 text-slate-400 group-hover:text-white" />
             </button>
 
-            <button v-if="tournaments.length > 1" @click.stop="navigate('next')" class="hidden md:flex absolute right-0 md:-right-4 top-1/2 -translate-y-1/2 z-50 p-2 bg-slate-800/50 hover:bg-blue-600 rounded-full text-white transition-all backdrop-blur-md border border-white/5 hover:border-blue-400 shadow-lg cursor-pointer items-center justify-center group">
+            <button v-if="tournaments.length > 1" @click.stop="navigate('next')" 
+                class="absolute right-1 md:-right-4 top-[72%] md:top-1/2 -translate-y-1/2 z-50 p-2 bg-slate-800/50 hover:bg-blue-600 rounded-full text-white transition-all backdrop-blur-md border border-white/5 hover:border-blue-400 shadow-lg cursor-pointer flex items-center justify-center group">
               <ChevronRight class="w-5 h-5 text-slate-400 group-hover:text-white" />
             </button>
 
@@ -164,9 +191,6 @@ const selectItem = (item: any) => {
                               
                               <div class="absolute inset-0 border border-white/10 rounded-2xl z-20 pointer-events-none"></div>
 
-                              <div class="absolute top-0 right-0 w-[120px] h-[120px] bg-blue-500/20 blur-[50px] rounded-full pointer-events-none -mr-8 -mt-8 mix-blend-screen opacity-60"></div>
-                              <div class="absolute bottom-0 left-0 w-[100px] h-[100px] bg-indigo-500/10 blur-[40px] rounded-full pointer-events-none -ml-6 -mb-6 opacity-50"></div>
-
                               <div class="relative h-full w-full flex flex-col justify-between p-3.5 z-30">
                                   
                                   <div class="w-full flex flex-col items-center justify-center relative -mt-1">
@@ -180,11 +204,11 @@ const selectItem = (item: any) => {
 
                                   <div class="w-full flex justify-center">
                                       <div class="relative w-full max-w-[210px] bg-[#020617]/60 backdrop-blur-sm border border-white/10 rounded-lg px-4 h-[42px] shadow-[inset_0_2px_4px_rgba(0,0,0,0.5)] flex flex-col items-center justify-center transition-all group-hover/maincard:border-blue-500/20 group-hover/maincard:bg-[#020617]/80 overflow-hidden">
-                                          <span class="absolute top-0 pt-[2px] w-full text-center text-[7px] font-bold text-slate-500 uppercase tracking-[0.25em] group-hover/maincard:text-blue-300/60 transition-colors">
+                                          <span class="absolute top-0 pt-[2px] w-full text-center text-[7px] font-bold text-slate-500 uppercase tracking-[0.25em]">
                                               Saldo Torneio
                                           </span>
                                           <div class="flex items-baseline gap-1.5 mt-4">
-                                              <span class="text-emerald-400 text-sm drop-shadow-[0_0_3px_rgba(52,211,153,0.5)]">●</span>
+                                              <span class="text-emerald-400 text-sm">●</span>
                                               <span class="text-white font-mono font-bold text-xl tracking-tight leading-none drop-shadow-md">
                                                   {{ fantasyBalance.toFixed(2) }}
                                               </span>
@@ -193,18 +217,36 @@ const selectItem = (item: any) => {
                                   </div>
 
                                   <div class="w-full grid grid-cols-4 gap-2">
-                                      <button @click.stop="emit('open-history')" class="h-8 md:h-9 flex items-center justify-center rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-white/20 transition-all active:scale-95" title="Histórico">
-                                          <Ticket class="w-4 h-4 text-slate-400 group-hover:text-blue-300 transition-colors" />
+                                      <button @click.stop="emit('open-history')" class="h-8 md:h-9 flex flex-col items-center justify-center rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-white/20 transition-all active:scale-95 group" title="Histórico">
+                                          <Ticket class="w-3 h-3 md:w-3.5 md:h-3.5 text-slate-400 group-hover:text-blue-300 transition-colors" />
+                                          <span class="text-[6px] md:text-[7px] font-bold uppercase tracking-widest text-slate-500 group-hover:text-blue-300 mt-0.5 transition-colors">Bilhetes</span>
                                       </button>
-                                      <button @click.stop="router.push(`/tournament/${item.id}/ranking`)" class="h-8 md:h-9 flex items-center justify-center rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-white/20 transition-all active:scale-95" title="Ranking">
-                                          <Trophy class="w-4 h-4 text-slate-400 group-hover:text-yellow-400 transition-colors" />
+                                      
+                                      <button @click.stop="router.push(`/tournament/${item.id}/ranking`)" class="h-8 md:h-9 flex flex-col items-center justify-center rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-white/20 transition-all active:scale-95 group" title="Ranking">
+                                          <Trophy class="w-3 h-3 md:w-3.5 md:h-3.5 text-slate-400 group-hover:text-yellow-400 transition-colors" />
+                                          <span class="text-[6px] md:text-[7px] font-bold uppercase tracking-widest text-slate-500 group-hover:text-yellow-400 mt-0.5 transition-colors">Ranking</span>
                                       </button>
-                                      <button @click.stop="emit('open-details', item.id)" class="h-8 md:h-9 flex items-center justify-center rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-white/20 transition-all active:scale-95" title="Detalhes">
-                                          <Info class="w-4 h-4 text-slate-400 group-hover:text-emerald-300 transition-colors" />
+                                      
+                                      <button @click.stop="emit('open-details', item.id)" class="h-8 md:h-9 flex flex-col items-center justify-center rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-white/20 transition-all active:scale-95 group" title="Detalhes">
+                                          <Info class="w-3 h-3 md:w-3.5 md:h-3.5 text-slate-400 group-hover:text-emerald-300 transition-colors" />
+                                          <span class="text-[6px] md:text-[7px] font-bold uppercase tracking-widest text-slate-500 group-hover:text-emerald-300 mt-0.5 transition-colors">Detalhes</span>
                                       </button>
-                                      <button @click.stop="router.push(`/tournament/${item.id}/play`)" 
-                                              class="h-8 md:h-9 flex items-center justify-center rounded-md bg-gradient-to-r from-blue-600 to-blue-500 border border-blue-400/30 shadow-lg hover:to-blue-400 transition-all active:scale-95 relative overflow-hidden" title="Jogar">
-                                          <Play class="w-4 h-4 text-white fill-current relative z-10" />
+                                      
+                                      <button @click.stop="!isItemLocked(item) && router.push(`/tournament/${item.id}/play`)" 
+                                              :disabled="isItemLocked(item)"
+                                              :class="['h-8 md:h-9 flex flex-col items-center justify-center rounded-md border shadow-lg transition-all relative overflow-hidden text-white', 
+                                                  isItemLocked(item) 
+                                                  ? 'bg-slate-800/80 border-slate-700 cursor-not-allowed opacity-70' 
+                                                  : 'bg-gradient-to-r from-emerald-600 to-emerald-500 border-emerald-400/30 hover:to-emerald-400 active:scale-95']">
+                                          
+                                          <template v-if="isItemLocked(item)">
+                                              <Lock class="w-3 h-3 md:w-3.5 md:h-3.5 text-slate-400 relative z-10" />
+                                              <span class="text-[6px] md:text-[7px] font-bold uppercase tracking-widest text-slate-400 relative z-10 leading-none mt-0.5">Fechado</span>
+                                          </template>
+                                          <template v-else>
+                                              <Play class="w-3 h-3 md:w-3.5 md:h-3.5 fill-current relative z-10" />
+                                              <span class="text-[6px] md:text-[7px] font-black uppercase tracking-widest relative z-10 leading-none mt-0.5">Jogar</span>
+                                          </template>
                                       </button>
                                   </div>
                               </div>
@@ -212,31 +254,33 @@ const selectItem = (item: any) => {
                           
                           <div v-else class="w-full h-full relative group/sidecard overflow-hidden">
                               <div class="absolute inset-0 bg-gradient-to-br from-[#1e293b] via-[#0f172a] to-[#020617]"></div>
-                              
                               <div class="absolute inset-0 border border-white/10 rounded-xl z-20 pointer-events-none group-hover/sidecard:border-white/20 transition-colors"></div>
-
                               <div class="relative z-30 w-full h-full flex flex-row items-center gap-3 p-3 opacity-50 group-hover/sidecard:opacity-100 transition-opacity duration-300">
-                                  
-                                  <div class="w-8 h-8 md:w-10 md:h-10 rounded-full bg-[#020617]/50 border border-white/5 flex items-center justify-center shrink-0 shadow-[inset_0_2px_4px_rgba(0,0,0,0.5)]">
-                                      <Trophy class="w-3.5 h-3.5 md:w-4 md:h-4 text-slate-500 group-hover/sidecard:text-yellow-500 transition-colors duration-300" />
+                                  <div class="w-8 h-8 md:w-10 md:h-10 rounded-full bg-[#020617]/50 border border-white/5 flex items-center justify-center shrink-0">
+                                      <Trophy class="w-3.5 h-3.5 md:w-4 md:h-4 text-slate-500 group-hover/sidecard:text-yellow-500" />
                                   </div>
-
                                   <div class="flex flex-col min-w-0">
-                                      <span class="text-[10px] md:text-xs font-black italic uppercase text-slate-300 group-hover/sidecard:text-white truncate transition-colors duration-300 tracking-wide">
+                                      <span class="text-[10px] md:text-xs font-black italic uppercase text-slate-300 group-hover/sidecard:text-white truncate">
                                           {{ item.name }}
                                       </span>
-                                      <span class="text-[7px] md:text-[8px] font-mono font-bold text-slate-600 group-hover/sidecard:text-slate-500 transition-colors">
+                                      <span class="text-[7px] md:text-[8px] font-mono font-bold text-slate-600">
                                           ID: #{{ item.id }}
                                       </span>
                                   </div>
-
                               </div>
                           </div>
-                          </div>
+                      </div>
                     </transition-group>
                 </div>
             </div>
         </div>
+    </div>
+
+    <div v-if="isMobile" class="absolute bottom-2 left-2 z-[60]">
+        <button @click="router.push('/tournaments')" class="flex items-center gap-1.5 text-[8px] font-black text-slate-400 hover:text-white transition-colors bg-[#020617]/80 backdrop-blur-md px-2.5 py-1.5 rounded-full border border-white/10 shadow-lg active:scale-95 group">
+            <ArrowLeft class="w-3 h-3 group-hover:-translate-x-0.5 transition-transform" />
+            <span class="uppercase tracking-widest">Lobby</span>
+        </button>
     </div>
 
     <div v-if="userRank > 0" class="relative z-20 flex justify-center mt-1">

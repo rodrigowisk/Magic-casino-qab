@@ -1,15 +1,16 @@
-﻿using Magic_casino_sportbook.Data;
-using Magic_casino_sportbook.Services;
+﻿using System.Text;
+using Magic_casino_sportbook.BackgroundServices;
+using Magic_casino_sportbook.Consumers;
+using Magic_casino_sportbook.Events;
+using Magic_casino_sportbook.Data;
 using Magic_casino_sportbook.Hubs;
+using Magic_casino_sportbook.Services;
+using MassTransit; 
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using System.Text;
-using Magic_casino_sportbook.BackgroundServices;
 using StackExchange.Redis;
-using MassTransit; // ✅ Importante para RabbitMQ
-using Magic_casino_sportbook.Consumers; // ✅ Importante para achar o BetPlacedConsumer
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -173,12 +174,14 @@ builder.Services.AddSwaggerGen(c =>
 // =============================================================
 builder.Services.AddMassTransit(x =>
 {
-    // 👇 Registra o consumidor que criamos
+    // 👇 1. Registro de Todos os Consumidores
     x.AddConsumer<BetPlacedConsumer>();
     x.AddConsumer<BetWonConsumer>();
+    x.AddConsumer<LiveGamePersistenceConsumer>(); // O consumidor de lote
 
     x.UsingRabbitMq((context, cfg) =>
     {
+        // 👇 2. Configuração do Host RabbitMQ
         var rabbitHost = Environment.GetEnvironmentVariable("RABBITMQ_HOST") ?? "rabbitmq";
         var rabbitUser = Environment.GetEnvironmentVariable("RABBITMQ_USER") ?? "admin";
         var rabbitPass = Environment.GetEnvironmentVariable("RABBITMQ_PASS") ?? "admin";
@@ -191,7 +194,26 @@ builder.Services.AddMassTransit(x =>
             h.Password(rabbitPass);
         });
 
-        // Configura automaticamente os endpoints para os consumidores registrados
+        // 👇 3. Configuração ESPECÍFICA para a Fila de Persistência (Batch)
+        // Isso é necessário para ativar o agrupamento de mensagens (Bulk Insert)
+        cfg.ReceiveEndpoint("live-game-persistence-queue", e =>
+        {
+            e.PrefetchCount = 100; // Baixa até 100 mensagens para a memória
+
+            // Configuração do Lote:
+            // Processa se juntar 500 jogos OU se passar 45 segundos
+            e.Batch<LiveGameUpdatedEvent>(b =>
+            {
+                b.MessageLimit = 500;
+                b.TimeLimit = TimeSpan.FromSeconds(45);
+                b.ConcurrencyLimit = 1; // Processa 1 lote por vez (protege o banco)
+            });
+
+            e.ConfigureConsumer<LiveGamePersistenceConsumer>(context);
+        });
+
+        // 👇 4. Configuração AUTOMÁTICA para os outros consumidores
+        // (BetPlacedConsumer e BetWonConsumer serão configurados aqui automaticamente)
         cfg.ConfigureEndpoints(context);
     });
 });
@@ -202,24 +224,20 @@ builder.Services.AddMassTransit(x =>
 
 // Injeção do BetsApiGatekeeper usando o Redis que já configuramos acima
 builder.Services.AddSingleton<BetsApiGatekeeper>();
+builder.Services.AddTransient<Magic_casino_sportbook.Services.Gateways.BetsApiHttpService>();
+builder.Services.AddTransient<Magic_casino_sportbook.Services.Prematch.IScheduleService, Magic_casino_sportbook.Services.Prematch.ScheduleService>();
+builder.Services.AddTransient<Magic_casino_sportbook.Services.Prematch.IPrematchOddsService, Magic_casino_sportbook.Services.Prematch.PrematchOddsService>();
+builder.Services.AddTransient<Magic_casino_sportbook.Services.Live.LiveGameUpdater>();
+builder.Services.AddTransient<Magic_casino_sportbook.Services.Live.LiveCleanupService>();
+builder.Services.AddTransient<Magic_casino_sportbook.Services.Live.HotZoneService>();
 
 builder.Services.AddHttpClient();
-builder.Services.AddHttpClient<BetsApiService>();
-builder.Services.AddHttpClient<PreMatchService>();
-builder.Services.AddScoped<LiveSportService>();
+//builder.Services.AddHttpClient<BetsApiService>();
+//builder.Services.AddHttpClient<PreMatchService>();
+//builder.Services.AddScoped<LiveSportService>();
 
 string provider = Environment.GetEnvironmentVariable("ODDS_PROVIDER") ?? "BetsApi";
 
-if (provider == "BetsApi")
-{
-    Console.WriteLine("🚀 MOTOR DE ODDS SELECIONADO: BetsAPI");
-    builder.Services.AddScoped<IOddsService, BetsApiService>();
-}
-else
-{
-    Console.WriteLine("🚀 MOTOR DE ODDS SELECIONADO: The Odds API");
-    builder.Services.AddScoped<IOddsService, TheOddsApiService>();
-}
 
 builder.Services.AddHttpClient<CoreWalletService>(client =>
 {
