@@ -51,35 +51,35 @@ namespace Magic_casino_sportbook.Controllers
         {
             try
             {
-                // 1. Busca TODAS as configurações salvas (Essa é a fonte da verdade agora)
+                // 1. Busca TODAS as configurações salvas no banco
                 var configs = await _context.SportConfigurations.AsNoTracking().ToListAsync();
 
-                // 2. Busca eventos apenas para preencher as ligas/times
+                // 2. Busca eventos (jogos) para preencher as ligas/times
                 var events = await _context.SportsEvents
                     .AsNoTracking()
                     .Where(e => e.CommenceTime > DateTime.UtcNow.AddHours(-24))
                     .ToListAsync();
 
-                // Separa configs por tipo para acesso rápido
                 var sportConfigs = configs.Where(c => c.Type == "SPORT").ToList();
+
+                // 🔥 CORREÇÃO PARA ECONOMIA: Trava os esportes permitidos no sistema
+                var allSportsToProcess = new List<string> { "soccer", "basketball", "tennis" };
 
                 var result = new List<SportConfigDto>();
 
-                // 3. Itera sobre as CONFIGURAÇÕES, não sobre os eventos
-                // Isso garante que esportes sem jogos (mas cadastrados) apareçam na lista
-                foreach (var sConf in sportConfigs)
+                // 3. Itera APENAS sobre a lista de esportes permitidos
+                foreach (var sportKey in allSportsToProcess)
                 {
-                    var sportKey = sConf.Identifier;
-
-                    // Pega eventos desse esporte (se houver)
+                    var sConf = sportConfigs.FirstOrDefault(c => c.Identifier == sportKey);
                     var sportEvents = events.Where(e => e.SportKey == sportKey).ToList();
 
                     var dto = new SportConfigDto
                     {
                         Key = sportKey,
-                        Name = char.ToUpper(sportKey[0]) + sportKey.Substring(1), // Capitaliza (Soccer -> Soccer)
+                        Name = char.ToUpper(sportKey[0]) + sportKey.Substring(1), // Capitaliza (soccer -> Soccer)
                         Icon = GetIconForSport(sportKey),
-                        IsActive = sConf.IsEnabled,
+                        // Se for um esporte novo (sem config), vem Ativo por padrão
+                        IsActive = sConf?.IsEnabled ?? true,
                         Leagues = sportEvents
                             .GroupBy(l => l.League)
                             .Select(gLeague =>
@@ -129,13 +129,6 @@ namespace Magic_casino_sportbook.Controllers
                 "soccer" => "⚽",
                 "basketball" => "🏀",
                 "tennis" => "🎾",
-                "volleyball" => "🏐",
-                "ice_hockey" => "🏒",
-                "baseball" => "⚾",
-                "mma" => "🥊",
-                "boxing" => "🥊",
-                "handball" => "🤾",
-                "futsal" => "⚽",
                 _ => "🏆"
             };
         }
@@ -145,6 +138,9 @@ namespace Magic_casino_sportbook.Controllers
         public async Task<IActionResult> UpdateConfiguration([FromBody] List<SportConfigDto> incomingConfig)
         {
             if (incomingConfig == null) return BadRequest(new { message = "JSON inválido." });
+
+            // 🔥 Trava de segurança no POST para aceitar apenas os 3 esportes permitidos
+            var allowedSports = new List<string> { "soccer", "basketball", "tennis" };
 
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
@@ -157,9 +153,9 @@ namespace Magic_casino_sportbook.Controllers
 
                 foreach (var sport in incomingConfig)
                 {
-                    if (string.IsNullOrEmpty(sport.Key)) continue;
+                    if (string.IsNullOrEmpty(sport.Key) || !allowedSports.Contains(sport.Key.ToLower())) continue;
 
-                    // Salva Esporte (Principal mudança que você queria)
+                    // Salva Esporte 
                     newConfigs.Add(new SportConfiguration
                     {
                         Type = "SPORT",
@@ -179,7 +175,7 @@ namespace Magic_casino_sportbook.Controllers
                             IsVisible = league.IsActive
                         });
 
-                        // Times (opcional, se quiser salvar bloqueios de time)
+                        // Times
                         foreach (var team in league.Teams)
                         {
                             if (!string.IsNullOrEmpty(team.Id))

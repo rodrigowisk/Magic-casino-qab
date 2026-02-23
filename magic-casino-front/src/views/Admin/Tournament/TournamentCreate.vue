@@ -62,26 +62,47 @@
             <div class="form-group">
                 <label>Imagem de Capa</label>
                 
-                <div v-if="hasImages" class="covers-grid custom-scrollbar">
-                    <div 
-                        v-for="(path, fileName) in availableCovers" 
-                        :key="fileName"
-                        @click="selectCover(fileName)"
-                        class="cover-item"
-                        :class="{ 'selected': form.coverImage === fileName }"
+                <div class="flex flex-wrap gap-2 bg-[#0f172a] p-1.5 rounded-lg border border-white/10 w-fit mb-3">
+                    <button 
+                        v-for="tab in coverTabs" 
+                        :key="tab.id"
+                        type="button"
+                        @click="activeCoverTab = tab.id"
+                        :class="[
+                            'px-4 py-1.5 rounded-md font-bold text-xs uppercase tracking-wider transition-all duration-200',
+                            activeCoverTab === tab.id 
+                                ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' 
+                                : 'bg-transparent text-slate-400 hover:text-white hover:bg-white/5'
+                        ]"
                     >
-                        <img :src="path" loading="lazy" />
+                        {{ tab.label }}
+                    </button>
+                </div>
+                
+                <div v-if="hasImages" class="covers-grid custom-scrollbar">
+                    <div v-if="filteredCovers.length === 0" class="col-span-full py-6 text-center text-slate-500 font-medium w-full" style="grid-column: 1 / -1;">
+                        Nenhuma capa nesta categoria.
+                    </div>
+
+                    <div 
+                        v-for="cover in filteredCovers" 
+                        :key="cover.id"
+                        @click="selectCover(cover.id)"
+                        class="cover-item"
+                        :class="{ 'selected': form.coverImage === cover.id }"
+                    >
+                        <img :src="cover.url" loading="lazy" />
                         <div class="selection-overlay">
                             <span class="check-icon">✔</span>
                         </div>
-                        <span class="file-name">{{ fileName }}</span>
+                        <span class="file-name">{{ cover.fileName }}</span>
                     </div>
                 </div>
 
                 <div v-else class="empty-covers">
                     <div class="icon">📁</div>
                     <p>Nenhuma imagem encontrada.</p>
-                    <small>Adicione imagens em: <br> <code>src/assets/tournament_covers/</code></small>
+                    <small>Adicione imagens nas subpastas em: <br> <code>src/assets/tournament_covers/</code></small>
                 </div>
             </div>
 
@@ -339,7 +360,8 @@ import tournamentTemplateService, { type TournamentTemplate } from "../../../ser
 import SportsService from "../../../services/SportsService"; 
 import Swal from 'sweetalert2';
 
-const coversModules = import.meta.glob('/src/assets/tournament_covers/*.{png,jpg,jpeg,svg,webp}', { eager: true });
+// Lê arquivos em qualquer subpasta dentro de tournament_covers
+const coversModules = import.meta.glob('/src/assets/tournament_covers/**/*.{png,jpg,jpeg,svg,webp}', { eager: true });
 
 interface Team { id: string; name: string; isActive: boolean; }
 interface League { id: string; name: string; isActive: boolean; isExpanded?: boolean; teams: Team[]; }
@@ -356,7 +378,15 @@ export default defineComponent({
       existingCategories: ['Destaques', 'Todo os torneios', 'Torneios turbo', 'Top da semana'],
       isCreatingCategory: false,
 
-      availableCovers: {} as Record<string, string>,
+      // Controle das abas de pastas de imagens
+      coverTabs: [
+          { id: 'soccer', label: 'Futebol' },
+          { id: 'basketball', label: 'Basquete' },
+          { id: 'tenis', label: 'Tênis' },
+          { id: 'mix', label: 'Misto' }
+      ],
+      activeCoverTab: 'soccer',
+      allCovers: [] as Array<{ id: string; fileName: string; url: string; category: string }>,
 
       prizeType: 'dynamic', 
       isUnlimitedParticipants: true, 
@@ -395,8 +425,12 @@ export default defineComponent({
     };
   },
   computed: {
+    // Filtra as capas com base na aba ativa
+    filteredCovers(): Array<{ id: string; fileName: string; url: string; category: string }> {
+        return this.allCovers.filter(c => c.category === this.activeCoverTab);
+    },
     hasImages(): boolean {
-        return Object.keys(this.availableCovers).length > 0;
+        return this.allCovers.length > 0;
     },
     currentSport(): Sport | undefined {
         return (this.sportsData || []).find(s => s.key === this.selectedSportKey);
@@ -434,22 +468,33 @@ export default defineComponent({
         }
     },
     loadImages() {
-        const covers: Record<string, string> = {};
+        const covers: Array<{ id: string; fileName: string; url: string; category: string }> = [];
+        
         if (coversModules) {
             for (const path in coversModules) {
                 const mod = coversModules[path] as any;
-                const fileName = path.split('/').pop() || 'unknown';
-                covers[fileName] = mod.default;
+                const parts = path.split('/');
+                const fileName = parts.pop() || 'unknown';
+                
+                let category = parts.pop() || 'mix'; 
+                if (category === 'tournament_covers') {
+                    category = 'mix'; 
+                }
+
+                const uniqueId = `${category}/${fileName}`;
+                covers.push({ id: uniqueId, fileName, url: mod.default, category });
             }
         }
-        this.availableCovers = covers;
-        const keys = Object.keys(covers);
-        if (keys.length > 0 && !this.form.coverImage) {
-            this.form.coverImage = String(keys[0]); 
+        
+        this.allCovers = covers;
+        
+        if (covers.length > 0 && !this.form.coverImage) {
+            const first = this.filteredCovers[0] || covers[0];
+            if(first) this.form.coverImage = first.id;
         }
     },
-    selectCover(fileName: string) {
-        this.form.coverImage = fileName;
+    selectCover(id: string) {
+        this.form.coverImage = id;
     },
 
     isMatch(text: string): boolean {
@@ -482,7 +527,7 @@ export default defineComponent({
             await this.loadFullConfiguration();
         }
     },
-    // ✅ CORREÇÃO CRÍTICA 1: Captura Inteligente do ID (PascalCase, camelCase ou fallback)
+    // Captura Inteligente do ID (PascalCase, camelCase ou fallback)
     async loadFullConfiguration() {
         try {
             const data = await SportsService.getAdminConfig();
@@ -495,16 +540,11 @@ export default defineComponent({
                 icon: s.icon || s.Icon || '',
                 isActive: true, 
                 leagues: (Array.isArray(s.leagues || s.Leagues) ? (s.leagues || s.Leagues) : []).map((l: any) => ({
-                    // 🔥 AQUI ESTÁ A CORREÇÃO:
-                    // Prioriza o 'Id' ou 'id' que vem da API corrigida. 
-                    // Se não existir, tenta 'LeagueId'.
-                    // Último caso: 'name' (mas o backend já foi corrigido)
                     id: String(l.Id || l.id || l.LeagueId || l.league_id || l.name),
                     name: l.name || l.Name || '',
                     isActive: true, 
                     isExpanded: false,
                     teams: (Array.isArray(l.teams || l.Teams) ? (l.teams || l.Teams) : []).map((t: any) => ({
-                        // Mesma lógica para os times
                         id: String(t.Id || t.id || t.TeamId || t.team_id || t.name), 
                         name: t.name || t.Name || '',
                         isActive: true 
@@ -584,6 +624,31 @@ export default defineComponent({
           Swal.fire({ title: 'Atenção', text: 'Selecione um Modelo de Jogos válido.', icon: 'warning', background: '#1e293b', color: '#fff' });
           return;
       }
+
+      // 👇👇👇 AQUI ESTÁ A CORREÇÃO (DESCUBRE O ESPORTE DINAMICAMENTE) 👇👇👇
+      let derivedSport = this.form.sport; // Fallback
+      try {
+          if ((template as any).filterRules) {
+              const rulesStr = (template as any).filterRules;
+              const rules = typeof rulesStr === 'string' ? JSON.parse(rulesStr) : rulesStr;
+              
+              if (rules && rules.sports && Array.isArray(rules.sports)) {
+                  if (rules.sports.length > 1) {
+                      derivedSport = 'Misto';
+                  } else if (rules.sports.length === 1) {
+                      const k = (rules.sports[0].key || '').toLowerCase();
+                      if (k === 'soccer') derivedSport = 'Futebol';
+                      else if (k === 'basketball') derivedSport = 'Basquete';
+                      else if (k === 'tennis') derivedSport = 'Tênis';
+                      else derivedSport = k.charAt(0).toUpperCase() + k.slice(1);
+                  }
+              }
+          }
+      } catch (e) {
+          console.error("Erro ao ler regras para definir esporte", e);
+      }
+      // 👆👆👆 FIM DA CORREÇÃO 👆👆👆
+
       this.isLoading = true;
       try {
         const payload: any = { 
@@ -594,10 +659,10 @@ export default defineComponent({
             initialFantasyBalance: this.form.initialFantasyBalance,
             startDate: new Date(this.form.startDate).toISOString(),
             endDate: new Date(this.form.endDate).toISOString(),
-            sport: this.form.sport,
+            sport: derivedSport, // <-- Usa a variável dinâmica que criamos
             isActive: this.form.isActive,
             isFinished: false,
-            filterRules: template?.filterRules || '[]',
+            filterRules: (template as any)?.filterRules || '[]',
             prizePool: 0,
             participantsCount: 0,
             isJoined: false,
@@ -624,137 +689,136 @@ export default defineComponent({
 });
 </script>
 
-
 <style scoped>
 /* ESTILOS DA CATEGORIA */
 .category-wrapper {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 .select-mode, .create-mode {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
 }
 .btn-create-cat {
-    background: #3b82f6;
-    color: white;
-    border: none;
-    padding: 0.7rem 1rem;
-    border-radius: 6px;
-    font-weight: 700;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: 0.2s;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  padding: 0.7rem 1rem;
+  border-radius: 6px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: 0.2s;
 }
 .btn-create-cat:hover { background: #2563eb; }
 
 .btn-cancel-cat {
-    background: #ef4444;
-    color: white;
-    border: none;
-    padding: 0.7rem 1rem;
-    border-radius: 6px;
-    font-weight: 700;
-    cursor: pointer;
-    white-space: nowrap;
+  background: #ef4444;
+  color: white;
+  border: none;
+  padding: 0.7rem 1rem;
+  border-radius: 6px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
 }
 .input-highlight {
-    border-color: #fbbf24 !important;
-    background: #18181b;
-    color: #fff;
-    font-weight: bold;
+  border-color: #fbbf24 !important;
+  background: #18181b;
+  color: #fff;
+  font-weight: bold;
 }
 
 /* ESTILOS DA GRADE DE CAPAS */
 .covers-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-    gap: 1rem;
-    max-height: 250px;
-    overflow-y: auto;
-    background: #00000030;
-    padding: 15px;
-    border-radius: 8px;
-    border: 1px solid #27272a;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 1rem;
+  max-height: 250px;
+  overflow-y: auto;
+  background: #00000030;
+  padding: 15px;
+  border-radius: 8px;
+  border: 1px solid #27272a;
 }
 
 .cover-item {
-    position: relative;
-    border-radius: 8px;
-    overflow: hidden;
-    cursor: pointer;
-    border: 2px solid transparent;
-    transition: all 0.2s;
-    aspect-ratio: 2/3;
-    display: flex;
-    flex-direction: column;
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.2s;
+  aspect-ratio: 2/3;
+  display: flex;
+  flex-direction: column;
 }
 
 .cover-item img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .file-name {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    background: rgba(0,0,0,0.7);
-    color: #a1a1aa;
-    font-size: 0.6rem;
-    text-align: center;
-    padding: 2px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  background: rgba(0,0,0,0.7);
+  color: #a1a1aa;
+  font-size: 0.6rem;
+  text-align: center;
+  padding: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cover-item:hover {
-    transform: scale(1.05);
-    z-index: 1;
+  transform: scale(1.05);
+  z-index: 1;
 }
 
 .cover-item.selected {
-    border-color: #fbbf24;
-    box-shadow: 0 0 15px rgba(251, 191, 36, 0.3);
+  border-color: #fbbf24;
+  box-shadow: 0 0 15px rgba(251, 191, 36, 0.3);
 }
 
 .selection-overlay {
-    position: absolute;
-    inset: 0;
-    background: rgba(251, 191, 36, 0.2);
-    display: none;
-    align-items: center;
-    justify-content: center;
+  position: absolute;
+  inset: 0;
+  background: rgba(251, 191, 36, 0.2);
+  display: none;
+  align-items: center;
+  justify-content: center;
 }
 
 .cover-item.selected .selection-overlay {
-    display: flex;
+  display: flex;
 }
 
 .check-icon {
-    background: #fbbf24;
-    color: black;
-    border-radius: 50%;
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: bold;
-    font-size: 14px;
+  background: #fbbf24;
+  color: black;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 14px;
 }
 
 .empty-covers {
-    text-align: center;
-    padding: 2rem;
-    border: 2px dashed #27272a;
-    border-radius: 8px;
-    color: #52525b;
+  text-align: center;
+  padding: 2rem;
+  border: 2px dashed #27272a;
+  border-radius: 8px;
+  color: #52525b;
 }
 .empty-covers .icon { font-size: 2rem; margin-bottom: 0.5rem; }
 .empty-covers code { background: #18181b; padding: 2px 5px; border-radius: 4px; color: #fbbf24; }
@@ -965,7 +1029,7 @@ input:focus, select:focus, textarea:focus {
 .sport-card.active { border-color: #3b82f6; background: rgba(59, 130, 246, 0.1); }
 .sport-header { display: flex; justify-content: space-between; }
 
-/* ✅ CORREÇÃO VISUAL 1: Checkbox Amarelo e Visível */
+/* CORREÇÃO VISUAL 1: Checkbox Amarelo e Visível */
 .custom-checkbox { 
     accent-color: #fbbf24; 
     width: 18px; 
@@ -1014,7 +1078,7 @@ input:focus, select:focus, textarea:focus {
 .league-name.highlight { color: #fbbf24; }
 .count-badge { font-size: 0.7rem; background: #27272a; color: #a1a1aa; padding: 1px 5px; border-radius: 4px; }
 
-/* ✅ CORREÇÃO VISUAL 2: Toggle Switch com cor destaque */
+/* CORREÇÃO VISUAL 2: Toggle Switch com cor destaque */
 .switch { position: relative; display: inline-block; width: 34px; height: 18px; }
 .switch input { opacity: 0; width: 0; height: 0; }
 .slider {
@@ -1040,7 +1104,7 @@ input:checked + .slider:before { transform: translateX(16px); }
 }
 .team-chip:hover { background: #3f3f46; color: #fff; }
 
-/* ✅ CORREÇÃO VISUAL 3: Seleção Dourada/Amarela (Gold Theme) */
+/* CORREÇÃO VISUAL 3: Seleção Dourada/Amarela (Gold Theme) */
 .team-chip.selected { 
     background: rgba(251, 191, 36, 0.15); /* Fundo Dourado Translúcido */
     border-color: #fbbf24; /* Borda Dourada */

@@ -22,6 +22,9 @@ namespace Magic_casino_sportbook.Controllers
         private readonly IScheduleService _scheduleService;
         private readonly IPrematchOddsService _oddsService;
 
+        // 🔥 LISTA GLOBAL DE ESPORTES PERMITIDOS 🔥
+        private readonly string[] _allowedSports = new[] { "soccer", "basketball", "tennis" };
+
         public SportsController(
             AppDbContext context,
             IServiceScopeFactory scopeFactory,
@@ -51,7 +54,7 @@ namespace Magic_casino_sportbook.Controllers
             return Ok(new { message = "Atualização de GRADE iniciada." });
         }
 
-        // 2. ✅ O MÉTODO QUE FALTAVA: Atualizar Odds
+        // 2. Atualizar Odds
         [HttpPost("sync/odds")]
         public IActionResult ForceUpdateOdds()
         {
@@ -68,8 +71,6 @@ namespace Magic_casino_sportbook.Controllers
             });
             return Ok(new { message = "Atualização de ODDS iniciada." });
         }
-
-        // ... (O resto dos métodos GetRawJson, GetEventById, GetActiveSports, etc continuam iguais) ...
 
         [HttpGet("debug-json/{eventId}")]
         public async Task<IActionResult> GetRawJson(string eventId)
@@ -89,7 +90,8 @@ namespace Magic_casino_sportbook.Controllers
                 .AsNoTracking()
                 .FirstOrDefaultAsync(x => x.ExternalId == id);
 
-            if (e == null) return NotFound(new { error = "Evento não encontrado." });
+            if (e == null || !_allowedSports.Contains(e.SportKey.ToLower()))
+                return NotFound(new { error = "Evento não encontrado ou esporte não permitido." });
 
             if (e.RawOddsHome <= 0 || e.RawOddsDraw <= 0 || e.RawOddsAway <= 0)
             {
@@ -129,9 +131,10 @@ namespace Magic_casino_sportbook.Controllers
                     .AsNoTracking()
                     .Where(e =>
                         e.Status == "Prematch" &&
-                        e.CommenceTime > agora
+                        e.CommenceTime > agora &&
+                        e.CommenceTime <= limiteFuturo &&
+                        _allowedSports.Contains(e.SportKey.ToLower()) // 🔥 TRAVA DOS ESPORTES AQUI
                     )
-                    .Where(e => e.CommenceTime <= limiteFuturo)
                     .GroupBy(e => e.SportKey)
                     .Select(g => new { Key = g.Key, Count = g.Count() })
                     .ToListAsync();
@@ -217,15 +220,21 @@ namespace Magic_casino_sportbook.Controllers
                     .AsNoTracking()
                     .Where(e =>
                         e.Status == "Prematch" &&
-                        e.CommenceTime > agora
+                        e.CommenceTime > agora &&
+                        e.CommenceTime <= agora.AddDays(4) &&
+                        _allowedSports.Contains(e.SportKey.ToLower()) // 🔥 TRAVA DOS ESPORTES AQUI
                     )
-                    .Where(e => e.CommenceTime <= agora.AddDays(4))
                     .AsQueryable();
 
+                // Se o front enviar um esporte específico
                 if (!string.IsNullOrWhiteSpace(sport))
                 {
                     string sportTerm = sport.Trim().ToLower();
-                    query = query.Where(e => e.SportKey.ToLower() == sportTerm);
+                    // Só aplica o filtro se for um dos esportes permitidos
+                    if (_allowedSports.Contains(sportTerm))
+                    {
+                        query = query.Where(e => e.SportKey.ToLower() == sportTerm);
+                    }
                 }
 
                 var rawEvents = await query

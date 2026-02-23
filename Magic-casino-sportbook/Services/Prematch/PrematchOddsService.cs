@@ -26,6 +26,9 @@ namespace Magic_casino_sportbook.Services.Prematch
 
         private const int REQUEST_CHUNK_SIZE = 50;
 
+        // 🔥 CORREÇÃO PARA ECONOMIA DE API: Trava global de desportos permitidos
+        private readonly string[] _allowedSports = new[] { "soccer", "basketball", "tennis" };
+
         public PrematchOddsService(
             BetsApiHttpService api,
             IServiceScopeFactory scopeFactory,
@@ -35,7 +38,7 @@ namespace Magic_casino_sportbook.Services.Prematch
             _scopeFactory = scopeFactory;
             _logger = logger;
 
-            // Inicializa os parsers que você já tem na pasta Services/Parsers
+            // Inicializa os parsers
             _parsers = new List<IMarketParser>
             {
                 new MainParser(),
@@ -54,10 +57,12 @@ namespace Magic_casino_sportbook.Services.Prematch
                 var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
                 // Busca jogos futuros que estão sem odds ou desatualizados
+                // AGORA COM FILTRO APENAS PARA OS 3 DESPORTOS PERMITIDOS
                 var gamesToUpdate = await context.SportsEvents
                     .AsNoTracking()
                     .Where(g => g.CommenceTime > DateTime.UtcNow &&
-                               (g.RawOddsHome == 0 || g.LastUpdate < DateTime.UtcNow.AddHours(-1)))
+                               (g.RawOddsHome == 0 || g.LastUpdate < DateTime.UtcNow.AddHours(-1)) &&
+                               _allowedSports.Contains(g.SportKey.ToLower()))
                     .OrderBy(g => g.CommenceTime)
                     .Take(400) // Limite de segurança por ciclo
                     .Select(g => new { g.ExternalId, g.SportKey })
@@ -67,7 +72,6 @@ namespace Magic_casino_sportbook.Services.Prematch
                 {
                     _logger.LogInformation($"♻️ [PrematchOddsService] {gamesToUpdate.Count} jogos pendentes de atualização.");
 
-                    // Agrupa por esporte para otimizar logs (opcional, mas mantido da lógica original)
                     var grouped = gamesToUpdate.GroupBy(g => g.SportKey ?? "soccer");
 
                     foreach (var grp in grouped)
@@ -101,7 +105,7 @@ namespace Magic_casino_sportbook.Services.Prematch
 
             try
             {
-                // ✅ Usa o Gateway Novo
+                // Usa o Gateway Novo
                 var response = await _api.GetAsync(url);
 
                 if ((int)response.StatusCode == 429)
@@ -200,12 +204,10 @@ namespace Magic_casino_sportbook.Services.Prematch
 
                 foreach (var m in parsedMarkets)
                 {
-                    // Tenta achar a odd existente na memória do EF ou no banco
                     var existing = game.Odds.FirstOrDefault(o => o.MarketName == m.MarketName && o.OutcomeName == m.OutcomeName);
 
                     if (existing == null)
                     {
-                        // Busca no Local Tracker caso tenha sido adicionada em outro contexto recentemente
                         existing = context.EventMarkets.Local
                             .FirstOrDefault(x => x.SportsEventId == game.Id && x.MarketName == m.MarketName && x.OutcomeName == m.OutcomeName);
                     }
@@ -230,7 +232,6 @@ namespace Magic_casino_sportbook.Services.Prematch
                         game.Odds.Add(newOdd);
                     }
 
-                    // Filtra mercados para atualizar as colunas rápidas (RawOdds)
                     string mName = m.MarketName?.Trim().ToUpper() ?? "";
                     if (mName.Contains("MONEY LINE") || mName.Contains("WINNER") || mName.Contains("VENCEDOR") ||
                         mName.Contains("RESULT") || mName.Contains("FULL") || mName.Contains("1X2") || mName == "12")
@@ -240,7 +241,7 @@ namespace Magic_casino_sportbook.Services.Prematch
                 }
             }
 
-            // 2. Atualiza as colunas de acesso rápido (RawOddsHome/Draw/Away)
+            // 2. Atualiza as colunas de acesso rápido
             bool foundByLabel = false;
             foreach (var m in moneyLineMarkets)
             {
@@ -249,7 +250,7 @@ namespace Magic_casino_sportbook.Services.Prematch
                 else if (IsAway(m.OutcomeName, game.AwayTeam)) { game.RawOddsAway = m.Price; foundByLabel = true; }
             }
 
-            // Fallback (Ordem de aparição) se não casar os nomes
+            // Fallback
             if (!foundByLabel && moneyLineMarkets.Count >= 2)
             {
                 game.RawOddsHome = moneyLineMarkets[0].Price;
@@ -263,7 +264,7 @@ namespace Magic_casino_sportbook.Services.Prematch
         }
 
         // ==============================================================================
-        // Helpers (Privados para não vazar lógica)
+        // Helpers
         // ==============================================================================
         private bool IsHome(string outcome, string homeTeam)
         {

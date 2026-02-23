@@ -6,7 +6,7 @@ import {
     Trophy, AlertTriangle
 } from 'lucide-vue-next';
 
-// ✅ CORREÇÃO 1: Usando o Service correto (o mesmo que você enviou)
+// ✅ CORREÇÃO 1: Usando o Service correto
 import SportbookService from '../../services/Sportbook/SportbookService';
 import TournamentService from '../../services/Tournament/TournamentService';
 
@@ -64,11 +64,17 @@ const favoriteCountriesTree = computed(() => {
     return tree;
 });
 
+// 🔥 CORREÇÃO PRINCIPAL: REMOÇÃO DE ACENTOS E INCLUSÃO DE PALAVRAS EM PT-BR 🔥
 const mapSportToKey = (name: string): string => {
-    const lower = (name || '').toLowerCase();
+    if (!name) return 'soccer';
+    // Remove acentos e joga pra minúsculo (Tênis -> tenis)
+    const lower = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    
     if (lower.includes('futebol') || lower.includes('soccer')) return 'soccer';
-    if (lower.includes('basket') || lower.includes('basketball')) return 'basketball';
+    if (lower.includes('basket') || lower.includes('basquete')) return 'basketball';
     if (lower.includes('tenis') || lower.includes('tennis')) return 'tennis';
+    if (lower.includes('misto') || lower.includes('mix')) return 'misto';
+    
     return 'soccer'; 
 };
 
@@ -97,14 +103,13 @@ const toggleLeagueFavorite = (leagueName: string, event: Event) => {
     favStore.toggleFavorite(leagueName, currentSportKey.value);
 };
 
-// --- GET USER ID (Limpo e Seguro) ---
+// --- GET USER ID ---
 const getUserId = () => {
     try {
         const stored = localStorage.getItem('user') || localStorage.getItem('user_data') || localStorage.getItem('session');
         if (stored) {
             const userData = JSON.parse(stored);
             const rawId = userData.id || userData.Id || userData.userId || userData.userName || userData.user_name || userData.cpf || userData.Cpf || userData.code || userData.Code || '';
-            // Remove aspas extras se houver e espaços
             return String(rawId).replace(/['"]/g, '').trim();
         }
         const simpleId = localStorage.getItem('userId');
@@ -128,7 +133,7 @@ const fetchAndGroupLeagues = async () => {
     countriesList.value = [];
     debugInfo.value = '';
 
-    console.group("🕵️ DEBUG MENU TORNEIO");
+    console.group("🕵️ DEBUG MENU TORNEIO (LIGAS DA SIDEBAR)");
 
     try {
         const userId = getUserId();
@@ -137,6 +142,9 @@ const fetchAndGroupLeagues = async () => {
         let allowedLeagueIds = new Set<string>();
         let isRestricted = false;
         let tournamentEndTime = 0; 
+        
+        // 🔥 Lista que vai guardar quais esportes precisaremos consultar na API 🔥
+        let sportsToFetch = new Set<string>(); 
 
         if (tRes.data) {
             console.log("✅ Torneio:", tRes.data.name);
@@ -150,46 +158,72 @@ const fetchAndGroupLeagues = async () => {
                 tournamentEndTime = endObj.getTime();
             }
 
-            // --- LÓGICA DE RESTRIÇÃO ---
+            // --- LÓGICA DE RESTRIÇÃO BASEADA NO JSON (MÚLTIPLOS ESPORTES SE NECESSÁRIO) ---
             if (tRes.data.filterRules) {
                 try {
-                    const rules = JSON.parse(tRes.data.filterRules);
-                    const sportRules = rules.sports?.find((s: any) => 
-                        mapSportToKey(s.key) === currentSportKey.value
-                    );
+                    const rawRules = tRes.data.filterRules;
+                    const parsed = typeof rawRules === 'string' ? JSON.parse(rawRules) : rawRules;
+                    const rules = typeof parsed === 'string' ? JSON.parse(parsed) : parsed;
                     
-                    if (sportRules?.leagues && Array.isArray(sportRules.leagues) && sportRules.leagues.length > 0) {
-                        sportRules.leagues.forEach((l: any) => allowedLeagueIds.add(String(l.id)));
+                    if (rules?.sports && Array.isArray(rules.sports)) {
+                        rules.sports.forEach((sportRule: any) => {
+                            // Adiciona o esporte na fila de busca (ex: 'soccer', 'tennis')
+                            if (sportRule.key) sportsToFetch.add(sportRule.key);
+
+                            // Grava as ligas restritas
+                            if (sportRule.leagues && Array.isArray(sportRule.leagues)) {
+                                sportRule.leagues.forEach((l: any) => allowedLeagueIds.add(String(l.id)));
+                            }
+                        });
                         isRestricted = true;
                         console.log("🔒 Modo Restrito Ativado. Ligas permitidas:", allowedLeagueIds.size);
                     }
-                } catch (e) { console.error("Erro regras:", e); }
+                } catch (e) { console.error("Erro ao ler JSON de regras:", e); }
             }
         }
 
-        // ✅ CORREÇÃO 2: Chamando getEventsBySport (método correto do seu SportbookService)
-        // Pedindo 5000 jogos para garantir que venha tudo
-        const response = await SportbookService.getEventsBySport(currentSportKey.value, 5000);
-        let events = Array.isArray(response) ? response : (response.data || []);
+        // Se o JSON não nos deu esportes, usamos o esporte principal do torneio
+        if (sportsToFetch.size === 0) {
+            sportsToFetch.add(currentSportKey.value === 'misto' ? 'all' : currentSportKey.value);
+        }
+
+        // ✅ BUSCA OS JOGOS NA API DE TODOS OS ESPORTES MENCIONADOS NAS REGRAS
+        let allEvents: any[] = [];
         
-        console.log(`📡 Jogos recebidos da API: ${events.length}`);
+        const promises = Array.from(sportsToFetch).map(async (sportKey) => {
+            try {
+                console.log(`📡 Buscando jogos para o esporte: ${sportKey}`);
+                const response = await SportbookService.getEventsBySport(sportKey, 5000);
+                return Array.isArray(response) ? response : (response.data || []);
+            } catch (err) {
+                console.error(`Erro ao buscar ${sportKey}:`, err);
+                return [];
+            }
+        });
+
+        const results = await Promise.all(promises);
+        results.forEach(res => {
+            allEvents = allEvents.concat(res);
+        });
+        
+        console.log(`📡 Total de Jogos recebidos combinados: ${allEvents.length}`);
+
+        let events = allEvents;
 
         if (events && events.length > 0) {
             
-            const TECH_BUFFER = 45 * 60 * 1000; // Aumentei tolerância para 45min
+            const TECH_BUFFER = 45 * 60 * 1000;
 
             const filteredEvents = events.filter((e: any) => {
-                // Normaliza o ID da liga para String para comparar com segurança
                 const lid = String(e.leagueId || e.LeagueId || e.league?.id || '').trim();
                 const gameTime = new Date(e.commenceTime).getTime();
 
-                // 1. Filtro de Data (Fim do Torneio)
+                // 1. Filtro de Data
                 if (tournamentEndTime > 0 && gameTime > (tournamentEndTime + TECH_BUFFER)) {
                     return false;
                 }
 
-                // 2. Filtro de Liga (Apenas se for restrito E o jogo tiver ID de liga)
-                // Se o jogo não tem ID de liga (lid vazio), nós o mantemos por segurança para não sumir jogos importantes
+                // 2. Filtro de Liga Estrito
                 if (isRestricted && lid !== '' && !allowedLeagueIds.has(lid)) {
                     return false;
                 }
@@ -197,17 +231,16 @@ const fetchAndGroupLeagues = async () => {
                 return true;
             });
             
-            console.log(`🎯 Jogos após filtro: ${filteredEvents.length}`);
+            console.log(`🎯 Jogos válidos após filtro de ligas: ${filteredEvents.length}`);
             
-            // Fallback: Se o filtro matou tudo, mas não deveria (erro de config), mostra o original
             if (filteredEvents.length === 0 && events.length > 0 && isRestricted) {
                 console.warn("⚠️ O filtro removeu TODOS os jogos. Exibindo lista completa por segurança.");
-                events = events; // Restaura
             } else {
                 events = filteredEvents;
             }
         }
 
+        // --- AGRUPAMENTO PARA EXIBIÇÃO NO MENU ---
         if (events && events.length > 0) {
              const groups: Record<string, Set<string>> = {};
              const leagueOriginalNames: Record<string, string> = {};
@@ -221,7 +254,7 @@ const fetchAndGroupLeagues = async () => {
                 if (!groups[displayCountry]) groups[displayCountry] = new Set();
                 groups[displayCountry].add(cleanLeague);
                 leagueOriginalNames[cleanLeague] = rawLeague; 
-            });
+             });
 
              const sortedCountries = Object.keys(groups).sort();
              
@@ -232,7 +265,7 @@ const fetchAndGroupLeagues = async () => {
                      if (removed) sortedCountries.unshift(removed);
                  }
                  expandedFavoriteCountries.value.add('Brasil');
-            }
+             }
 
              countriesList.value = sortedCountries.map(country => ({
                 name: country,

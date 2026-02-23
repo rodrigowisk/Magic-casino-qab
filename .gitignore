@@ -15,3 +15,9 @@ dist/
 .env
 **/.env
 
+# Ignorar logs do C#
+Magic-casino-sportbook/logs/
+Magic-casino-slot/logs/
+Magic-casino/logs/
+*.log
+*.txt

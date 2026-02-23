@@ -11,7 +11,7 @@ import PageLoader from '../../components/PageLoader.vue';
 import TournamentCard from '../../components/Tournament/TournamentCard.vue';
 import BannerCarousel from '../../components/Tournament/BannerCarousel.vue';
 
-// 👇 Importação do Serviço SignalR
+// Importação do Serviço SignalR
 import tournamentSignal from '../../services/Tournament/TournamentSignalService';
 
 const props = defineProps<{ type: string }>();
@@ -24,13 +24,16 @@ const tournaments = ref<any[]>([]);
 const currentUserId = ref('');
 const processingId = ref<number | null>(null);
 
+// 1. Título da página corrigido
 const pageTitle = computed(() => {
     switch (props.type) {
         case 'featured': return 'Torneios em Destaque';
         case 'free': return 'Torneios Grátis';
         case 'mine': return 'Meus Torneios';
         case 'soccer': return 'Futebol';
-        case 'nba': return 'Basquete';
+        case 'basketball': return 'Basquete';
+        case 'tennis': return 'Tênis';
+        case 'mixed': return 'Mistos';
         case 'all': return 'Todos os Torneios';
         default: return 'Lista de Torneios';
     }
@@ -58,6 +61,13 @@ const loadCurrentUser = () => {
     }
 };
 
+// 2. Helper para remover acentos
+const normalizeSport = (sport?: string) => {
+    if (!sport) return '';
+    return String(sport).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+};
+
+// 3. Regra de filtro corrigida e ÚNICA
 const matchesFilter = (t: any, type: string) => {
     const isFinished = t.isFinished || String(t.status).toUpperCase() === 'FINISHED' || t.isActive === false;
     if (isFinished) return false;
@@ -65,8 +75,13 @@ const matchesFilter = (t: any, type: string) => {
     if (type === 'featured') return (t.category || t.Category || '').toLowerCase().includes('destaque');
     if (type === 'free') return t.entryFee === 0;
     if (type === 'mine') return t.isJoined;
-    if (type === 'soccer') return (t.sport || '').toLowerCase().match(/soccer|futebol/);
-    if (type === 'nba') return (t.sport || '').toLowerCase().includes('basket');
+    
+    const s = normalizeSport(t.sport);
+    if (type === 'soccer') return s.includes('futebol') || s.includes('soccer');
+    if (type === 'basketball') return s.includes('basket') || s.includes('basquete');
+    if (type === 'tennis') return s.includes('tenis') || s.includes('tennis');
+    if (type === 'mixed') return s.includes('misto') || s.includes('mix');
+    
     return true; 
 };
 
@@ -79,14 +94,12 @@ const loadData = async () => {
     } catch (e) { console.error("Erro ao carregar lista:", e); } finally { finishLoader(); }
 };
 
-// 🔥 CORREÇÃO DO ERRO TS6133: Implementação do watch para recarregar se o usuário logar/deslogar
 watch(() => authStore.user, async (newUser) => {
     if (newUser) {
         currentUserId.value = extractUserId(newUser);
     } else {
         currentUserId.value = '';
     }
-    // Recarrega a lista para atualizar status de "Inscrito" nos cards
     await loadData();
 });
 

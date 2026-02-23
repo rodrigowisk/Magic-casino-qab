@@ -10,11 +10,13 @@ const props = withDefaults(defineProps<{
   activeMode?: 'prematch' | 'live';
   selectedSport?: string;    
   selectedDate?: string;
+  tournamentRules?: any; // <-- PROP PARA LER AS REGRAS DO TEMPLATE
 }>(), {
   games: () => [],
   activeMode: 'prematch',
   selectedSport: 'all',
-  selectedDate: 'all'
+  selectedDate: 'all',
+  tournamentRules: null
 });
 
 // --- EMITS ---
@@ -64,7 +66,7 @@ const normalizeKey = (apiKey: string): string => {
     const k = String(apiKey).toLowerCase();
     if (k.includes('soccer') || k.includes('futebol')) return 'soccer';
     if (k.includes('basket')) return 'basketball';
-    if (k.includes('tennis')) return 'tennis';
+    if (k.includes('tennis') || k.includes('tênis')) return 'tennis';
     if (k.includes('volley')) return 'volleyball';
     if (k.includes('hockey')) return 'ice-hockey';
     return 'all'; 
@@ -75,45 +77,54 @@ const availableSports = computed(() => {
     const rawGames = props.games || []; 
     const safeGames = Array.isArray(rawGames) ? rawGames : [];
 
-    if (safeGames.length === 0) {
-        if (props.selectedSport && props.selectedSport !== 'all') {
-            const preSelected = ALL_SPORTS_CONFIG.find(s => s.key === props.selectedSport);
-            return preSelected ? [{ ...preSelected, count: 0 }] : [];
-        }
-        return [];
-    }
-
     const counts: Record<string, number> = { all: 0 };
-    const sportsFound = new Set<string>();
     
+    // Conta quantos jogos tem para cada esporte disponível
     safeGames.forEach((g: any) => {
         if (!g) return;
-        const k1 = g.sportKey;
-        const k2 = g.Sport;
-        const k3 = g.sport;
-        const k4 = g.SportKey;
-        const sportRaw = k1 || k2 || k3 || k4 || 'soccer';
+        const sportRaw = g.sportKey || g.Sport || g.sport || g.SportKey || 'soccer';
         const key = normalizeKey(String(sportRaw));
         
-        sportsFound.add(key);
-        
-        const currentCount = counts[key] ?? 0;
-        counts[key] = currentCount + 1;
-        
-        const currentAll = counts['all'] ?? 0;
-        counts['all'] = currentAll + 1;
+        // CORREÇÃO TYPESCRIPT (TS2532): Trata o valor undefined garantindo 0
+        counts[key] = (counts[key] ?? 0) + 1;
+        counts['all'] = (counts['all'] ?? 0) + 1;
     });
 
+    const allowedKeys = new Set<string>();
+    let isMisto = false;
+
+    // 1. Prioriza 100% as regras do template se forem passadas
+    if (props.tournamentRules && props.tournamentRules.sports && Array.isArray(props.tournamentRules.sports)) {
+        props.tournamentRules.sports.forEach((s: any) => {
+            if (s.key) allowedKeys.add(normalizeKey(s.key));
+        });
+        if (allowedKeys.size > 1) {
+            isMisto = true;
+        }
+    } else {
+        // 2. Fallback caso a prop não seja passada (lê dos jogos listados)
+        safeGames.forEach(g => {
+            const sportRaw = g.sportKey || g.Sport || g.sport || g.SportKey || 'soccer';
+            allowedKeys.add(normalizeKey(String(sportRaw)));
+        });
+        if (props.selectedSport && props.selectedSport !== 'all') {
+            allowedKeys.add(normalizeKey(props.selectedSport));
+        }
+        if (allowedKeys.size > 1) {
+            isMisto = true;
+        }
+    }
+
+    // Monta o resultado final combinando os esportes permitidos com as contagens
     let result = ALL_SPORTS_CONFIG
-        .filter(s => s.key === 'all' || sportsFound.has(s.key))
+        .filter(s => {
+            if (s.key === 'all') return isMisto; // Só exibe "Todos" se o torneio for misto (mais de 1 esporte)
+            return allowedKeys.has(s.key);
+        })
         .map(s => ({
             ...s,
             count: counts[s.key] ?? 0
         }));
-
-    if (sportsFound.size === 1) {
-        result = result.filter(s => s.key !== 'all');
-    }
 
     return result;
 });
@@ -251,7 +262,7 @@ const selectSport = (key: string) => {
                     v-for="sport in availableSports" 
                     :key="sport.key"
                     @click="selectSport(sport.key)"
-                    class="group flex flex-col items-center justify-center min-w-[65px] md:min-w-[50px] h-[50px] rounded-lg transition-all duration-300 relative flex-shrink-0 cursor-pointer"
+                    class="group flex flex-col items-center justify-center min-w-[75px] md:min-w-[80px] px-2 h-[55px] rounded-lg transition-all duration-300 relative flex-shrink-0 cursor-pointer"
                     :class="[
                         { 'pointer-events-none': isDragging },
                         selectedSport === sport.key 

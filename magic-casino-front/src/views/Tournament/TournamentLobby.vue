@@ -166,6 +166,12 @@ onUnmounted(async () => {
   await tournamentSignal.stop();
 });
 
+// --- HELPER DE NORMALIZAÇÃO DE ESPORTE ---
+const normalizeSport = (sport?: string) => {
+  if (!sport) return '';
+  return String(sport).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+};
+
 // --- COMPUTEDS (LISTAS ESPECÍFICAS) ---
 
 // 1. Torneios em Destaque
@@ -191,7 +197,45 @@ const myJoinedTournamentsList = computed(() => {
   return tournaments.value.filter(t => t.isJoined && !isItemFinished(t));
 });
 
-// --- COMPUTED (FILTRAGEM GERAL) ---
+// 🔥 NOVOS CARROSSÉIS POR ESPORTE 🔥
+
+// 5. Torneios de Futebol
+const soccerTournamentsList = computed(() => {
+  return tournaments.value.filter(t => {
+    if (isItemFinished(t)) return false;
+    const s = normalizeSport(t.sport);
+    return s.includes('futebol') || s.includes('soccer');
+  });
+});
+
+// 6. Torneios de Basquete
+const basketballTournamentsList = computed(() => {
+  return tournaments.value.filter(t => {
+    if (isItemFinished(t)) return false;
+    const s = normalizeSport(t.sport);
+    return s.includes('basket') || s.includes('basquete');
+  });
+});
+
+// 7. Torneios de Tênis
+const tennisTournamentsList = computed(() => {
+  return tournaments.value.filter(t => {
+    if (isItemFinished(t)) return false;
+    const s = normalizeSport(t.sport);
+    return s.includes('tenis') || s.includes('tennis');
+  });
+});
+
+// 8. Torneios Mistos
+const mixedTournamentsList = computed(() => {
+  return tournaments.value.filter(t => {
+    if (isItemFinished(t)) return false;
+    const s = normalizeSport(t.sport);
+    return s.includes('misto') || s.includes('mix');
+  });
+});
+
+// --- COMPUTED (FILTRAGEM GERAL PARA AS ABAS E VER TODOS) ---
 const filteredTournaments = computed(() => {
   const list = tournaments.value.filter(t => !isItemFinished(t)); 
   
@@ -209,16 +253,42 @@ const filteredTournaments = computed(() => {
       return list.filter(t => t.entryFee === 0);
 
     case 'soccer':
-      return list.filter(t => t.sport?.toLowerCase().match(/soccer|futebol/));
+      return list.filter(t => {
+        const s = normalizeSport(t.sport);
+        return s.includes('futebol') || s.includes('soccer');
+      });
 
-    case 'nba':
-      return list.filter(t => t.sport?.toLowerCase().includes('basket'));
+    // Corrigido de 'nba' para 'basketball' para casar com o viewAllType
+    case 'basketball':
+      return list.filter(t => {
+        const s = normalizeSport(t.sport);
+        return s.includes('basket') || s.includes('basquete');
+      });
       
+    // Adicionado Tênis que estava faltando
+    case 'tennis':
+      return list.filter(t => {
+        const s = normalizeSport(t.sport);
+        return s.includes('tenis') || s.includes('tennis');
+      });
+
+    // Adicionado Misto que estava faltando
+    case 'mixed':
+      return list.filter(t => {
+        const s = normalizeSport(t.sport);
+        return s.includes('misto') || s.includes('mix');
+      });
+      
+    // Adicionado Que Participo (mine) que estava faltando
+    case 'mine':
+      return list.filter(t => t.isJoined);
+
     case 'all': 
     default:
       return list; 
   }
 });
+
 
 // --- MÉTODOS AUXILIARES ---
 
@@ -426,6 +496,53 @@ const processJoin = async (id: number) => {
                 @favorite="handleFavoriteToggle"
             />
 
+            <TournamentCarousel 
+                v-if="soccerTournamentsList.length > 0"
+                title="Torneios de Futebol"
+                :tournaments="soccerTournamentsList"
+                :processingId="processingId"
+                viewAllType="soccer"
+                @join="processJoin"
+                @enter="enterTournament"
+                @info="openInfoModal"
+                @favorite="handleFavoriteToggle"
+            />
+
+            <TournamentCarousel 
+                v-if="basketballTournamentsList.length > 0"
+                title="Torneios de Basquete"
+                :tournaments="basketballTournamentsList"
+                :processingId="processingId"
+                viewAllType="basketball"
+                @join="processJoin"
+                @enter="enterTournament"
+                @info="openInfoModal"
+                @favorite="handleFavoriteToggle"
+            />
+
+            <TournamentCarousel 
+                v-if="tennisTournamentsList.length > 0"
+                title="Torneios de Tênis"
+                :tournaments="tennisTournamentsList"
+                :processingId="processingId"
+                viewAllType="tennis"
+                @join="processJoin"
+                @enter="enterTournament"
+                @info="openInfoModal"
+                @favorite="handleFavoriteToggle"
+            />
+
+            <TournamentCarousel 
+                v-if="mixedTournamentsList.length > 0"
+                title="Torneios Mistos"
+                :tournaments="mixedTournamentsList"
+                :processingId="processingId"
+                viewAllType="mixed"
+                @join="processJoin"
+                @enter="enterTournament"
+                @info="openInfoModal"
+                @favorite="handleFavoriteToggle"
+            />
             <TournamentCarousel 
                 v-if="myJoinedTournamentsList.length > 0"
                 title="Torneios que Participo"

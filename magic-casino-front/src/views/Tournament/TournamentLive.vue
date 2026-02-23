@@ -488,6 +488,7 @@ const goToLiveGame = (game: any) => {
                 v-model:activeMode="activeMode"
                 v-model:selectedSport="selectedSport"
                 v-model:selectedDate="dataSelecionada"
+                :tournamentRules="tournamentRules"
             />
         </div>
 
@@ -573,32 +574,34 @@ const goToLiveGame = (game: any) => {
                         </div>
 
                         <div class="flex gap-1 shrink-0">
-                            <button v-for="type in ['1','X','2']" :key="type" 
-                                @click="handleSelection(game, type as BetType)" 
-                                :disabled="isMarketSuspended(type === '1' ? game.homeOdd : type === 'X' ? game.drawOdd : game.awayOdd)"
-                                :class="['w-[48px] md:w-[60px] h-[40px] rounded-sm flex flex-col items-center justify-center transition-all group relative overflow-hidden border border-transparent',
-                                isMarketSuspended(type === '1' ? game.homeOdd : type === 'X' ? game.drawOdd : game.awayOdd) ? 'opacity-50 cursor-not-allowed bg-[#1a2c38]' : 
-                                isSelected(game, type as BetType) ? 'bg-blue-600 shadow-md' : 'bg-[#1a2c38] hover:bg-[#213746]',
-                                (type === '1' ? game.homeOddFlash : type === 'X' ? game.drawOddFlash : game.awayOddFlash) ? 'animate-flash' : '']">
+                            <template v-for="type in ['1','X','2']" :key="type">
+                                <button v-if="type !== 'X' || normalizeSportKey(game.sportKey) === 'soccer'"
+                                    @click="handleSelection(game, type as BetType)" 
+                                    :disabled="isMarketSuspended(type === '1' ? game.homeOdd : type === 'X' ? game.drawOdd : game.awayOdd)"
+                                    :class="['w-[48px] md:w-[60px] h-[40px] rounded-sm flex flex-col items-center justify-center transition-all group relative overflow-hidden border border-transparent',
+                                    isMarketSuspended(type === '1' ? game.homeOdd : type === 'X' ? game.drawOdd : game.awayOdd) ? 'opacity-50 cursor-not-allowed bg-[#1a2c38]' : 
+                                    isSelected(game, type as BetType) ? 'bg-blue-600 shadow-md' : 'bg-[#1a2c38] hover:bg-[#213746]',
+                                    (type === '1' ? game.homeOddFlash : type === 'X' ? game.drawOddFlash : game.awayOddFlash) ? 'animate-flash' : '']">
 
-                                <span class="text-[8px] font-bold uppercase mb-0.5 tracking-wide opacity-70" :class="isSelected(game, type as BetType) ? 'text-white' : 'text-gray-400'">
-                                    {{ type === '1' ? '1' : type === 'X' ? 'X' : '2' }}
-                                </span>
+                                    <span class="text-[8px] font-bold uppercase mb-0.5 tracking-wide opacity-70" :class="isSelected(game, type as BetType) ? 'text-white' : 'text-gray-400'">
+                                        {{ type === '1' ? '1' : type === 'X' ? 'X' : '2' }}
+                                    </span>
 
-                                <div class="flex items-center gap-0.5 justify-center w-full">
-                                    <Lock v-if="isMarketSuspended(type === '1' ? game.homeOdd : type === 'X' ? game.drawOdd : game.awayOdd)" class="w-3 h-3 text-gray-500" />
-                                    <template v-else>
-                                         <ArrowUp v-if="getOddDirection(game, type) === 'up'" class="w-2 h-2 text-[#00E701]" />
-                                         <ArrowDown v-if="getOddDirection(game, type) === 'down'" class="w-2 h-2 text-red-500" />
-                                         <span class="text-[11px] font-bold transition-colors leading-none" 
-                                            :class="[isSelected(game, type as BetType) ? 'text-white' : 'text-white group-hover:text-blue-400',
-                                            getOddDirection(game, type) === 'up' ? 'text-[#00E701]' : '',
-                                            getOddDirection(game, type) === 'down' ? 'text-red-500' : '']">
-                                            {{ getOddValue(game, type) }}
-                                         </span>
-                                    </template>
-                                </div>
-                            </button>
+                                    <div class="flex items-center gap-0.5 justify-center w-full">
+                                        <Lock v-if="isMarketSuspended(type === '1' ? game.homeOdd : type === 'X' ? game.drawOdd : game.awayOdd)" class="w-3 h-3 text-gray-500" />
+                                        <template v-else>
+                                             <ArrowUp v-if="getOddDirection(game, type) === 'up'" class="w-2 h-2 text-[#00E701]" />
+                                             <ArrowDown v-if="getOddDirection(game, type) === 'down'" class="w-2 h-2 text-red-500" />
+                                             <span class="text-[11px] font-bold transition-colors leading-none" 
+                                                :class="[isSelected(game, type as BetType) ? 'text-white' : 'text-white group-hover:text-blue-400',
+                                                getOddDirection(game, type) === 'up' ? 'text-[#00E701]' : '',
+                                                getOddDirection(game, type) === 'down' ? 'text-red-500' : '']">
+                                                {{ getOddValue(game, type) }}
+                                             </span>
+                                        </template>
+                                    </div>
+                                </button>
+                            </template>
                         </div>
 
                     </div>

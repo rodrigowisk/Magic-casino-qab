@@ -27,7 +27,6 @@ const currentUser = ref('');
 const tournamentEnd = ref<number>(0);
 
 // 👇 Variável correta usada no template (isLoadingGames). 
-// As variáveis "isLoading" e "loadingProgress" foram removidas pois causavam erro.
 const isLoadingGames = ref(true);
 const isTournamentDataLoaded = ref(false); 
 const games = ref<any[]>([]);
@@ -36,7 +35,8 @@ const openLeagues = ref<Set<string>>(new Set());
 const activeMode = ref<'prematch' | 'live'>('prematch');
 const selectedSport = ref<string>(''); 
 const dataSelecionada = ref<string>('all');
-
+const tournamentRules = ref<any>(null);
+    
 let connection: HubConnection | null = null;
 
 onActivated(() => { activeMode.value = 'prematch'; });
@@ -54,6 +54,18 @@ const goToGame = (game: any) => {
     const id = getGameId(game);
     if (!id) return;
     router.push(`/tournament/${tournamentId.value}/match/${id}`);
+};
+
+// 🔥 FUNÇÃO PARA NORMALIZAR O ESPORTE E ESCONDER O "X" 🔥
+const normalizeSportKey = (rawKey: string): string => {
+    if (!rawKey) return 'soccer';
+    const k = String(rawKey).toLowerCase().trim();
+    if (k.includes('soccer') || k.includes('futebol')) return 'soccer';
+    if (k.includes('basket')) return 'basketball';
+    if (k.includes('tennis') || k.includes('tênis')) return 'tennis';
+    if (k.includes('volley') || k.includes('vôlei')) return 'volleyball';
+    if (k.includes('hockey') || k.includes('hóquei')) return 'ice-hockey';
+    return k; 
 };
 
 onMounted(async () => {
@@ -111,46 +123,34 @@ const setupSignalR = async () => {
         .configureLogging(LogLevel.Information)
         .build();
 
-// Dentro de setupSignalR()
+    connection.on("RemoveGames", (idsToRemove: any[]) => {
+        console.log("🔥 [SIGNALR] Removendo Lote de Jogos:", idsToRemove); 
 
-connection.on("RemoveGames", (idsToRemove: any[]) => {
-    // Debug para você ver no Console do navegador a lista chegando cheia!
-    console.log("🔥 [SIGNALR] Removendo Lote de Jogos:", idsToRemove); 
+        if (!idsToRemove || idsToRemove.length === 0) return;
 
-    if (!idsToRemove || idsToRemove.length === 0) return;
-
-    // 1. Normalização Blindada:
-    // Aceita tanto ["123", "456"] (Novo Backend) quanto [{id: "123"}] (Legado)
-    const idsSet = new Set(idsToRemove.map(item => {
-        if (typeof item === 'object' && item !== null) {
-            // Se vier objeto, extrai o ID
-            return String(item.externalId || item.ExternalId || item.id || item.Id || '').trim();
-        }
-        // Se vier string/numero direto (o que fizemos no Worker), usa direto
-        return String(item).trim();
-    }));
-
-    // 2. REMOÇÃO EM MASSA (A Mágica acontece aqui)
-    // O filter passa por todos os jogos na tela. Se o ID estiver no Set, ele some.
-    // Isso remove 1, 10 ou 100 jogos instantaneamente na mesma renderização.
-    if (games.value.length > 0) {
-        games.value = games.value.filter(game => {
-            const currentGameId = getGameId(game);
-            return !idsSet.has(currentGameId); // Mantém apenas se NÃO estiver na lista de remoção
-        });
-    }
-
-    // 3. Limpeza do Cupom (Mantendo sua lógica original)
-    idsSet.forEach(rawId => {
-        store.selections.forEach(selection => {
-            const selIdStr = String(selection.id);
-            // Verifica se a aposta é desse jogo
-            if (selIdStr === rawId || selIdStr.startsWith(rawId + '_')) {
-                store.removeSelection(selection.id);
+        const idsSet = new Set(idsToRemove.map(item => {
+            if (typeof item === 'object' && item !== null) {
+                return String(item.externalId || item.ExternalId || item.id || item.Id || '').trim();
             }
+            return String(item).trim();
+        }));
+
+        if (games.value.length > 0) {
+            games.value = games.value.filter(game => {
+                const currentGameId = getGameId(game);
+                return !idsSet.has(currentGameId); 
+            });
+        }
+
+        idsSet.forEach(rawId => {
+            store.selections.forEach(selection => {
+                const selIdStr = String(selection.id);
+                if (selIdStr === rawId || selIdStr.startsWith(rawId + '_')) {
+                    store.removeSelection(selection.id);
+                }
+            });
         });
     });
-});
 
     connection.on("GameWentLive", (liveGames: any[]) => {
         if (!liveGames || liveGames.length === 0) return;
@@ -208,7 +208,14 @@ const loadTournamentData = async () => {
             selectedSport.value = sportKey.value;
             isTournamentDataLoaded.value = true;
             tournamentEnd.value = new Date(resTournament.data.endDate).getTime();
-            if (resTournament.data.filterRules) { try { rules = JSON.parse(resTournament.data.filterRules); } catch (e) { } }
+            
+            // ✅ PREENCHENDO A VARIÁVEL tournamentRules PARA O MENU LER
+            if (resTournament.data.filterRules) { 
+                try { 
+                    rules = JSON.parse(resTournament.data.filterRules); 
+                    tournamentRules.value = rules;
+                } catch (e) { console.error("Parse Error:", e); } 
+            }
         }
 
         if (sportKey.value === 'soccer') processGamesList(resGames.data || [], rules);
@@ -296,15 +303,11 @@ const sortedGroups = computed(() => {
     games.value.forEach(game => {
         if (!getGameId(game)) return;
 
-        // 🔥 FILTRO DE ODDS VÁLIDAS (ADICIONE ISSO AQUI)
-        // Se a odd da casa ou fora for menor ou igual a 1.01 (ou 0), esconde o jogo.
+        // 🔥 FILTRO DE ODDS VÁLIDAS
         const hOdd = Number(game.rawOddsHome ?? game.RawOddsHome ?? 0);
         const aOdd = Number(game.rawOddsAway ?? game.RawOddsAway ?? 0);
         
-        // Se não tem odd válida, pula para o próximo (não exibe na lista)
         if (hOdd <= 1.01 || aOdd <= 1.01) return; 
-
-        // -----------------------------------------------------------
 
         if (dataSelecionada.value !== 'all') {
             const d = new Date(game.commenceTime);
@@ -374,6 +377,7 @@ const handleImageError = (event: Event) => { (event.target as HTMLImageElement).
                 v-model:activeMode="activeMode"
                 v-model:selectedSport="selectedSport" 
                 v-model:selectedDate="dataSelecionada" 
+                :tournamentRules="tournamentRules"
             />
         </div>
 
@@ -440,7 +444,8 @@ const handleImageError = (event: Event) => { (event.target as HTMLImageElement).
                                         <span class="text-xs font-bold" :class="getSelectedType(getGameId(game)) === '1' ? 'text-white' : 'text-white group-hover:text-blue-400'">{{ getOdd(game, '1') }}</span>
                                     </button>
 
-                                    <button v-if="parseFloat(getOdd(game, 'X')) > 1.01" @click="handleBetClick(game, 'X')" 
+                                    <button v-if="parseFloat(getOdd(game, 'X')) > 1.01 && normalizeSportKey(game.sportKey || game.Sport || game.sport) === 'soccer'" 
+                                        @click="handleBetClick(game, 'X')" 
                                         :class="['w-[50px] md:w-[70px] h-auto py-1.5 rounded-sm flex flex-col items-center justify-center transition-all group border border-transparent', 
                                         getSelectedType(getGameId(game)) === 'X' ? 'bg-blue-600 shadow-md' : 'bg-[#1a2c38] hover:bg-[#213746]']">
                                         <span class="text-[9px] font-bold uppercase mb-0.5 tracking-wide" :class="getSelectedType(getGameId(game)) === 'X' ? 'text-white' : 'text-gray-400'">X</span>

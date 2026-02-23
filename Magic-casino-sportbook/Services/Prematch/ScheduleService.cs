@@ -22,13 +22,9 @@ namespace Magic_casino_sportbook.Services.Prematch
 
         private const int MAX_PAGES_PER_SPORT = 20;
 
-        // Mapeamento de Esportes (Mantido do original)
+        // 🔥 CORREÇÃO PARA ECONOMIA DE API: Apenas os 3 desportos principais!
         private readonly Dictionary<int, string> _sportMap = new() {
-            { 1, "soccer" }, { 13, "tennis" }, { 18, "basketball" }, { 91, "volleyball" },
-            { 12, "american-football" }, { 16, "baseball" }, { 17, "ice-hockey" },
-            { 78, "handball" }, { 8, "rugby-union" }, { 9, "boxing" }, { 3, "cricket" },
-            { 92, "table-tennis" }, { 94, "badminton" }, { 95, "futsal" },
-            { 19, "snooker" }, { 14, "darts" }, { 36, "australian-rules" }, { 151, "esports" }
+            { 1, "soccer" }, { 13, "tennis" }, { 18, "basketball" }
         };
 
         private readonly string[] _excludedTerms = new[]
@@ -217,7 +213,7 @@ namespace Magic_casino_sportbook.Services.Prematch
                                 LeagueId = IsValidImageId(rawLeagueId) ? rawLeagueId : null,
                                 LeagueExternalId = IsValidImageId(rawLeagueId) ? rawLeagueId : null,
                                 CountryCode = !string.IsNullOrEmpty(rawCc) ? rawCc : null,
-                                // URLs de imagem já preenchidas (O MetadataService pode corrigir depois se falhar)
+                                // URLs de imagem já preenchidas
                                 HomeTeamLogo = IsValidImageId(rawHomeId) ? $"https://assets.b365api.com/images/team/m/{rawHomeId}.png" : null,
                                 AwayTeamLogo = IsValidImageId(rawAwayId) ? $"https://assets.b365api.com/images/team/m/{rawAwayId}.png" : null,
                                 Status = dbStatus,
