@@ -22,6 +22,8 @@ namespace Magic_casino_tournament.Models
         public string SportKey { get; set; } = string.Empty;
         public string HomeTeam { get; set; } = string.Empty;
         public string AwayTeam { get; set; } = string.Empty;
+        public string? FinalScore { get; set; }
+        public DateTime? CommenceTime { get; set; }
 
         // Dados da Aposta Específica
 

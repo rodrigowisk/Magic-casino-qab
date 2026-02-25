@@ -323,7 +323,8 @@ namespace Magic_casino_tournament.Services
                     SelectionName = sel.SelectionName,
                     MarketName = sel.MarketName,
                     Odds = sel.Odds,
-                    Status = "Pending"
+                    Status = "Pending",
+                    CommenceTime = sel.CommenceTime
                 });
             }
 
@@ -586,6 +587,7 @@ namespace Magic_casino_tournament.Services
             {
                 bool won = CheckWinner(selection.MarketName, selection.SelectionName, score);
                 selection.Status = won ? "Won" : "Lost";
+                selection.FinalScore = score;
             }
 
             // Identifica quais apostas (Tickets) precisam ser fechadas

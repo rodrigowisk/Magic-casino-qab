@@ -215,7 +215,7 @@ const getGridClass = (odds: any[]) => {
 // --- AÇÕES DE APOSTA ---
 
 const getSelectionUniqueId = (gId: string, market: string, outcome: string): string => {
-    return `TOURNAMENT_${gId}_${market}_${asString(outcome)}`.replace(/\s+/g, '');
+    return `${gId}_${market}_${asString(outcome)}`.replace(/\s+/g, '');
 };
 
 const isSelected = (odd: any, marketNameGrouped: string): boolean => {
@@ -229,7 +229,7 @@ const getSelectedCountForMarket = (marketNameGrouped: string) => {
     const evId = getEventId();
     if (!evId) return 0;
     return betStore.selections.filter(s => {
-        return s?.id && s.id.startsWith('TOURNAMENT_') && s.id.includes(`_${evId}_`) && s.id.includes(marketNameGrouped.replace(/\s+/g, ''));
+        return s?.id && s.id.startsWith(`${evId}_`) && s.id.includes(marketNameGrouped.replace(/\s+/g, ''));
     }).length;
 };
 
@@ -262,7 +262,7 @@ const handleSelection = (odd: any, marketNameGrouped: string) => {
     }
 
     const existingInMarket = betStore.selections.find(s => {
-        return s?.id && s.id.startsWith(`TOURNAMENT_${evId}`) && s.id.includes(marketNameGrouped.replace(/\s+/g, ''));
+        return s?.id && s.id.startsWith(`${evId}_`) && s.id.includes(marketNameGrouped.replace(/\s+/g, ''));
     });
     
     if (existingInMarket && existingInMarket.id) {
@@ -283,7 +283,8 @@ const handleSelection = (odd: any, marketNameGrouped: string) => {
         {
             isTournament: true,
             tournamentId: tournamentId.value,
-            marketName: marketNameGrouped
+            marketName: marketNameGrouped,
+            gameId: getEventId() // ✅ O ID real do jogo agora vai para a Store
         }
     );
 };

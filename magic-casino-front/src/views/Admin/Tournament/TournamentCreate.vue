@@ -127,8 +127,13 @@
                   </select>
                   <span class="chevron">▼</span>
                 </div>
-                <button type="button" @click="openModelCreator" class="btn-secondary">
+                <button type="button" @click="showModal = true" class="btn-secondary">
                   <span>+</span> Novo
+                </button>
+                <button v-if="selectedTemplateId" type="button" @click="deleteSelectedTemplate" class="btn-danger flex items-center justify-center px-3 rounded-md transition-all" title="Excluir Modelo Selecionado">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                  </svg>
                 </button>
               </div>
               
@@ -191,7 +196,7 @@
                     <label>Participantes</label>
                     <div class="flex items-center gap-2">
                         <span class="text-[10px] text-gray-400 uppercase font-bold tracking-wide">Ilimitado</span>
-                        <input type="checkbox" v-model="isUnlimitedParticipants" class="custom-checkbox w-4 h-4" />
+                        <input type="checkbox" v-model="isUnlimitedParticipants" class="custom-checkbox" />
                     </div>
                 </div>
                 <input 
@@ -207,7 +212,7 @@
 
             <div class="form-group">
               <label>Fichas Iniciais</label>
-              <input v-model.number="form.initialFantasyBalance" type="number" step="1" min="100" placeholder="1000" required />
+              <input v-model.number="form.initialFantasyBalance" type="number" step="1" min="100" placeholder="100000" required />
             </div>
 
             <div class="form-group full-width">
@@ -248,107 +253,11 @@
       </form>
     </div>
 
-    <transition name="modal-fade">
-      <div v-if="showModal" class="modal-overlay">
-        <div class="modal-content animate-scale-in">
-            <div class="modal-header">
-                <div class="modal-title">
-                    <span class="icon">🛠️</span>
-                    <h3>Novo Modelo</h3>
-                </div>
-                <button @click="showModal = false" class="btn-close">✕</button>
-            </div>
-            
-            <div class="modal-body custom-scrollbar">
-                <div class="form-group mb-4">
-                    <label>Nome do Modelo</label>
-                    <input v-model="newTemplateName" type="text" placeholder="Ex: Futebol Europeu Principal" autofocus />
-                </div>
-
-                <div class="sports-container mb-4">
-                    <label class="section-label">Esportes</label>
-                    <div class="sports-scroll">
-                        <div 
-                            v-for="sport in sportsData" 
-                            :key="sport.key"
-                            @click="selectSport(sport.key)"
-                            class="sport-card"
-                            :class="selectedSportKey === sport.key ? 'active' : ''"
-                        >
-                            <div class="sport-header">
-                                <span class="sport-icon">{{ sport.icon }}</span> 
-                                <div @click.stop>
-                                    <input type="checkbox" v-model="sport.isActive" class="custom-checkbox">
-                                </div>
-                            </div>
-                            <span class="sport-name">{{ sport.name }}</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div v-if="currentSport" class="leagues-panel">
-                    <div class="leagues-header">
-                        <div class="flex items-center gap-3">
-                            <h4 class="text-sm font-bold text-gray-200">{{ currentSport.name }} <span class="badge">{{ filteredLeagues.length }}</span></h4>
-                            <button @click="toggleAllLeagues" class="btn-link">
-                                {{ areAllSelected ? 'Desmarcar Tudo' : 'Marcar Tudo' }}
-                            </button>
-                        </div>
-                        <div class="search-box">
-                            <span class="search-icon">🔍</span>
-                            <input v-model="searchQuery" type="text" placeholder="Buscar liga..." />
-                        </div>
-                    </div>
-
-                    <div class="leagues-list custom-scrollbar">
-                        <div v-if="filteredLeagues.length === 0" class="empty-state">
-                            Nada encontrado para "{{ searchQuery }}".
-                        </div>
-
-                        <div v-for="league in filteredLeagues" :key="league.id" class="league-item" :class="{ 'inactive': !league.isActive }">
-                            <div class="league-row" @click="toggleLeagueExpansion(league)">
-                                <div class="lr-content">
-                                    <span class="arrow" :class="{'rotated': league.isExpanded}">▶</span>
-                                    <span class="league-name" :class="{'highlight': isMatch(league.name)}">{{ league.name }}</span>
-                                    <span class="count-badge">{{ (league.teams || []).length }}</span>
-                                </div>
-                                <div class="lr-actions" @click.stop>
-                                    <label class="switch">
-                                        <input type="checkbox" v-model="league.isActive" @change="syncLeagueTeams(league)">
-                                        <span class="slider"></span>
-                                    </label>
-                                </div>
-                            </div>
-
-                            <transition name="slide-down">
-                                <div v-if="league.isExpanded" class="teams-grid">
-                                    <div v-if="!league.teams || league.teams.length === 0" class="empty-teams">Vazio</div>
-                                    <div v-for="team in (league.teams || [])" :key="team.id" 
-                                        class="team-chip" 
-                                        :class="team.isActive ? 'selected' : ''"
-                                        @click="team.isActive = !team.isActive">
-                                        <span class="truncate" :class="{'highlight': isMatch(team.name)}">{{ team.name }}</span>
-                                        <div class="status-dot" :class="team.isActive ? 'on' : 'off'"></div>
-                                    </div>
-                                </div>
-                            </transition>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="modal-footer">
-                <span class="summary-text">
-                    <strong>{{ countActiveSports() }}</strong> esportes selecionados
-                </span>
-                <div class="modal-actions">
-                    <button @click="showModal = false" class="btn-ghost">Cancelar</button>
-                    <button @click="saveNewTemplate" class="btn-primary small">Salvar Modelo</button>
-                </div>
-            </div>
-        </div>
-      </div>
-    </transition>
+    <TemplateCreationModal 
+      v-if="showModal" 
+      @close="showModal = false" 
+      @saved="handleTemplateSaved" 
+    />
 
   </div>
 </template>
@@ -357,19 +266,27 @@
 import { defineComponent } from 'vue';
 import tournamentService from "../../../services/Tournament/TournamentService";
 import tournamentTemplateService, { type TournamentTemplate } from "../../../services/Tournament/TournamentTemplateService";
-import SportsService from "../../../services/SportsService"; 
 import Swal from 'sweetalert2';
 
-// Lê arquivos em qualquer subpasta dentro de tournament_covers
-const coversModules = import.meta.glob('/src/assets/tournament_covers/**/*.{png,jpg,jpeg,svg,webp}', { eager: true });
+import TemplateCreationModal from './TemplateCreationModal.vue';
 
-interface Team { id: string; name: string; isActive: boolean; }
-interface League { id: string; name: string; isActive: boolean; isExpanded?: boolean; teams: Team[]; }
-interface Sport { key: string; name: string; icon: string; isActive: boolean; leagues: League[]; }
+const coversModules = import.meta.glob('/src/assets/tournament_covers/**/*.{png,jpg,jpeg,svg,webp}', { eager: true });
 
 export default defineComponent({
   name: 'TournamentCreate',
+  components: {
+    TemplateCreationModal
+  },
   data() {
+    const now = new Date();
+    const offset = now.getTimezoneOffset() * 60000;
+    
+    const localNow = new Date(now.getTime() - offset);
+    const defaultStartDate = localNow.toISOString().slice(0, 16);
+    
+    const localTomorrow = new Date(now.getTime() + (24 * 60 * 60 * 1000) - offset);
+    const defaultEndDate = localTomorrow.toISOString().slice(0, 16);
+
     return {
       isLoading: false,
       selectedTemplateId: null as number | null,
@@ -378,7 +295,6 @@ export default defineComponent({
       existingCategories: ['Destaques', 'Todo os torneios', 'Torneios turbo', 'Top da semana'],
       isCreatingCategory: false,
 
-      // Controle das abas de pastas de imagens
       coverTabs: [
           { id: 'soccer', label: 'Futebol' },
           { id: 'basketball', label: 'Basquete' },
@@ -393,7 +309,7 @@ export default defineComponent({
 
       prizeOptions: [
         { id: "PREMIO_1", name: "🥇 Clássico Top 3 (50%, 30%, 20%)" },
-        { id: "PREMIO_2", name: "🥈 Estendido Top 5 (1º 40%|2º 25%|3º 10%|4º 10%|5º 5%)" },
+        { id: "PREMIO_2", name: "🥈 Estendido Top 5 (1º 40%|2º 25%|3º 15%|4º 12%|5º 8%)" },
         { id: "PREMIO_3", name: "🥉 Double Up (50% Ganha / 50% Perde)" },
         { id: "WINNER_TAKES_ALL", name: "🏆 Vencedor Leva Tudo (100%)" }
       ],
@@ -402,9 +318,9 @@ export default defineComponent({
         name: '', 
         description: '', 
         entryFee: 50.00, 
-        initialFantasyBalance: 1000,
-        startDate: '', 
-        endDate: '', 
+        initialFantasyBalance: 100000, 
+        startDate: defaultStartDate, 
+        endDate: defaultEndDate, 
         sport: 'Futebol', 
         isActive: true, 
         houseFeePercent: 10,
@@ -418,40 +334,14 @@ export default defineComponent({
       },
 
       showModal: false,
-      newTemplateName: '',
-      sportsData: [] as Sport[],
-      selectedSportKey: null as string | null,
-      searchQuery: '',
     };
   },
   computed: {
-    // Filtra as capas com base na aba ativa
     filteredCovers(): Array<{ id: string; fileName: string; url: string; category: string }> {
         return this.allCovers.filter(c => c.category === this.activeCoverTab);
     },
     hasImages(): boolean {
         return this.allCovers.length > 0;
-    },
-    currentSport(): Sport | undefined {
-        return (this.sportsData || []).find(s => s.key === this.selectedSportKey);
-    },
-    filteredLeagues(): League[] {
-        if (!this.currentSport || !this.currentSport.leagues) return [];
-        const query = this.searchQuery.toLowerCase().trim();
-        if (!query) return this.currentSport.leagues;
-
-        return this.currentSport.leagues.filter(league => {
-            const leagueNameMatch = league.name.toLowerCase().includes(query);
-            const hasTeamMatch = (league.teams || []).some(t => t.name.toLowerCase().includes(query));
-            if (hasTeamMatch && !leagueNameMatch) {
-                league.isExpanded = true;
-            }
-            return leagueNameMatch || hasTeamMatch;
-        });
-    },
-    areAllSelected(): boolean {
-        if (this.filteredLeagues.length === 0) return false;
-        return this.filteredLeagues.every(l => l.isActive);
     }
   },
   async mounted() {
@@ -496,18 +386,6 @@ export default defineComponent({
     selectCover(id: string) {
         this.form.coverImage = id;
     },
-
-    isMatch(text: string): boolean {
-        if (!this.searchQuery) return false;
-        return text.toLowerCase().includes(this.searchQuery.toLowerCase());
-    },
-    toggleAllLeagues() {
-        const targetState = !this.areAllSelected;
-        this.filteredLeagues.forEach(l => {
-            l.isActive = targetState;
-            this.syncLeagueTeams(l);
-        });
-    },
     async loadTemplates() {
         try {
             const res = await tournamentTemplateService.getAll();
@@ -517,105 +395,52 @@ export default defineComponent({
             console.error("Erro ao buscar templates:", e);
         }
     },
-    async openModelCreator() {
-        this.newTemplateName = '';
-        this.searchQuery = ''; 
-        this.showModal = true;
-        if (this.sportsData && this.sportsData.length > 0) {
-            // cache
-        } else {
-            await this.loadFullConfiguration();
-        }
-    },
-    // Captura Inteligente do ID (PascalCase, camelCase ou fallback)
-    async loadFullConfiguration() {
-        try {
-            const data = await SportsService.getAdminConfig();
-            const rawData = Array.isArray(data) ? data : (data.data || []);
-            const safeData = (Array.isArray(rawData) ? rawData : []) as any[];
+    async deleteSelectedTemplate() {
+        if (!this.selectedTemplateId) return;
 
-            this.sportsData = safeData.map((s: any) => ({
-                key: s.key || s.Key || 'unknown',
-                name: s.name || s.Name || 'Unknown',
-                icon: s.icon || s.Icon || '',
-                isActive: true, 
-                leagues: (Array.isArray(s.leagues || s.Leagues) ? (s.leagues || s.Leagues) : []).map((l: any) => ({
-                    id: String(l.Id || l.id || l.LeagueId || l.league_id || l.name),
-                    name: l.name || l.Name || '',
-                    isActive: true, 
-                    isExpanded: false,
-                    teams: (Array.isArray(l.teams || l.Teams) ? (l.teams || l.Teams) : []).map((t: any) => ({
-                        id: String(t.Id || t.id || t.TeamId || t.team_id || t.name), 
-                        name: t.name || t.Name || '',
-                        isActive: true 
-                    }))
-                }))
-            }));
+        const template = this.templates.find(t => (t as any).id === this.selectedTemplateId || (t as any).Id === this.selectedTemplateId);
+        const templateName = template ? ((template as any).name || (template as any).Name) : 'este modelo';
 
-            const firstSport = this.sportsData[0];
-            if (firstSport && !this.selectedSportKey) {
-                this.selectedSportKey = firstSport.key;
+        const result = await Swal.fire({
+            title: 'Excluir Modelo?',
+            text: `Tem certeza que deseja excluir "${templateName}"? Esta ação não pode ser desfeita e pode afetar torneios não finalizados vinculados a ele.`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#ef4444',
+            cancelButtonColor: '#3f3f46',
+            confirmButtonText: 'Sim, excluir',
+            cancelButtonText: 'Cancelar',
+            background: '#18181b',
+            color: '#fff'
+        });
+
+        if (result.isConfirmed) {
+            try {
+                const service = tournamentTemplateService as any;
+                if (typeof service.delete === 'function') {
+                    await service.delete(this.selectedTemplateId);
+                } else if (typeof service.remove === 'function') {
+                    await service.remove(this.selectedTemplateId);
+                } else if (typeof service.destroy === 'function') {
+                    await service.destroy(this.selectedTemplateId);
+                } else {
+                    console.warn("Nenhum método de deleção padrão encontrado em tournamentTemplateService. O item será removido apenas da tela.");
+                }
+
+                this.templates = this.templates.filter(t => (t as any).id !== this.selectedTemplateId && (t as any).Id !== this.selectedTemplateId);
+                this.selectedTemplateId = null;
+
+                Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Modelo excluído com sucesso!', background: '#18181b', color: '#fff', showConfirmButton: false, timer: 2000 });
+            } catch (error) {
+                console.error("Erro ao excluir modelo:", error);
+                Swal.fire({ title: 'Erro', text: 'Não foi possível excluir o modelo.', icon: 'error', background: '#18181b', color: '#fff' });
             }
-        } catch (e) {
-            console.error("Erro config:", e);
-            Swal.fire({ icon: 'error', title: 'Erro', text: 'Falha ao carregar esportes. Verifique a conexão com o Admin API.', background: '#1e293b', color: '#fff' });
         }
     },
-    selectSport(key: string) { 
-        this.selectedSportKey = key; 
-        this.searchQuery = ''; 
-    },
-    toggleLeagueExpansion(league: League) { league.isExpanded = !league.isExpanded; },
-    syncLeagueTeams(league: League) {
-        if (league.teams && league.teams.length > 0) {
-            league.teams.forEach(t => t.isActive = league.isActive);
-        }
-    },
-    countActiveSports() {
-        return (this.sportsData || []).filter(s => s.isActive).length;
-    },
-    async saveNewTemplate() {
-        if (!this.newTemplateName) {
-            Swal.fire({ toast: true, icon: 'warning', title: 'Digite um nome para o modelo', background: '#334155', color: '#fff' });
-            return;
-        }
-
-        const safeSource = (this.sportsData || []) as any[];
-        const activeConfig = {
-            sports: safeSource.filter((s: any) => s.isActive).map((s: any) => {
-                    const leagues = Array.isArray(s.leagues) ? s.leagues : [];
-                    const activeLeagues = leagues.filter((l: any) => l.isActive).map((l: any) => {
-                            const teams = Array.isArray(l.teams) ? l.teams : [];
-                            const activeTeams = teams.filter((t: any) => t.isActive);
-                            const selectedIds = activeTeams.map((t: any) => {
-                                // Garante que pega o ID se existir
-                                const val = (t.id && String(t.id).trim() !== '') ? t.id : t.name;
-                                return String(val);
-                            });
-                            // Garante que pega o ID da liga
-                            const lgId = (l.id && String(l.id).trim() !== '') ? l.id : l.name;
-                            return { id: String(lgId), name: l.name, teams: activeTeams.length === teams.length ? [] : selectedIds };
-                        });
-                    return { key: s.key, leagues: activeLeagues };
-                }).filter((s: any) => s.leagues.length > 0)
-        };
-
-        if (activeConfig.sports.length === 0) {
-            Swal.fire({ title: 'Modelo Vazio', text: 'Selecione pelo menos um esporte e uma liga.', icon: 'warning', background: '#1e293b', color: '#fff' });
-            return;
-        }
-
-        try {
-            const res = await tournamentTemplateService.create({ name: this.newTemplateName, filterRules: JSON.stringify(activeConfig) });
-            
-            if (res && res.data) {
-                this.templates.push(res.data);
-                this.selectedTemplateId = res.data.id || null;
-            }
-            this.showModal = false;
-            Swal.fire({ icon: 'success', title: 'Salvo!', background: '#1e293b', color: '#fff', timer: 1500, showConfirmButton: false });
-        } catch (e) {
-            Swal.fire({ icon: 'error', title: 'Erro', text: 'Falha ao criar modelo.', background: '#1e293b', color: '#fff' });
+    handleTemplateSaved(newTemplate: any) {
+        if (newTemplate) {
+            this.templates.push(newTemplate);
+            this.selectedTemplateId = newTemplate.id || null;
         }
     },
     async submitTournament() {
@@ -625,8 +450,7 @@ export default defineComponent({
           return;
       }
 
-      // 👇👇👇 AQUI ESTÁ A CORREÇÃO (DESCUBRE O ESPORTE DINAMICAMENTE) 👇👇👇
-      let derivedSport = this.form.sport; // Fallback
+      let derivedSport = this.form.sport; 
       try {
           if ((template as any).filterRules) {
               const rulesStr = (template as any).filterRules;
@@ -647,7 +471,6 @@ export default defineComponent({
       } catch (e) {
           console.error("Erro ao ler regras para definir esporte", e);
       }
-      // 👆👆👆 FIM DA CORREÇÃO 👆👆👆
 
       this.isLoading = true;
       try {
@@ -659,7 +482,7 @@ export default defineComponent({
             initialFantasyBalance: this.form.initialFantasyBalance,
             startDate: new Date(this.form.startDate).toISOString(),
             endDate: new Date(this.form.endDate).toISOString(),
-            sport: derivedSport, // <-- Usa a variável dinâmica que criamos
+            sport: derivedSport, 
             isActive: this.form.isActive,
             isFinished: false,
             filterRules: (template as any)?.filterRules || '[]',
@@ -691,467 +514,129 @@ export default defineComponent({
 
 <style scoped>
 /* ESTILOS DA CATEGORIA */
-.category-wrapper {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-.select-mode, .create-mode {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
-.btn-create-cat {
-  background: #3b82f6;
-  color: white;
-  border: none;
-  padding: 0.7rem 1rem;
-  border-radius: 6px;
-  font-weight: 700;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: 0.2s;
-}
+.category-wrapper { display: flex; flex-direction: column; gap: 0.5rem; }
+.select-mode, .create-mode { display: flex; gap: 0.5rem; align-items: center; }
+.btn-create-cat { background: #3b82f6; color: white; border: none; padding: 0.7rem 1rem; border-radius: 6px; font-weight: 700; cursor: pointer; white-space: nowrap; transition: 0.2s; }
 .btn-create-cat:hover { background: #2563eb; }
-
-.btn-cancel-cat {
-  background: #ef4444;
-  color: white;
-  border: none;
-  padding: 0.7rem 1rem;
-  border-radius: 6px;
-  font-weight: 700;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.input-highlight {
-  border-color: #fbbf24 !important;
-  background: #18181b;
-  color: #fff;
-  font-weight: bold;
-}
+.btn-cancel-cat { background: #ef4444; color: white; border: none; padding: 0.7rem 1rem; border-radius: 6px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.input-highlight { border-color: #fbbf24 !important; background: #18181b; color: #fff; font-weight: bold; }
 
 /* ESTILOS DA GRADE DE CAPAS */
-.covers-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-  gap: 1rem;
-  max-height: 250px;
-  overflow-y: auto;
-  background: #00000030;
-  padding: 15px;
-  border-radius: 8px;
-  border: 1px solid #27272a;
-}
-
-.cover-item {
-  position: relative;
-  border-radius: 8px;
-  overflow: hidden;
-  cursor: pointer;
-  border: 2px solid transparent;
-  transition: all 0.2s;
-  aspect-ratio: 2/3;
-  display: flex;
-  flex-direction: column;
-}
-
-.cover-item img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.file-name {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  background: rgba(0,0,0,0.7);
-  color: #a1a1aa;
-  font-size: 0.6rem;
-  text-align: center;
-  padding: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.cover-item:hover {
-  transform: scale(1.05);
-  z-index: 1;
-}
-
-.cover-item.selected {
-  border-color: #fbbf24;
-  box-shadow: 0 0 15px rgba(251, 191, 36, 0.3);
-}
-
-.selection-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(251, 191, 36, 0.2);
-  display: none;
-  align-items: center;
-  justify-content: center;
-}
-
-.cover-item.selected .selection-overlay {
-  display: flex;
-}
-
-.check-icon {
-  background: #fbbf24;
-  color: black;
-  border-radius: 50%;
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
-  font-size: 14px;
-}
-
-.empty-covers {
-  text-align: center;
-  padding: 2rem;
-  border: 2px dashed #27272a;
-  border-radius: 8px;
-  color: #52525b;
-}
+.covers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 1rem; max-height: 250px; overflow-y: auto; background: #00000030; padding: 15px; border-radius: 8px; border: 1px solid #27272a; }
+.cover-item { position: relative; border-radius: 8px; overflow: hidden; cursor: pointer; border: 2px solid transparent; transition: all 0.2s; aspect-ratio: 2/3; display: flex; flex-direction: column; }
+.cover-item img { width: 100%; height: 100%; object-fit: cover; }
+.file-name { position: absolute; bottom: 0; left: 0; width: 100%; background: rgba(0,0,0,0.7); color: #a1a1aa; font-size: 0.6rem; text-align: center; padding: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cover-item:hover { transform: scale(1.05); z-index: 1; }
+.cover-item.selected { border-color: #fbbf24; box-shadow: 0 0 15px rgba(251, 191, 36, 0.3); }
+.selection-overlay { position: absolute; inset: 0; background: rgba(251, 191, 36, 0.2); display: none; align-items: center; justify-content: center; }
+.cover-item.selected .selection-overlay { display: flex; }
+.check-icon { background: #fbbf24; color: black; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; }
+.empty-covers { text-align: center; padding: 2rem; border: 2px dashed #27272a; border-radius: 8px; color: #52525b; }
 .empty-covers .icon { font-size: 2rem; margin-bottom: 0.5rem; }
 .empty-covers code { background: #18181b; padding: 2px 5px; border-radius: 4px; color: #fbbf24; }
 
 /* REAPROVEITANDO ESTILOS GERAIS */
-.admin-container {
-  max-width: 1000px;
-  margin: 2rem auto;
-  padding: 0 1.5rem;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  color: #e4e4e7;
-}
-
-.header-actions {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 2rem;
-  background: rgba(24, 24, 27, 0.6);
-  padding: 1rem;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(10px);
-}
-
+.admin-container { max-width: 1000px; margin: 2rem auto; padding: 0 1.5rem; font-family: 'Inter', system-ui, -apple-system, sans-serif; color: #e4e4e7; }
+.header-actions { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 2rem; background: rgba(24, 24, 27, 0.6); padding: 1rem; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.05); backdrop-filter: blur(10px); }
 .title-section { display: flex; align-items: center; gap: 1rem; }
-.icon-wrapper {
-  font-size: 2rem;
-  background: rgba(251, 191, 36, 0.1);
-  width: 50px; height: 50px;
-  display: flex; align-items: center; justify-content: center;
-  border-radius: 12px;
-  border: 1px solid rgba(251, 191, 36, 0.2);
-}
+.icon-wrapper { font-size: 2rem; background: rgba(251, 191, 36, 0.1); width: 50px; height: 50px; display: flex; align-items: center; justify-content: center; border-radius: 12px; border: 1px solid rgba(251, 191, 36, 0.2); }
 .main-title { font-size: 1.25rem; font-weight: 800; color: #fff; margin: 0; line-height: 1.2; }
 .subtitle { font-size: 0.85rem; color: #a1a1aa; margin: 0; }
-
-.btn-back {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  background: transparent; border: 1px solid #3f3f46;
-  color: #a1a1aa; border-radius: 8px;
-  font-size: 0.8rem; font-weight: 600; cursor: pointer;
-  transition: all 0.2s;
-}
+.btn-back { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background: transparent; border: 1px solid #3f3f46; color: #a1a1aa; border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }
 .btn-back:hover { background: #27272a; color: #fff; border-color: #52525b; }
 
 .main-form { display: flex; flex-direction: column; gap: 1.5rem; }
-.form-card {
-  background: #18181b;
-  border: 1px solid #27272a;
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-}
-.card-header {
-  padding: 1rem 1.5rem;
-  border-bottom: 1px solid #27272a;
-  background: #202024;
-  display: flex; align-items: center; gap: 0.75rem;
-}
-.step-indicator {
-  font-size: 0.7rem; font-weight: 900; color: #000;
-  background: #fbbf24; padding: 2px 6px; border-radius: 4px;
-}
-.card-header h3 {
-  font-size: 0.9rem; font-weight: 700; color: #f4f4f5; margin: 0;
-  text-transform: uppercase; letter-spacing: 0.05em;
-}
+.form-card { background: #18181b; border: 1px solid #27272a; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+.card-header { padding: 1rem 1.5rem; border-bottom: 1px solid #27272a; background: #202024; display: flex; align-items: center; gap: 0.75rem; }
+.step-indicator { font-size: 0.7rem; font-weight: 900; color: #000; background: #fbbf24; padding: 2px 6px; border-radius: 4px; }
+.card-header h3 { font-size: 0.9rem; font-weight: 700; color: #f4f4f5; margin: 0; text-transform: uppercase; letter-spacing: 0.05em; }
 .card-body { padding: 1.5rem; }
-
 .grid-layout { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.25rem; }
 .full-width { grid-column: span 3; }
 
 .form-group { display: flex; flex-direction: column; gap: 0.4rem; }
-.form-group label {
-  font-size: 0.75rem; font-weight: 600; color: #a1a1aa; text-transform: uppercase;
-}
+.form-group label { font-size: 0.75rem; font-weight: 600; color: #a1a1aa; text-transform: uppercase; }
 .highlight-label { color: #fbbf24 !important; }
 
 select { color-scheme: dark; } 
 select option { background-color: #18181b; color: #fff; padding: 10px; }
-
-input, select, textarea {
-  background: #09090b;
-  border: 1px solid #3f3f46;
-  color: #f4f4f5;
-  padding: 0.65rem 0.75rem;
-  border-radius: 6px;
-  font-size: 0.85rem;
-  outline: none;
-  transition: all 0.2s;
-  width: 100%;
-  font-family: inherit;
-  appearance: none;
-  -webkit-appearance: none;
-}
-input:focus, select:focus, textarea:focus {
-  border-color: #fbbf24;
-  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.1);
-}
-
-::-webkit-calendar-picker-indicator {
-    filter: invert(1);
-    opacity: 0.6;
-    cursor: pointer;
-    transition: opacity 0.2s;
-}
-::-webkit-calendar-picker-indicator:hover {
-    opacity: 1;
-}
+input, select, textarea { background: #09090b; border: 1px solid #3f3f46; color: #f4f4f5; padding: 0.65rem 0.75rem; border-radius: 6px; font-size: 0.85rem; outline: none; transition: all 0.2s; width: 100%; font-family: inherit; appearance: none; -webkit-appearance: none; }
+input:focus, select:focus, textarea:focus { border-color: #fbbf24; box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.1); }
+::-webkit-calendar-picker-indicator { filter: invert(1); opacity: 0.6; cursor: pointer; transition: opacity 0.2s; }
+::-webkit-calendar-picker-indicator:hover { opacity: 1; }
 
 .select-wrapper { position: relative; display: flex; align-items: center; }
-.chevron {
-  position: absolute; right: 15px; pointer-events: none;
-  font-size: 0.7rem; color: #71717a;
-  top: 50%; transform: translateY(-50%);
-}
+.chevron { position: absolute; right: 15px; pointer-events: none; font-size: 0.7rem; color: #71717a; top: 50%; transform: translateY(-50%); }
 .chevron.text-gold { color: #fbbf24; }
-
 .input-group { display: flex; gap: 0.5rem; }
 
-.btn-secondary {
-  background: #2563eb; color: white; border: none; padding: 0 1rem;
-  border-radius: 6px; font-weight: 600; font-size: 0.8rem; cursor: pointer;
-  white-space: nowrap; transition: background 0.2s;
-}
+.btn-secondary { background: #2563eb; color: white; border: none; padding: 0 1rem; border-radius: 6px; font-weight: 600; font-size: 0.8rem; cursor: pointer; white-space: nowrap; transition: background 0.2s; }
 .btn-secondary:hover { background: #1d4ed8; }
+
+.btn-danger { background: #ef4444; color: white; border: none; cursor: pointer; min-width: 40px; }
+.btn-danger:hover { background: #dc2626; }
 
 .input-icon-wrapper { position: relative; }
 .input-icon-wrapper input.pl-8 { padding-left: 2.2rem; }
 .input-icon-wrapper input.pr-8 { padding-right: 2rem; }
-.icon-prefix, .icon-suffix {
-  position: absolute; top: 50%; transform: translateY(-50%);
-  color: #71717a; font-size: 0.8rem; font-weight: bold;
-}
+.icon-prefix, .icon-suffix { position: absolute; top: 50%; transform: translateY(-50%); color: #71717a; font-size: 0.8rem; font-weight: bold; }
 .icon-prefix { left: 0.75rem; }
 .icon-suffix { right: 0.75rem; }
 .icon-prefix.text-gold { color: #fbbf24; }
 
-/* ESTILO DO CAMPO DOURADO */
-.input-gold {
-    border-color: #fbbf24 !important;
-    color: #fbbf24 !important;
-    font-weight: bold;
+.input-gold { border-color: #fbbf24 !important; color: #fbbf24 !important; font-weight: bold; }
+
+/* 🔥 CHECKBOX CUSTOMIZADO (IGUAL À IMAGEM DO TEMPLATE) 🔥 */
+.custom-checkbox { 
+    appearance: none;
+    -webkit-appearance: none;
+    width: 22px; 
+    height: 22px; 
+    background-color: #18181b;
+    border: 2px solid #3f3f46;
+    border-radius: 4px;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.2s ease-in-out;
+    outline: none;
+    display: inline-block;
+    margin: 0;
+}
+.custom-checkbox:hover {
+    border-color: #52525b;
+}
+.custom-checkbox:checked {
+    background-color: #fbbf24; /* Amarelo dourado */
+    border-color: #fbbf24;
+    box-shadow: 0 0 12px rgba(251, 191, 36, 0.5); /* Glow igual da imagem */
+}
+.custom-checkbox:checked::after {
+    content: '';
+    position: absolute;
+    left: 6.5px;
+    top: 2.5px;
+    width: 5px;
+    height: 11px;
+    border: solid #000; /* V em preto */
+    border-width: 0 2.5px 2.5px 0;
+    transform: rotate(45deg);
 }
 
 .helper-text { font-size: 0.7rem; color: #52525b; margin-top: 0.2rem; }
 .helper-warning { font-size: 0.75rem; color: #fbbf24; margin-top: 0.5rem; }
-.optional { font-weight: 400; text-transform: none; color: #52525b; }
 
 .form-footer { margin-top: 1rem; }
-.btn-primary {
-  width: 100%; padding: 1rem;
-  background: linear-gradient(135deg, #fbbf24 0%, #d97706 100%);
-  color: #000; border: none; border-radius: 8px;
-  font-weight: 800; font-size: 0.95rem; text-transform: uppercase;
-  letter-spacing: 0.05em; cursor: pointer;
-  transition: transform 0.1s, box-shadow 0.2s;
-  display: flex; justify-content: center; align-items: center; gap: 0.5rem;
-  box-shadow: 0 10px 15px -3px rgba(251, 191, 36, 0.3);
-}
+.btn-primary { width: 100%; padding: 1rem; background: linear-gradient(135deg, #fbbf24 0%, #d97706 100%); color: #000; border: none; border-radius: 8px; font-weight: 800; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em; cursor: pointer; transition: transform 0.1s, box-shadow 0.2s; display: flex; justify-content: center; align-items: center; gap: 0.5rem; box-shadow: 0 10px 15px -3px rgba(251, 191, 36, 0.3); }
 .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 15px 20px -3px rgba(251, 191, 36, 0.4); }
 .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; background: #52525b; box-shadow: none; transform: none; }
 
-.loader {
-  width: 16px; height: 16px; border: 2px solid #000;
-  border-bottom-color: transparent; border-radius: 50%;
-  display: inline-block; animation: rotation 1s linear infinite;
-}
+.loader { width: 16px; height: 16px; border: 2px solid #000; border-bottom-color: transparent; border-radius: 50%; display: inline-block; animation: rotation 1s linear infinite; }
 @keyframes rotation { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-
-/* Modal */
-.modal-overlay {
-  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(4px); z-index: 1000;
-  display: flex; align-items: center; justify-content: center;
-}
-.modal-content {
-  background: #09090b; width: 95%; max-width: 900px; height: 85vh;
-  border-radius: 12px; border: 1px solid #27272a;
-  display: flex; flex-direction: column;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); overflow: hidden;
-}
-.modal-header {
-  padding: 1rem 1.5rem; border-bottom: 1px solid #27272a;
-  display: flex; justify-content: space-between; align-items: center;
-  background: #121214;
-}
-.modal-title { display: flex; align-items: center; gap: 0.5rem; }
-.modal-title .icon { font-size: 1.2rem; }
-.modal-title h3 { margin: 0; font-size: 1rem; color: #fff; font-weight: 700; }
-.btn-close { background: none; border: none; color: #52525b; font-size: 1.2rem; cursor: pointer; }
-.btn-close:hover { color: #fff; }
-
-.modal-body { flex: 1; padding: 1.5rem; overflow-y: auto; background: #09090b; }
-
-.sports-container { margin-bottom: 1.5rem; }
-.section-label { font-size: 0.75rem; font-weight: 700; color: #71717a; text-transform: uppercase; display: block; margin-bottom: 0.5rem; }
-.sports-scroll { display: flex; gap: 0.75rem; overflow-x: auto; padding-bottom: 0.5rem; }
-.sport-card {
-  min-width: 110px; background: #18181b; border: 1px solid #27272a;
-  border-radius: 8px; padding: 0.75rem; cursor: pointer;
-  transition: all 0.2s; display: flex; flex-direction: column;
-  justify-content: space-between; height: 70px;
-}
-.sport-card:hover { border-color: #52525b; background: #202024; }
-.sport-card.active { border-color: #3b82f6; background: rgba(59, 130, 246, 0.1); }
-.sport-header { display: flex; justify-content: space-between; }
-
-/* CORREÇÃO VISUAL 1: Checkbox Amarelo e Visível */
-.custom-checkbox { 
-    accent-color: #fbbf24; 
-    width: 18px; 
-    height: 18px; 
-    cursor: pointer;
-    /* Adiciona contraste caso o navegador não suporte accent-color bem */
-    filter: drop-shadow(0 0 2px rgba(251, 191, 36, 0.5));
-}
-
-.sport-name { font-size: 0.75rem; font-weight: 600; color: #e4e4e7; margin-top: auto; }
-
-.leagues-panel {
-  background: #121214; border: 1px solid #27272a; border-radius: 8px;
-  display: flex; flex-direction: column; overflow: hidden; min-height: 300px;
-}
-.leagues-header {
-  padding: 0.75rem; background: #18181b; border-bottom: 1px solid #27272a;
-  display: flex; justify-content: space-between; align-items: center;
-}
-.badge { background: #27272a; color: #a1a1aa; font-size: 0.65rem; padding: 1px 6px; border-radius: 4px; margin-left: 0.5rem; }
-.btn-link { background: none; border: none; color: #3b82f6; font-size: 0.7rem; font-weight: 600; cursor: pointer; margin-left: 1rem; }
-.btn-link:hover { text-decoration: underline; }
-
-.search-box { position: relative; width: 200px; }
-.search-box input { padding-left: 2rem; font-size: 0.8rem; background: #09090b; }
-.search-icon { position: absolute; left: 0.6rem; top: 50%; transform: translateY(-50%); font-size: 0.8rem; color: #52525b; }
-
-.leagues-list { flex: 1; overflow-y: auto; padding: 0.5rem; }
-.empty-state { padding: 2rem; text-align: center; font-size: 0.8rem; color: #52525b; font-style: italic; }
-
-.league-item {
-  border: 1px solid #27272a; border-radius: 6px; margin-bottom: 0.5rem;
-  background: #18181b; overflow: hidden; transition: opacity 0.2s;
-}
-.league-item.inactive { opacity: 0.6; border-color: #ef444430; background: #2f151520; }
-
-.league-row {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 0.6rem 0.75rem; cursor: pointer; transition: background 0.2s;
-}
-.league-row:hover { background: #202024; }
-.lr-content { display: flex; align-items: center; gap: 0.75rem; flex: 1; }
-.arrow { font-size: 0.6rem; color: #52525b; transition: transform 0.2s; }
-.arrow.rotated { transform: rotate(90deg); }
-.league-name { font-size: 0.85rem; font-weight: 600; color: #e4e4e7; }
-.league-name.highlight { color: #fbbf24; }
-.count-badge { font-size: 0.7rem; background: #27272a; color: #a1a1aa; padding: 1px 5px; border-radius: 4px; }
-
-/* CORREÇÃO VISUAL 2: Toggle Switch com cor destaque */
-.switch { position: relative; display: inline-block; width: 34px; height: 18px; }
-.switch input { opacity: 0; width: 0; height: 0; }
-.slider {
-  position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
-  background-color: #3f3f46; transition: .4s; border-radius: 34px;
-}
-.slider:before {
-  position: absolute; content: ""; height: 16px; width: 16px; left: 2px; bottom: 2px;
-  background-color: white; transition: .4s; border-radius: 50%;
-}
-input:checked + .slider { background-color: #10b981; } /* Mantido verde pois é padrão para ON/OFF */
-input:checked + .slider:before { transform: translateX(16px); }
-
-.teams-grid {
-  padding: 0.75rem; background: #00000030; border-top: 1px solid #27272a;
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.75rem;
-}
-.empty-teams { font-size: 0.8rem; color: #52525b; font-style: italic; }
-.team-chip {
-  background: #27272a; padding: 0.5rem 0.75rem; border-radius: 6px; border: 1px solid transparent;
-  display: flex; justify-content: space-between; align-items: center;
-  cursor: pointer; transition: all 0.2s; user-select: none;
-}
-.team-chip:hover { background: #3f3f46; color: #fff; }
-
-/* CORREÇÃO VISUAL 3: Seleção Dourada/Amarela (Gold Theme) */
-.team-chip.selected { 
-    background: rgba(251, 191, 36, 0.15); /* Fundo Dourado Translúcido */
-    border-color: #fbbf24; /* Borda Dourada */
-}
-.team-chip.selected .tname { 
-    color: #fbbf24; /* Texto Dourado */
-    font-weight: 600; 
-}
-
-.tname { font-size: 0.8rem; color: #a1a1aa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 85%; }
-.tname.highlight { text-decoration: underline; text-decoration-color: #fbbf24; }
-
-.status-indicator { width: 6px; height: 6px; border-radius: 50%; background: #52525b; }
-.status-indicator.on { 
-    background: #fbbf24; /* Indicador Dourado */
-    box-shadow: 0 0 6px #fbbf24; 
-}
-
-.modal-footer {
-  padding: 1rem 1.5rem; background: #18181b; border-top: 1px solid #27272a;
-  display: flex; justify-content: space-between; align-items: center;
-}
-.mf-info { font-size: 0.85rem; color: #a1a1aa; }
-.mf-info strong { color: #fff; }
-.mf-actions { display: flex; gap: 0.75rem; }
-.btn-ghost {
-  background: transparent; color: #a1a1aa; border: 1px solid #3f3f46;
-  padding: 0.6rem 1.2rem; border-radius: 6px; font-weight: 600; cursor: pointer; transition: 0.2s;
-}
-.btn-ghost:hover { border-color: #52525b; color: #fff; }
-.btn-primary.small { width: auto; font-size: 0.85rem; padding: 0.6rem 1.5rem; box-shadow: none; }
-
-.custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 10px; }
-.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #52525b; }
-
-.animate-scale-in { animation: scaleIn 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
-@keyframes scaleIn { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-
 .animate-fade-in { animation: fadeIn 0.4s ease-out; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
 @media (max-width: 768px) {
-  .grid-3, .grid-2 { grid-template-columns: 1fr; }
+  .grid-layout { grid-template-columns: 1fr; }
   .full-width { grid-column: span 1; }
-  .modal-panel { width: 100%; height: 100%; border-radius: 0; }
-  .teams-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
 }
 </style>

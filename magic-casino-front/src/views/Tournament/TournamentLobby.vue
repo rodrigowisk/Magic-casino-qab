@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'; 
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import Swal from 'sweetalert2';
 
 import PageLoader from '../../components/PageLoader.vue';
@@ -41,6 +41,7 @@ interface Tournament {
 
 // --- SETUP ---
 const router = useRouter();
+const route = useRoute(); // 🔥 DECLARAMOS O ROUTE PARA LER A URL 🔥
 const authStore = useAuthStore();
 const { isLoading, loadingProgress, isContentReady, startLoader, finishLoader } = usePageLoader();
 
@@ -358,6 +359,21 @@ const loadTournaments = async () => {
   try {
     const res = await tournamentService.listTournaments(currentUserId.value);
     tournaments.value = res.data || [];
+
+    // 🔥 AQUI ESTÁ A LÓGICA DE ABRIR O MODAL PELO LINK COMPARTILHADO 🔥
+    if (route.query.showInfo) {
+        const sharedId = Number(route.query.showInfo);
+        const sharedTourney = tournaments.value.find(t => t.id === sharedId);
+        
+        if (sharedTourney) {
+            openInfoModal(sharedTourney);
+            
+            // Limpa o parâmetro da URL suavemente (sem dar reload na página)
+            // Assim, se o usuário der F5 depois, o modal não abre sozinho de novo.
+            router.replace({ query: undefined }); 
+        }
+    }
+
   } catch (error) {
     console.error("Erro ao buscar torneios:", error);
     tournaments.value = [];
@@ -379,6 +395,7 @@ const updateLocalTournamentState = (id: number) => {
 };
 
 // ✅ MÉTODO DE INSCRIÇÃO CORRIGIDO (Otimista + Seguro)
+// ✅ MÉTODO DE INSCRIÇÃO CORRIGIDO (Otimista + Seguro - Sem Redirecionar)
 const processJoin = async (id: number) => {
   if (!authStore.isAuthenticated && !currentUserId.value) {
     showAlert('Login Necessário', 'Por favor, entre na sua conta para participar.', 'warning');
@@ -393,8 +410,6 @@ const processJoin = async (id: number) => {
     const userAvatar = authStore.user?.avatar || authStore.user?.Avatar || ''; 
 
     // 2. Envia para o Backend (HTTP)
-    // Se falhar aqui (ex: sem saldo, erro 500), vai para o CATCH.
-    // Se passar (200 OK), significa que o pedido foi aceito e está na fila.
     await tournamentService.joinTournament(id, currentUserId.value, userName, userAvatar);
     
     // -----------------------------------------------------------
@@ -404,31 +419,30 @@ const processJoin = async (id: number) => {
     // 3. Atualiza estado local (Card fica verde/Inscrito)
     updateLocalTournamentState(id);
     
-    // 4. Mostra sucesso rápido
+    // Mantive o Toast de sucesso (além do efeito visual que colocamos no card)
     const Toast = Swal.mixin({
         toast: true, position: 'top-end', showConfirmButton: false, timer: 1500, background: '#0f172a', color: '#fff'
     });
     Toast.fire({ icon: 'success', title: 'Inscrição Confirmada!' });
 
-    // 5. Redireciona para o jogo (Não espera o RabbitMQ terminar)
-    enterTournament(id);
+    // 🔥 AQUI ESTAVA O SEGREDO: Removi o enterTournament(id); 
+    // Agora ele permanece no lobby!
 
   } catch (error: any) {
-    // --- TRATAMENTO DE ERRO (Só entra aqui se a API recusar) ---
+    // --- TRATAMENTO DE ERRO ---
     const errorData = error.response?.data;
     const errorMsg = (typeof errorData === 'string' ? errorData : errorData?.error || errorData?.message || '').toLowerCase();
     
-    // Edge Case: Se a API disser "Usuário já inscrito" (erro 400), 
-    // consideramos sucesso e entramos.
+    // Edge Case: Se a API disser "Usuário já inscrito" (erro 400)
     if (errorMsg.includes('já inscrito') || errorMsg.includes('already joined')) {
       updateLocalTournamentState(id);
-      enterTournament(id);
+      // 🔥 AQUI TAMBÉM: Removi o enterTournament(id); para ele não pular de tela à força.
     } else {
       // Erro real (ex: Saldo insuficiente)
       showAlert('Atenção', errorData?.message || 'Não foi possível enviar a solicitação.', 'error');
     }
   } finally {
-    // 6. Destrava o botão sempre
+    // Destrava o botão sempre
     processingId.value = null;
   }
 };

@@ -85,7 +85,6 @@ const availableSports = computed(() => {
         const sportRaw = g.sportKey || g.Sport || g.sport || g.SportKey || 'soccer';
         const key = normalizeKey(String(sportRaw));
         
-        // CORREÇÃO TYPESCRIPT (TS2532): Trata o valor undefined garantindo 0
         counts[key] = (counts[key] ?? 0) + 1;
         counts['all'] = (counts['all'] ?? 0) + 1;
     });
@@ -187,16 +186,19 @@ const selectDateOption = (value: string) => {
   closeDateDropdown();
 };
 
+// 🔥 CORREÇÃO: GARANTIR QUE O PRIMEIRO ESPORTE ESTEJA SEMPRE SELECIONADO (E SEGURO PARA TYPESCRIPT)
 watch(availableSports, (newList) => {
-    if (newList.length === 0) return;
+    if (!newList || newList.length === 0) return;
 
-    if (newList.length === 1 && newList[0]) {
-        const uniqueSport = newList[0].key;
-        if (props.selectedSport !== uniqueSport) {
-            if (uniqueSport === 'all' && props.selectedSport && props.selectedSport !== 'all') {
-                return;
-            }
-            emit('update:selectedSport', uniqueSport);
+    // Verifica se o esporte atualmente selecionado existe na nova lista gerada
+    const isCurrentSportAvailable = newList.some(sport => sport && sport.key === props.selectedSport);
+
+    // Se não existir (ou se a prop vier vazia), força a seleção do primeiro item da lista.
+    if (!isCurrentSportAvailable || !props.selectedSport) {
+        const firstSport = newList[0];
+        // Proteção contra undefined extra exigida pelo compilador do Vite/TS
+        if (firstSport && firstSport.key) {
+            emit('update:selectedSport', firstSport.key);
         }
     }
 }, { immediate: true });

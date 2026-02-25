@@ -249,7 +249,7 @@ const toggleMarket = (name: string) => {
 
 // --- AÇÕES DE APOSTA ---
 const getSelectionUniqueId = (gId: string, market: string, outcome: string): string => {
-    return `TOURNAMENT_${gId}_${market}_${asString(outcome)}`.replace(/\s+/g, '');
+    return `${gId}_${market}_${asString(outcome)}`.replace(/\s+/g, '');
 };
 
 const isSelected = (odd: any, marketNameGrouped: string): boolean => {
@@ -261,7 +261,7 @@ const isSelected = (odd: any, marketNameGrouped: string): boolean => {
 const getSelectedCountForMarket = (marketNameGrouped: string) => {
     if (!event.value) return 0;
     return betStore.selections.filter(s => {
-        return s.id && s.id.startsWith('TOURNAMENT_') && s.id.includes(`_${event.value.id}_`) && s.id.includes(marketNameGrouped.replace(/\s+/g, ''));
+        return s.id && s.id.startsWith(`${event.value.id}_`) && s.id.includes(marketNameGrouped.replace(/\s+/g, ''));
     }).length;
 };
 
@@ -294,7 +294,7 @@ const handleSelection = (odd: any, marketNameGrouped: string) => {
     }
 
     const existingInMarket = betStore.selections.find(s => {
-        return s.id.startsWith(`TOURNAMENT_${event.value.id}`) && s.id.includes(marketNameGrouped.replace(/\s+/g, ''));
+        return s.id.startsWith(`${event.value.id}_`) && s.id.includes(marketNameGrouped.replace(/\s+/g, ''));
     });
     if (existingInMarket) {
         betStore.removeSelection(existingInMarket.id);
@@ -318,7 +318,8 @@ const handleSelection = (odd: any, marketNameGrouped: string) => {
             isTournament: true,
             tournamentId: tournamentId.value,
             marketName: marketNameGrouped,
-            isLive: isLive.value 
+            isLive: isLive.value,
+            gameId: event.value.id // ✅ O ID real do jogo agora vai para a Store
         }
     );
 };

@@ -64,7 +64,7 @@
                 >
                   <div class="w-full h-full rounded-full bg-[#15222d] flex items-center justify-center overflow-hidden relative">
                      <img 
-                        :src="form.avatar || '/images/avatars/1.svg'" 
+                        :src="form.avatar || '/images/avatars/man/1.svg'" 
                         class="w-full h-full object-cover" 
                         alt="Avatar"
                         @error="handleImageError"
@@ -320,7 +320,6 @@ import {
   Eye, EyeOff, AtSign, Camera, X, ArrowLeft
 } from 'lucide-vue-next';
 
-// ✅ 1. Importa a Store
 import { useAuthStore } from '../stores/useAuthStore';
 
 // Ícones Medalhas
@@ -330,7 +329,6 @@ const MedalGold = { template: `<svg viewBox="0 0 100 100" class="w-full h-full" 
 
 const route = useRoute();
 const router = useRouter();
-// ✅ 2. Inicializa a Store
 const authStore = useAuthStore();
 
 const notification = ref({ show: false, message: '', type: 'success' as 'success' | 'error' | 'warning' });
@@ -363,9 +361,26 @@ const form = ref({
 });
 const passForm = ref({ currentPassword: '', newPassword: '', confirmPassword: '' });
 
+
+// 🔥 Implementação Automática com import.meta.glob 🔥
+// O Vite vai mapear automaticamente todas as imagens dessas pastas durante o build, não importa a extensão!
+const rawManAvatars = import.meta.glob('/public/images/avatars/man/*.{svg,png,jpg,jpeg,webp}', { eager: true });
+const rawWomanAvatars = import.meta.glob('/public/images/avatars/woman/*.{svg,png,jpg,jpeg,webp}', { eager: true });
+
+// Função inteligente para ordenar os avatares numericamente pelo nome do arquivo (ex: 1.png, 2.svg, 10.png)
+const sortAvatars = (paths: string[]) => {
+    return paths.sort((a, b) => {
+        // Extrai o número do final do path. Ex: "/public/images/avatars/man/45.png" -> extrai o "45"
+        const numA = parseInt(a.match(/(\d+)\.\w+$/)?.[1] || '0');
+        const numB = parseInt(b.match(/(\d+)\.\w+$/)?.[1] || '0');
+        return numA - numB;
+    });
+};
+
+// Montamos a lista final, removendo a string "/public" da URL (senão dá erro de caminho no navegador)
 const avatarsList = {
-    man: Array.from({ length: 39 }, (_, i) => `/images/avatars/man/${i + 1}.svg`),
-    woman: Array.from({ length: 13 }, (_, i) => `/images/avatars/woman/${i + 1}.svg`)
+    man: sortAvatars(Object.keys(rawManAvatars)).map(path => path.replace('/public', '')),
+    woman: sortAvatars(Object.keys(rawWomanAvatars)).map(path => path.replace('/public', ''))
 };
 
 const filteredAvatars = computed(() => {
@@ -382,8 +397,9 @@ const selectAvatar = (path: string) => {
     updateProfile(); 
 };
 
+// Se a imagem der erro, joga para um padrão garantido (garantindo que se falhar, pegue uma existente)
 const handleImageError = (e: Event) => {
-    (e.target as HTMLImageElement).src = '/images/avatars/1.svg';
+    (e.target as HTMLImageElement).src = '/images/avatars/man/1.svg';
 };
 
 const levelStyle = computed(() => {
@@ -419,7 +435,7 @@ const loadProfile = async () => {
         phone: data.phone || '',
         level: data.level || 'bronze',
         emailVerified: data.email_verified || false,
-        avatar: data.avatar || '/images/avatars/1.svg' 
+        avatar: data.avatar || '/images/avatars/man/1.svg' 
     };
   } catch (error: any) {
     if (error.response && error.response.status === 401) {
@@ -442,7 +458,6 @@ const updateProfile = async () => {
     };
     await axios.put('/core/api/user/update', payload, { headers: { Authorization: `Bearer ${token}` } });
     
-    // ✅ 3. CHAMA A ACTION DA STORE PARA ATUALIZAR GLOBALMENTE
     authStore.updateUser({
         name: form.value.name,
         avatar: form.value.avatar

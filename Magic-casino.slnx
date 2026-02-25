@@ -4,4 +4,5 @@
   <Project Path="//wsl.localhost/Ubuntu/home/rodrigo/projetos/Magic-casino-qab/Magic-casino-tournament/Magic-casino-tournament.csproj" Id="c4b94d96-c275-42c0-a951-1367dcc55450" />
   <Project Path="//wsl.localhost/Ubuntu/home/rodrigo/projetos/Magic-casino-qab/Magic-casino/Magic-casino.csproj" />
   <Project Path="//wsl.localhost/Ubuntu/home/rodrigo/projetos/Magic-casino-qab/Magic_Casino_Bot/Magic_Casino_Bot.csproj" />
+  <Project Path="Magic-casino-socialwager/Magic-casino-socialwager.csproj" Id="c315b269-07da-4065-a48d-04eacf54537b" />
 </Solution>

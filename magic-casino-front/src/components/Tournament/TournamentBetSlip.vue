@@ -229,7 +229,8 @@ const submitBetToApi = async () => {
             awayTeam: s.awayTeam,
             marketName: ['1','2','X','x'].includes(s.type) ? 'Match Winner' : 'Mercado',
             selectionName: s.type, 
-            odds: Number(s.odds)
+            odds: Number(s.odds),
+            commenceTime: s.commenceTime
         };
     });
 

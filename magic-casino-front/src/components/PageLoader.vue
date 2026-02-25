@@ -22,7 +22,7 @@ const text = computed(() => props.loadingText || 'Carregando...');
     >
         
         <div class="mb-8 animate-pulse-slow">
-            <img src="/logo.png?v=4" alt="Loading" class="h-16 md:h-24 object-contain drop-shadow-[0_0_15px_rgba(34,197,94,0.3)]" />
+            <img src="/logo.png?v=6" alt="Loading" class="h-16 md:h-24 object-contain drop-shadow-[0_0_15px_rgba(34,197,94,0.3)]" />
         </div>
 
         <div class="w-64 h-1.5 bg-[#1e293b] rounded-full overflow-hidden relative border border-slate-800">

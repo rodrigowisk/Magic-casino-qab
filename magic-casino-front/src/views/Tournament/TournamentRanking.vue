@@ -111,7 +111,9 @@ const openPlayerBets = async (player: TournamentRankingDto) => {
                     selectionName: s.selectionName || s.SelectionName,
                     odds: s.odds || s.Odds,
                     status: s.status || s.Status,
-                    finalScore: s.finalScore || s.FinalScore
+                    finalScore: s.finalScore || s.FinalScore,
+                    // 🔥 CORREÇÃO: Adicionada a extração da data do jogo, igualzinho no MyBets.vue
+                    gameDate: s.gameDate || s.GameDate || s.commenceTime || s.CommenceTime || s.date || s.Date
                 }))
             }));
         }

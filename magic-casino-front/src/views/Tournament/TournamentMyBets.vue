@@ -73,7 +73,8 @@ const loadMyBetsHistory = async () => {
             selectionName: s.selectionName || s.SelectionName,
             odds: s.odds || s.Odds,
             status: s.status || s.Status,
-            finalScore: s.finalScore || s.FinalScore
+            finalScore: s.finalScore || s.FinalScore,
+            gameDate: s.gameDate || s.GameDate || s.commenceTime || s.CommenceTime || s.date || s.Date
         }))
     }));
   } catch (error) {

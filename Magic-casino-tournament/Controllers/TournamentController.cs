@@ -242,5 +242,6 @@ namespace Magic_casino_tournament.Controllers
         public string SelectionName { get; set; }
         public string MarketName { get; set; }
         public decimal Odds { get; set; }
+        public DateTime? CommenceTime { get; set; }
     }
 }

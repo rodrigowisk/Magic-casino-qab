@@ -302,7 +302,7 @@ onUnmounted(() => { document.removeEventListener('click', handleClickOutsideSear
             class="w-auto md:w-56 flex justify-start cursor-pointer select-none hover:brightness-110 transition-all group"
             style="font-family: 'Montserrat', sans-serif;"
         >
-            <img src="/logo.png?v=4" alt="Logo" class="h-8 md:h-14 object-contain" />
+            <img src="/logo.png?v=6" alt="Logo" class="h-8 md:h-14 object-contain" />
         </div>
 
         <button 

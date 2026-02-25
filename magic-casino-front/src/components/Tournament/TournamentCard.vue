@@ -2,7 +2,7 @@
 import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { 
     Info, Users, LogIn, 
-    Heart, Share2, Trophy, X, Calendar, Coins, Lock, Check 
+    Heart, Share2, Trophy, X, Calendar, Coins, Lock, Check, Play 
 } from 'lucide-vue-next';
 import Swal from 'sweetalert2';
 import TournamentService from '../../services/Tournament/TournamentService';
@@ -34,8 +34,19 @@ const isFull = computed(() => {
     return t.maxParticipants > 0 && t.participantsCount >= t.maxParticipants;
 });
 
-const showAlreadyJoinedMsg = ref(false);
-let joinedMsgTimeout: any = null;
+// 🔥 TIMER REATIVO PARA ATUALIZAR O BOTÃO AUTOMATICAMENTE 🔥
+const currentTime = ref(new Date().getTime());
+let timeCheckerInterval: any = null;
+
+// 🔥 CHECAGEM SE O TORNEIO É NO FUTURO (AGORA É REATIVA) 🔥
+const isFutureTournament = computed(() => {
+    if (!props.tournament?.startDate) return false;
+    const startTime = new Date(props.tournament.startDate).getTime();
+    return startTime > currentTime.value;
+});
+
+const showSuccessMsg = ref(false);
+let successMsgTimeout: any = null;
 
 const showInfo = ref(false);
 const popoverRef = ref<HTMLElement | null>(null);
@@ -149,9 +160,8 @@ const titleStyle = computed(() => {
         fontFamily: selectedFont,
         fontSize: fontSize,
         letterSpacing: letterSpacing,
-        // Dourado forte no próprio texto
+        // 🔥 COR DOURADA PREMIUM DO TÍTULO 🔥
         color: '#FFD700', 
-        // Sombra de contraste escuro para legibilidade + Brilho Neon contido
         textShadow: '1px 2px 3px rgba(0,0,0,0.9), 0 0 5px rgba(255, 193, 7, 0.8), 0 0 10px rgba(255, 152, 0, 0.5)'
     };
 });
@@ -268,8 +278,9 @@ const handleShare = async (event: Event) => {
     }
 
     const t = props.tournament;
-    const url = `${window.location.origin}/tournament/${t.id}`;
-    const shareData = { title: t.name, text: 'Venha jogar!', url };
+    // 🔥 URL ATUALIZADA PARA REDIRECIONAR AO LOBBY COM O PARÂMETRO DO MODAL 🔥
+    const url = `${window.location.origin}/tournaments?showInfo=${t.id}`;
+    const shareData = { title: t.name, text: 'Da uma olhada nesse Torneio que estou jogando! Esta Imperdível, CONFIRA!!!', url };
 
     if (navigator.share) {
         try { await navigator.share(shareData); emit('share', t.id); } catch {}
@@ -286,11 +297,16 @@ const handleAction = async () => {
     const t = props.tournament;
     
     if (localIsJoined.value) {
-        showAlreadyJoinedMsg.value = true;
-        if (joinedMsgTimeout) clearTimeout(joinedMsgTimeout);
-        joinedMsgTimeout = setTimeout(() => {
-            showAlreadyJoinedMsg.value = false;
-        }, 2500); 
+        if (isFutureTournament.value) {
+            Swal.fire({
+                toast: true, position: 'top-end', icon: 'info', 
+                title: 'O torneio ainda não começou!', showConfirmButton: false, timer: 2500, 
+                background: '#121212', color: '#fff'
+            });
+            return;
+        }
+
+        emit('enter', t.id);
         return;
     }
 
@@ -306,6 +322,14 @@ const handleAction = async () => {
     const isConfirmed = await confirmPurchase(t);
     
     if (isConfirmed) {
+        localIsJoined.value = true;
+        
+        showSuccessMsg.value = true;
+        if (successMsgTimeout) clearTimeout(successMsgTimeout);
+        successMsgTimeout = setTimeout(() => {
+            showSuccessMsg.value = false;
+        }, 3000); 
+
         emit('join', t.id);
     }
 };
@@ -315,8 +339,21 @@ const handlePopoverAction = () => {
     handleAction();
 };
 
-onMounted(() => document.addEventListener('click', handleClickOutside));
-onUnmounted(() => document.removeEventListener('click', handleClickOutside));
+onMounted(() => {
+    document.addEventListener('click', handleClickOutside);
+    
+    timeCheckerInterval = setInterval(() => {
+        currentTime.value = new Date().getTime();
+    }, 5000); 
+});
+
+onUnmounted(() => {
+    document.removeEventListener('click', handleClickOutside);
+    
+    if (timeCheckerInterval) {
+        clearInterval(timeCheckerInterval);
+    }
+});
 </script>
 
 <template>
@@ -328,11 +365,26 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside));
          @click="handleAction">
         
         <transition name="pop-alert">
-            <div v-if="showAlreadyJoinedMsg" 
-                 class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm p-4 text-center pointer-events-none border border-blue-500/30">
-                <Check class="w-10 h-10 text-blue-400 mb-2 drop-shadow-[0_0_8px_rgba(96,165,250,0.8)]" />
-                <h4 class="text-white font-black text-[12px] uppercase tracking-widest mb-1 leading-tight drop-shadow-md">Você já participa</h4>
-                <p class="text-blue-300 font-bold text-[10px] uppercase tracking-widest">deste torneio!</p>
+            <div v-if="showSuccessMsg" 
+                 class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-gradient-to-b from-emerald-500 to-emerald-700 backdrop-blur-md p-5 text-center pointer-events-none">
+                
+                <div class="bg-white rounded-full p-2.5 mb-3 shadow-[0_0_15px_rgba(255,255,255,0.4)]">
+                    <Check class="w-8 h-8 text-emerald-600" stroke-width="3" />
+                </div>
+                
+                <h4 class="text-white font-black text-[15px] uppercase tracking-wide leading-tight drop-shadow-md">
+                    Compra Aprovada
+                </h4>
+                <p class="text-emerald-100 font-medium text-[11px] mt-1 drop-shadow-sm">
+                    Inscrição confirmada!
+                </p>
+                
+                <div class="w-full border-t border-dashed border-emerald-300/60 mt-4 pt-3 flex flex-col gap-1">
+                    <div class="flex justify-between items-center text-[10px] text-emerald-100 font-semibold w-full px-2">
+                        <span>STATUS</span>
+                        <span class="bg-emerald-800/50 px-1.5 py-0.5 rounded text-white font-mono tracking-wider">PAGO</span>
+                    </div>
+                </div>
             </div>
         </transition>
 
@@ -347,7 +399,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside));
                 <Share2 class="w-5 h-5 md:w-3.5 md:h-3.5" />
             </button>
             <span class="text-[9px] font-mono font-bold text-white/50 tracking-tighter drop-shadow-md select-none">
-                #{{ tournament.id }} | {{ tournament.coverImage || tournament.CoverImage }}
+                #{{ tournament.id }}
             </span>
         </div>
 
@@ -423,8 +475,8 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside));
                         </div>
 
                         <button type="button" @click.stop="toggleInfo" 
-                                class="h-8 w-8 shrink-0 flex items-center justify-center rounded transition-all shadow-lg active:scale-95 border border-transparent shadow-white/20 cursor-pointer"
-                                :class="(!localIsJoined && isFull) ? 'bg-gray-400 text-gray-900 hover:bg-gray-300' : 'bg-white text-black hover:bg-gray-200'"
+                                class="h-8 w-8 shrink-0 flex items-center justify-center rounded transition-all active:scale-95 border border-transparent cursor-pointer"
+                                :class="(!localIsJoined && isFull) ? 'bg-gray-400 text-gray-900 hover:bg-gray-300 shadow-none' : 'bg-[#FFD700] text-black hover:bg-[#e6c200] shadow-[0_0_10px_rgba(255,215,0,0.4)]'"
                                 title="Detalhes">
                             <Info class="w-5 h-5" />
                         </button>
@@ -432,7 +484,12 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside));
 
                     <div class="flex flex-col items-end gap-1.5 flex-1 min-w-0">
                         
-                        <div v-if="tournament.entryFee == 0" class="mb-0.5">
+                        <div v-if="localIsJoined" class="flex flex-col items-end leading-none drop-shadow-md mb-0.5">
+                            <span class="text-[11px] font-black text-emerald-400 flex items-center gap-1">
+                                <Check class="w-3 h-3" /> INSCRITO
+                            </span>
+                        </div>
+                        <div v-else-if="tournament.entryFee == 0" class="mb-0.5">
                             <span class="free-badge-effect text-[11px]">GRÁTIS</span>
                         </div>
                         <div v-else class="flex flex-col items-end leading-none drop-shadow-md">
@@ -444,15 +501,31 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside));
                                 @click.stop="handleAction" 
                                 :disabled="processingId === tournament.id || (!localIsJoined && isFull)"
                                 :class="[
-                                    'h-8 px-3 flex items-center justify-center gap-1.5 rounded font-black text-[10px] uppercase tracking-wider shadow-xl transition-all transform border min-w-[75px]',
-                                    (!localIsJoined && isFull) ? 'bg-gray-400 text-gray-900 border-gray-500 cursor-not-allowed opacity-90 shadow-none' : 'bg-white text-black hover:bg-gray-200 shadow-white/10 active:scale-95 border-transparent cursor-pointer'
+                                    'h-8 px-3 flex items-center justify-center gap-1.5 rounded font-black text-[10px] uppercase tracking-wider transition-all transform border min-w-[75px]',
+                                    (!localIsJoined && isFull) 
+                                        ? 'bg-gray-400 text-gray-900 border-gray-500 cursor-not-allowed opacity-90 shadow-none' 
+                                        : (localIsJoined 
+                                            ? (isFutureTournament
+                                                ? 'bg-[#5c4d00] text-[#FFD700] border-transparent shadow-none cursor-not-allowed opacity-90'
+                                                : 'bg-[#FFD700] text-black hover:bg-[#e6c200] shadow-[0_0_15px_rgba(255,215,0,0.4)] active:scale-95 border-transparent cursor-pointer')
+                                            : 'bg-emerald-500 text-white hover:bg-emerald-400 shadow-emerald-500/20 active:scale-95 border-transparent cursor-pointer')
                                 ]">
                             
                             <span v-if="processingId === tournament.id" class="loader-spin border-current w-3 h-3"></span>
                             
                             <template v-else>
-                                <component :is="(!localIsJoined && isFull) ? Lock : LogIn" class="w-3.5 h-3.5 fill-current shrink-0" />
-                                <span class="truncate">{{ (!localIsJoined && isFull) ? 'LOTADO' : 'Comprar' }}</span>
+                                <component :is="(!localIsJoined && isFull) ? Lock : (localIsJoined ? (isFutureTournament ? Calendar : Play) : LogIn)" 
+                                           class="w-3.5 h-3.5 fill-current shrink-0" 
+                                           :class="{ 'animate-play': localIsJoined && !isFutureTournament }" />
+                                           
+                                <span class="truncate">
+                                    {{ (!localIsJoined && isFull) 
+                                        ? 'LOTADO' 
+                                        : (localIsJoined 
+                                            ? (isFutureTournament ? 'EM BREVE' : 'JOGAR') 
+                                            : 'COMPRAR') 
+                                    }}
+                                </span>
                             </template>
 
                         </button>
@@ -479,7 +552,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside));
                     <div class="flex justify-between items-start">
                         <div class="flex flex-col gap-1 w-full pr-8">
                             <div class="flex items-center gap-3">
-                                <span class="px-1.5 py-0.5 rounded bg-white/20 backdrop-blur-sm text-[9px] font-mono text-white shadow-sm border border-white/10">ID: #{{ tournament.id }} | {{ tournament.coverImage || tournament.CoverImage }}</span>
+                                <span class="px-1.5 py-0.5 rounded bg-white/20 backdrop-blur-sm text-[9px] font-mono text-white shadow-sm border border-white/10">ID: #{{ tournament.id }}</span>
                                 <span class="text-[10px] font-bold text-emerald-400 uppercase flex items-center gap-1 drop-shadow-md"><Trophy class="w-3.5 h-3.5" /> {{ displaySport }}</span>
                             </div>
                             <h3 class="text-lg md:text-xl font-black text-white italic uppercase leading-tight drop-shadow-lg mt-1 truncate w-full">{{ tournament.name }}</h3>
@@ -495,17 +568,42 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside));
                     <div class="flex items-center justify-between mt-1 pt-2 border-t border-white/10 relative z-20">
                         <div class="flex flex-col"><span class="text-[9px] uppercase text-slate-400 font-bold mb-0.5">Premiação</span><span class="text-lg font-black text-emerald-400 flex items-center gap-1 drop-shadow-md"><Coins class="w-4 h-4" /> R$ {{ formatCurrency(tournament.prizePool) }}</span></div>
                         <div class="flex items-center gap-3">
-                            <div class="flex flex-col items-end mr-1"><span class="text-[9px] uppercase text-slate-400 font-bold mb-0.5">Entrada</span><span class="text-sm font-black text-white drop-shadow-md">{{ tournament.entryFee == 0 ? 'GRÁTIS' : `R$ ${formatCurrency(tournament.entryFee)}` }}</span></div>
+                            <div class="flex flex-col items-end mr-1">
+                                <template v-if="localIsJoined">
+                                    <span class="text-[11px] font-black text-emerald-400 flex items-center gap-1 mt-1">
+                                        <Check class="w-3 h-3" /> INSCRITO
+                                    </span>
+                                </template>
+                                <template v-else>
+                                    <span class="text-[9px] uppercase text-slate-400 font-bold mb-0.5">Entrada</span>
+                                    <span class="text-sm font-black text-white drop-shadow-md">{{ tournament.entryFee == 0 ? 'GRÁTIS' : `R$ ${formatCurrency(tournament.entryFee)}` }}</span>
+                                </template>
+                            </div>
                             
                             <button type="button" @click="handlePopoverAction" 
                                     :disabled="processingId === tournament.id || (!localIsJoined && isFull)"
                                     :class="[
-                                        'px-6 py-2.5 rounded font-black uppercase text-xs tracking-wider transition-all shadow-lg border',
+                                        'px-6 py-2.5 flex justify-center items-center gap-1.5 rounded font-black uppercase text-xs tracking-wider transition-all shadow-lg border',
                                         (!localIsJoined && isFull)
                                             ? 'bg-gray-400 text-gray-900 border-gray-500 cursor-not-allowed opacity-90 shadow-none'
-                                            : 'bg-white text-black hover:bg-gray-200 hover:shadow-emerald-500/20 active:scale-95 border-transparent cursor-pointer'
+                                            : (localIsJoined 
+                                                ? (isFutureTournament
+                                                    ? 'bg-[#5c4d00] text-[#FFD700] border-transparent shadow-none cursor-not-allowed opacity-90'
+                                                    : 'bg-[#FFD700] text-black hover:bg-[#e6c200] shadow-[0_0_15px_rgba(255,215,0,0.4)] active:scale-95 border-transparent cursor-pointer')
+                                                : 'bg-emerald-500 text-white hover:bg-emerald-400 hover:shadow-emerald-500/20 active:scale-95 border-transparent cursor-pointer')
                                     ]">
-                                {{ (!localIsJoined && isFull) ? 'LOTADO' : 'COMPRAR' }}
+                                
+                                <component :is="localIsJoined ? (isFutureTournament ? Calendar : Play) : null" 
+                                           v-if="localIsJoined"
+                                           class="w-4 h-4 fill-current" 
+                                           :class="{ 'animate-play': !isFutureTournament }" />
+                                           
+                                {{ (!localIsJoined && isFull) 
+                                    ? 'LOTADO' 
+                                    : (localIsJoined 
+                                        ? (isFutureTournament ? 'EM BREVE' : 'JOGAR') 
+                                        : 'COMPRAR') 
+                                }}
                             </button>
                         </div>
                     </div>
@@ -535,4 +633,11 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside));
 @keyframes fadeInScale { from { opacity: 0; scale: 0.95; } to { opacity: 1; scale: 1; } }
 @keyframes neon-breath { 0%, 100% { transform: scale(1); text-shadow: 0 0 5px rgba(34, 197, 94, 0.7), 0 0 15px rgba(34, 197, 94, 0.4); color: #4ade80; } 50% { transform: scale(1.1); text-shadow: 0 0 10px rgba(34, 197, 94, 1), 0 0 20px rgba(34, 197, 94, 0.8), 0 0 30px rgba(34, 197, 94, 0.6); color: #86efac; } }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* 🔥 Animação do botão Play 🔥 */
+@keyframes playPulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.15); }
+}
+.animate-play { animation: playPulse 1.5s infinite ease-in-out; }
 </style>
